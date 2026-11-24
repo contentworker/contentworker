@@ -167,10 +167,10 @@ approved again as before.
   made to them. The template's `pageVersions` counts the ones an earlier version made.
 - A transform or load that is running when the template is reopened stops with `409`, and moves no
   page. An entry that load had already written stays, and is updated when its page is loaded.
-- A background run waits for the new approval, up to 14 days and 8 approvals of a template, and
-  takes the new version through. The authoring agent isn't started again: a person (or an agent on
-  the API) changes the template. If the template's first agent is still running, it can write to the
-  reopened template too, and the approval is held to the version that was read as always.
+- A background run waits for the new approval, 14 days at a time and for up to 8 approvals of a
+  template, and takes the new version through. An approval given after the go-ahead to publish is
+  taken on step by step. The authoring agent isn't started again, and stops when the template is
+  first approved: a person (or an agent on the API) changes it from there.
 
 ## Take the pages in
 

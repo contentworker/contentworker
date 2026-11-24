@@ -18,6 +18,7 @@ import {
   inventorySite,
   leanHtml,
   newTemplateAgentState,
+  reopenTemplate,
   TEMPLATE_AGENT_LIMITS,
   TEMPLATE_AGENT_TOOLS,
   type TemplateAgentState,
@@ -301,7 +302,7 @@ describe('the template agent', () => {
     expect(ai.requests).toHaveLength(0);
   });
 
-  it('can’t touch an approved template', async () => {
+  it('stops at a template a person approved, reopened or not', async () => {
     const { ctx, store, blob, run, blog, state, sandbox } = await harness();
     const author = new ScriptedAI([
       () => [
@@ -322,10 +323,24 @@ describe('the template agent', () => {
       () => [call('write_import_script', { script: '// x' })],
       () => 'ok',
     ]);
+    // One still running when a person approved stops, spending nothing more…
+    const stopped = await drive(ctx, { ai: again, blob, sandbox }, newTemplateAgentState(state));
+    expect(stopped).toMatchObject({
+      status: 'stopped',
+      summary: expect.stringMatching(/approved/),
+    });
+    expect(again.requests).toHaveLength(0);
+    // …and writes over nothing once they reopen it.
+    const approved = await store.migrations.getTemplate(scope, run.id, blog.id);
+    const reopened = await reopenTemplate(
+      ctx,
+      { spaceId: 'site', kind: 'admin', scopes: scopesForKind('cma') },
+      scope,
+      { runId: run.id, templateId: blog.id, reviewed: templateReviewDigest(approved as never) },
+    );
     await drive(ctx, { ai: again, blob, sandbox }, newTemplateAgentState(state));
-    const refused = again.requests[1]?.messages?.find((m) => m.role === 'tool')?.content ?? '';
-    expect(refused).toMatch(/approved/);
-    expect((await store.migrations.getTemplate(scope, run.id, blog.id))?.status).toBe('approved');
+    expect(again.requests).toHaveLength(0);
+    expect(await store.migrations.getTemplate(scope, run.id, blog.id)).toEqual(reopened);
   });
 });
 

@@ -1907,7 +1907,7 @@ publishing (no template approved and loaded in time, or no go-ahead) records the
 with why, so it isn't started again; its templates can still be authored and its pages taken on
 by hand. Approved templates are processed one
 at a time. Every loop takes the use-case's largest batch, so a run of `MIGRATION_MAX_PAGES` takes
-under 1,500 steps (under 7,000 with every template reopened to the last round), inside Workflows' 10,000 per instance on Workers Paid (1,024 on Workers Free,
+under 1,500 steps (under 9,000 with every template reopened to the last round), inside Workflows' 10,000 per instance on Workers Paid (1,024 on Workers Free,
 which fits runs of a few thousand pages; `step.sleep` doesn't count). An approval sent before the
 driver reaches its wait is buffered by Workflows. A failure is recorded on the run unless it is
 already terminal; a record that keeps losing its race is left to the step's retries. Agents start for the 20 largest templates (`MIGRATION_AGENTS_PER_RUN`) and the driver
@@ -1927,17 +1927,23 @@ event, reads the template, and takes it through only when it is approved at a `v
 hasn't handled, so an event left over from an earlier approval, or from one reopened since, can't
 stand in for a later one. Its transform and load steps run under that `version`: a step that finds
 the template reopened (or approved again) records nothing, and the template waits for the next
-event, 14 days each time, `MIGRATION_APPROVAL_ROUNDS` (8) waits in all; past that it is left to its
-callers. A template goes on being listened for after it is loaded (or failed), so one reopened
+event, 14 days each time. It takes `MIGRATION_APPROVAL_ROUNDS` (8) approvals through and waits
+`MIGRATION_APPROVAL_WAITS` (24) times in all (an approval told twice is a wait, not a round); past
+either it is left to its callers. A template goes on being listened for after it is loaded, or
+failed or timed out with another template in, so one reopened
 while others wait, or while the run waits for the go-ahead, is taken through when it is approved
 again. The first round's steps keep their bare names and later ones end in `round N`, so none is
 answered by another's record. A run waits for every template except one that was reopened, once
-another is loaded. The go-ahead publishes whatever is `loaded`, after the round then running and a
-relink pass of its own; a template reopened at that point keeps its loaded entries published, its
+another is loaded. The go-ahead records how many of each template's
+waits had ended (`go-ahead rounds`), so a replay finishes the same rounds and begins none after: an
+approval told later is taken on step by step. It publishes whatever is `loaded`, after those rounds,
+a relink pass and the redirects of a template then reopened (as whoever gave it), neither of which
+holds it up; a template reopened at that point keeps its loaded entries published, its
 other pages are not published, and it ends `reopened`. No agent is started for a template that holds
-a content type, and a finished agent's object ignores `start`, so a reopened template is a person's
-to change. An instance recorded by the driver before rounds existed has no version in its `approver`
-step: its first round goes on unheld, and the next approval it hears of counts as newer.
+a content type, a finished agent's object ignores `start`, and one still running stops once its template
+is approved, so a reopened template is a person's to change. An instance recorded by the driver before rounds existed has no version in its `approver`
+step: its first round is held to the template as it stands if it is still that approver's, and
+the next approval it hears of counts as newer.
 
 The template agent (`site-migration-agent.ts`, hosted by the `MigrationTemplateAgent` Durable
 Object, one per template) is a tool loop over the `AIProvider` port: `get_template`,

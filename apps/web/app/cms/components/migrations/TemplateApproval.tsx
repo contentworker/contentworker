@@ -32,6 +32,7 @@ export function TemplateApproval({
   onReviewed,
   scriptShown,
   editing,
+  canEdit,
   runFailed,
   reload,
   onApproved,
@@ -48,6 +49,8 @@ export function TemplateApproval({
   scriptShown: boolean;
   /** The model or script is open in an editor, so what's on screen isn't what would be approved. */
   editing: boolean;
+  /** The person may change the model and script (`migration:run`). */
+  canEdit: boolean;
   runFailed: boolean;
   reload: () => Promise<unknown>;
   onApproved: (a: MigrationApproval) => void;
@@ -57,7 +60,7 @@ export function TemplateApproval({
   const types = useScopedQuery(['content-types'], () => client.listContentTypes(), {
     silent: true,
   }).data;
-  const [asking, setAsking] = useState(false);
+  const [asking, setAsking] = useState<'approve' | 'reopen' | null>(null);
   const [busy, setBusy] = useState(false);
   const [answer, setAnswer] = useState<MigrationApproval | null>(null);
   const [failed, setFailed] = useState<{ title: string; message: string } | null>(null);
@@ -77,12 +80,29 @@ export function TemplateApproval({
   }, [changed, reviewed, t.reviewDigest]);
   // What was being confirmed is no longer what is stored.
   useEffect(() => {
-    if (changed) setAsking(false);
+    if (changed) setAsking(null);
   }, [changed]);
+  // Said where the template's new status draws it, with focus once, for this visit's own act: someone
+  // else's change takes neither the words nor the focus.
+  const toFocus = useRef<MigrationTemplateView['status'] | null>(null);
+  const isAgain = isReopened(t);
   useEffect(() => {
-    // Each is said where the template's new status draws it, once it is read.
-    if (t.status === 'approved' ? answer : reopened) said.current?.focus();
-  }, [answer, reopened, t.status]);
+    if (toFocus.current !== null && toFocus.current === t.status) {
+      toFocus.current = null;
+      said.current?.focus();
+    }
+    if (t.status !== 'approved') {
+      setAnswer(null);
+      setAsking((a) => (a === 'reopen' ? null : a));
+    } else {
+      setReopened(false);
+      setAsking((a) => (a === 'approve' ? null : a));
+    }
+  }, [t.status]);
+  // Pressed again while approved, the answer is new though the status isn't.
+  useEffect(() => {
+    if (answer && t.status === 'approved') said.current?.focus();
+  }, [answer, t.status]);
 
   const approve = async (digest: string) => {
     if (busy) return;
@@ -92,9 +112,8 @@ export function TemplateApproval({
       const a = await retryingConflicts(() =>
         client.approveMigrationTemplate(t.runId, t.id, digest),
       );
-      setAnswer(a);
-      setReopened(false);
       onApproved(a);
+      setAnswer(a);
     } catch (err) {
       await reload();
       // A 409 over a changed template shows as `changed` once it is read again; any other 409 (the
@@ -114,7 +133,7 @@ export function TemplateApproval({
       });
     } finally {
       setBusy(false);
-      setAsking(false);
+      setAsking(null);
     }
   };
 
@@ -122,15 +141,17 @@ export function TemplateApproval({
     if (busy) return;
     setBusy(true);
     setFailed(null);
+    // However it is learned: this answer, or the read after one that was lost.
+    toFocus.current = 'authoring';
     try {
       const next = await retryingConflicts(() =>
         client.reopenMigrationTemplate(t.runId, t.id, t.reviewDigest),
       );
-      setAnswer(null);
-      setReopened(true);
       onReopened(next);
+      setReopened(true);
     } catch (err) {
       await reload();
+      if (refusedSave(err)) toFocus.current = null;
       setFailed({
         title: refusedSave(err) ? 'It wasn’t reopened' : 'The reopening didn’t confirm',
         message: refusedSave(err)
@@ -139,7 +160,7 @@ export function TemplateApproval({
       });
     } finally {
       setBusy(false);
-      setAsking(false);
+      setAsking(null);
     }
   };
 
@@ -147,11 +168,13 @@ export function TemplateApproval({
   const exists = apiId && types ? types.some((x) => x.apiId === apiId) : undefined;
   const mine = !!apiId && runTypes.includes(apiId);
   const does =
-    exists === undefined
-      ? 'creates (or revises, if this run made it)'
-      : exists && mine
-        ? 'revises'
-        : 'creates';
+    isAgain && exists !== false
+      ? 'revises'
+      : exists === undefined
+        ? 'creates (or revises, if this run made it)'
+        : exists && mine
+          ? 'revises'
+          : 'creates';
 
   if (t.status === 'approved') {
     return (
@@ -172,21 +195,24 @@ export function TemplateApproval({
             </Link>
           ) : null}
         </p>
-        {asking ? (
+        {asking === 'reopen' ? (
           <InlineConfirm
             message={<>Reopen “{t.label}” for changes?</>}
-            note="Its model and script can be edited again."
+            note="Its model and script can be edited again. Loaded and published pages, and their entries, stay as they are."
             details={
               <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-                <li>Pages not loaded yet are transformed again after it is approved again.</li>
-                <li>Loaded and published pages, and their entries, stay as they are.</li>
+                <li>
+                  Pages not loaded yet are transformed again after it is approved again, if it
+                  changed.
+                </li>
                 <li>A background run waits for the new approval.</li>
+                <li>A go-ahead to publish still publishes what is loaded.</li>
               </ul>
             }
             onCancel={() => {
-              if (!busy) setAsking(false);
+              if (!busy) setAsking(null);
             }}
-            returnFocus={() => reopener.current}
+            returnFocus={() => reopener.current ?? trigger.current ?? said.current}
           >
             <Button
               type="button"
@@ -214,7 +240,11 @@ export function TemplateApproval({
                 {busy ? 'Telling it…' : answer ? 'Tell it again' : 'Tell its background run'}
               </Button>
             ) : null}
-            {runFailed ? null : (
+            {runFailed ? (
+              <p className="w-full text-muted-foreground text-xs">
+                The run failed, so its templates can’t be reopened.
+              </p>
+            ) : (
               <Button
                 ref={reopener}
                 type="button"
@@ -225,7 +255,7 @@ export function TemplateApproval({
                 onClick={() => {
                   if (busy) return;
                   setFailed(null);
-                  setAsking(true);
+                  setAsking('reopen');
                 }}
               >
                 Reopen for changes…
@@ -242,7 +272,6 @@ export function TemplateApproval({
     );
   }
 
-  const isAgain = isReopened(t);
   const why = runFailed
     ? 'The run failed, so its templates can’t be approved.'
     : !t.proposal
@@ -306,16 +335,18 @@ export function TemplateApproval({
           className="max-w-measure text-sm outline-none wrap-anywhere"
         >
           {reopened
-            ? 'Reopened. Edit its model or script above, then approve it again.'
+            ? canEdit
+              ? 'Reopened. Edit its model or script above, then approve it again.'
+              : 'Reopened. Someone with migration:run can change its model or script now.'
             : 'Reopened for changes after it was approved.'}
         </p>
       ) : null}
       <p className="max-w-measure text-muted-foreground text-sm">
         {isAgain
-          ? 'Approving it again saves its content type as this model, replacing what was changed on the type since (field help, say), and publishes it. Its pages not loaded yet are transformed again; loaded and published pages, and their entries, stay as they are.'
+          ? 'Approving it again saves its content type as this model, replacing what was changed on the type since (field help, say), and publishes it. Its pages not loaded yet are transformed again if it changed; loaded and published pages, and their entries, stay as they are.'
           : 'Approving creates and publishes its content type, and holds its model and script until someone reopens it. Its pages are only taken in once it is approved.'}
       </p>
-      {asking && apiId ? (
+      {asking === 'approve' && apiId ? (
         <InlineConfirm
           message={
             <>
@@ -323,7 +354,11 @@ export function TemplateApproval({
               <span>{t.proposal?.name}</span> (<code className="font-mono">{apiId}</code>).
             </>
           }
-          note="Its model and script are held as approved until someone reopens it. No entries are made yet."
+          note={
+            isAgain
+              ? 'What was changed on the content type since is replaced. Loaded and published entries stay as they are.'
+              : 'Its model and script are held as approved until someone reopens it. No entries are made yet.'
+          }
           details={
             exists && !mine ? (
               <p className="text-ui text-wait">
@@ -334,9 +369,9 @@ export function TemplateApproval({
           }
           // Held while it runs: an approval can't be called back.
           onCancel={() => {
-            if (!busy) setAsking(false);
+            if (!busy) setAsking(null);
           }}
-          returnFocus={() => trigger.current}
+          returnFocus={() => trigger.current ?? said.current}
         >
           <Button
             type="button"
@@ -363,7 +398,7 @@ export function TemplateApproval({
             onClick={() => {
               if (!why) {
                 setFailed(null);
-                setAsking(true);
+                setAsking('approve');
               }
             }}
           >

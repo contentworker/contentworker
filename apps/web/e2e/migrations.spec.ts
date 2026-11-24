@@ -315,7 +315,6 @@ async function stubRun(page: Page) {
         case 'reopen':
           if (body.reviewed !== t?.reviewDigest) return json(route, {}, 409);
           write({ status: 'authoring', approvedBy: null }, false);
-          for (const p of mine('validated')) p.stage = 'clustered';
           return json(route, t);
         case 'transform': {
           const batch = mine('clustered').slice(0, 10);

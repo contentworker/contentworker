@@ -402,6 +402,7 @@ function Review({
           onReviewed={setReviewed}
           scriptShown={text !== null}
           editing={editing !== null}
+          canEdit={rights?.run === true}
           runFailed={view?.run.status === 'failed'}
           reload={refetch}
           onApproved={(a) => {
@@ -412,8 +413,6 @@ function Review({
             void invalidate(['content-types']);
           }}
           onReopened={(next) => {
-            // What was approved is what was read: it is on screen, and nothing has changed it.
-            setReviewed(next.reviewDigest);
             show(next);
             void refreshRun();
           }}

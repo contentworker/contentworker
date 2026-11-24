@@ -15,7 +15,7 @@ import {
   approveTemplate,
   createMigrationRun,
   MIGRATION_AGENTS_PER_RUN,
-  MIGRATION_APPROVAL_ROUNDS,
+  MIGRATION_APPROVAL_WAITS,
   MIGRATION_DRIVEN_TEMPLATES,
   MIGRATION_PUBLISH_EVENT,
   migrationTemplateApprovedEvent,
@@ -547,13 +547,117 @@ describe('a template reopened while its run is driven', () => {
     await pass(h);
     const ref = await templateOf(h);
     await authorAndApprove(h.ctx, h.host, ref);
-    for (let i = 0; i < MIGRATION_APPROVAL_ROUNDS + 2; i++) tell(h, ref);
+    for (let i = 0; i < MIGRATION_APPROVAL_WAITS + 2; i++) tell(h, ref);
     expect(await pass(h)).toMatchObject({ status: 'waiting', on: ['publish approval'] });
     expect(await stages(h.ctx, ref.runId)).toEqual({ loaded: 3 });
     h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, { approvedBy: { kind: 'deployment' } });
     expect(await pass(h)).toMatchObject({
       value: { status: 'published', templates: [{ status: 'loaded' }] },
     });
+  });
+
+  it('is still listened for after events with nothing to take through, and after a wait runs out', async () => {
+    const h = await harness();
+    await pass(h);
+    const ref = await templateOf(h);
+    await authorAndApprove(h.ctx, h.host, ref);
+    // Told again and again, as someone pressing the button would: none of it is a round.
+    for (let i = 0; i < 10; i++) tell(h, ref);
+    await pass(h);
+    // Its wait began before the go-ahead's here and runs out first.
+    h.steps.deadlines.set(`approval ${ref.templateId} round 11`, 0);
+    expect(await pass(h)).toMatchObject({
+      on: expect.arrayContaining([`approval ${ref.templateId} round 12`, 'publish approval']),
+    });
+    await reopen(h, ref);
+    await approveWith(h, ref, V2);
+    tell(h, ref);
+    await pass(h);
+    expect(h.steps.executed).toContain(`transform ${ref.templateId} 0 round 12`);
+  });
+
+  it('finishes a round begun before the go-ahead, and begins none after, however it replays', async () => {
+    const h = await harness();
+    await pass(h);
+    const ref = await templateOf(h);
+    await authorAndApprove(h.ctx, h.host, ref);
+    await reopen(h, ref);
+    // One page is left for the next version.
+    await approveWith(
+      h,
+      ref,
+      `export default (page) => {
+        if (page.url.endsWith('/two')) throw new Error('no body');
+        return (${SCRIPT.replace('export default ', '')})(page);
+      }`,
+    );
+    tell(h, ref);
+    await pass(h);
+    await reopen(h, ref);
+    await approveWith(h, ref, V2);
+    // The instance is evicted in the second round's load, with the go-ahead recorded.
+    const real = h.steps.do.bind(h.steps) as (...a: unknown[]) => Promise<unknown>;
+    let evicted = false;
+    (h.steps as { do: unknown }).do = async (name: string, ...rest: unknown[]) => {
+      if (!evicted && name.startsWith(`load ${ref.templateId}`) && name.endsWith('round 2')) {
+        return new Promise(() => {});
+      }
+      return real(name, ...rest);
+    };
+    tell(h, ref);
+    // (Nothing suspends a step that never answers, so the pass is left behind.)
+    void runSiteMigration(h.steps, h.host, h.params);
+    await new Promise((r) => setTimeout(r, 50));
+    h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, { approvedBy: { kind: 'deployment' } });
+    void runSiteMigration(h.steps, h.host, h.params);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.steps.journal.has('go-ahead rounds')).toBe(true);
+    expect(h.steps.executed).not.toContain('publish 0');
+    evicted = true;
+    // An approval told after the go-ahead is too late for this driver.
+    tell(h, ref);
+    const done = await pass(h);
+    expect(done).toMatchObject({ status: 'complete', value: { status: 'published' } });
+    expect(await stages(h.ctx, ref.runId)).toEqual({ published: 3 });
+    expect(h.steps.executed.some((n) => n.startsWith('transform ') && n.endsWith('round 3'))).toBe(
+      false,
+    );
+    const executed = h.steps.executed.length;
+    await pass(h);
+    expect(h.steps.executed.length).toBe(executed);
+  });
+
+  it('writes no redirect under an approval withdrawn as it loaded: the go-ahead does', async () => {
+    const h = await harness();
+    await pass(h);
+    const ref = await templateOf(h);
+    await proposeTemplateModel(h.ctx, scope, {
+      ...ref,
+      model: { ...MODEL, urlPattern: '/news/{slug}' },
+    });
+    await approveWith(
+      h,
+      ref,
+      `export default (page) => {
+        if (page.url.endsWith('/two')) throw new Error('no body');
+        return (${SCRIPT.replace('export default ', '')})(page);
+      }`,
+    );
+    tell(h, ref);
+    const count = async () => (await h.ctx.store.redirects.list(scope, { limit: 10 })).items.length;
+    await pass(h);
+    expect(await count()).toBe(2);
+    await reopen(h, ref);
+    await approveWith(h, ref, V2);
+    tell(h, ref);
+    before(h, `redirects ${ref.templateId} round 2`, () => reopen(h, ref));
+    await pass(h);
+    expect(await stages(h.ctx, ref.runId)).toEqual({ loaded: 3 });
+    expect(await count()).toBe(2);
+    h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, { approvedBy: { kind: 'deployment' } });
+    await pass(h);
+    expect(await stages(h.ctx, ref.runId)).toEqual({ published: 3 });
+    expect(await count()).toBe(3);
   });
 
   it('times out alone when it is never approved again', async () => {
@@ -637,5 +741,19 @@ describe('a template reopened while its run is driven', () => {
     tell(h, ref);
     await pass(h);
     expect(h.steps.executed).toContain(`transform ${id} 0 round 2`);
+  });
+
+  it('holds a round recorded with no version to the approver it names', async () => {
+    const h = await harness();
+    await pass(h);
+    const ref = await templateOf(h);
+    await authorAndApprove(h.ctx, h.host, ref);
+    h.steps.journal.set(`approver ${ref.templateId}`, {
+      ok: true,
+      value: { ok: { kind: 'key', keyId: 'the-first-approver' } },
+    });
+    tell(h, ref);
+    expect(await pass(h)).toMatchObject({ on: [`approval ${ref.templateId} round 2`] });
+    expect(await stages(h.ctx, ref.runId)).toEqual({ clustered: 3 });
   });
 });

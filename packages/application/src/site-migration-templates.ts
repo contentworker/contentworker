@@ -445,6 +445,7 @@ export async function reopenTemplate(
         current.id,
         current.script.sha256,
         templateReviewDigest(current),
+        ctx.clock.now().toISOString(),
       );
     },
   );

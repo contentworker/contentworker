@@ -2,7 +2,7 @@ import { Catalog, CatalogRow, CatalogTile } from '@contentworker/ui/catalog';
 import { Checkbox } from '@contentworker/ui/checkbox';
 import { Label } from '@contentworker/ui/label';
 import { SkeletonPill } from '@contentworker/ui/skeleton';
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useClient } from '~/cms/lib/client-context';
 import { plural } from '~/cms/lib/format';
 import type { MigrationTemplateView } from '~/cms/lib/management';
@@ -54,6 +54,17 @@ export function TemplatePages({
   const [load, setLoad] = useState(NONE_LOADED);
   // Where the last single transform left off, so the next one goes on from there.
   const cursor = useRef<string | undefined>(undefined);
+  // Another approval starts the pages over: where the last batch left off, and what it said, were
+  // of the version before.
+  const approved = t.status === 'approved' ? t.version : null;
+  const last = useRef(approved);
+  useEffect(() => {
+    if (last.current === approved) return;
+    last.current = approved;
+    cursor.current = undefined;
+    setFailed(NO_FAILURES);
+    setLoad(NONE_LOADED);
+  }, [approved]);
   const step: StepState =
     t.status === 'approved'
       ? { available: true }

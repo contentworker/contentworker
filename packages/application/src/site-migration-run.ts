@@ -32,6 +32,7 @@ import {
   type TemplateAuthoringDeps,
   transformTemplatePages,
 } from './site-migration-templates';
+import { assertSameApproval } from './site-migration-version';
 import {
   clusterPages,
   fetchSourcePages,
@@ -71,11 +72,13 @@ export const migrationTemplateApprovedEvent = (templateId: string) =>
 export const MIGRATION_PUBLISH_EVENT = 'publish-approved';
 /** How long a template waits for a person to approve it, and a run for the go-ahead. */
 export const MIGRATION_APPROVAL_TIMEOUT = '14 days';
-/**
- * Times the driver waits for one template's approval: the first, and each one after it is
- * reopened. Past it the template is left to its callers, step by step.
- */
+/** Approvals of one template the driver takes through: the first, and each after a reopening. */
 export const MIGRATION_APPROVAL_ROUNDS = 8;
+/**
+ * Waits for one template's approval in all. A wait that ends with nothing to take through (an
+ * approval told twice, fourteen days without one) isn't a round, and the driver listens on.
+ */
+export const MIGRATION_APPROVAL_WAITS = 24;
 /** Templates a run's driver takes through (largest first); the rest are left to its callers. */
 export const MIGRATION_DRIVEN_TEMPLATES = 50;
 /** Templates a run starts an agent for (largest first); a person authors the rest. */
@@ -92,9 +95,9 @@ const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set(['failed', 'stopped']
  * use-case's largest batch, so a run of `MIGRATION_MAX_PAGES` (10,000) pages takes about 200 fetch,
  * 200 transform and 200 load steps, 100 relink and 50 publish steps, plus a few per template (at
  * most {@link MIGRATION_DRIVEN_TEMPLATES}) and the waits: under 1,500. A round after a reopening
- * adds at most that template's share of the transform and load steps and a few more, so every
- * template reopened to the last of {@link MIGRATION_APPROVAL_ROUNDS} stays under 7,000. Each loop
- * is also capped (`MAX_BATCHES`) so a use-case that kept saying `more` can't run the instance out
+ * adds at most that template's share of the transform and load steps and a few more, and a wait
+ * two, so every template at the last of {@link MIGRATION_APPROVAL_ROUNDS} and
+ * {@link MIGRATION_APPROVAL_WAITS} stays under 9,000. Each loop is also capped (`MAX_BATCHES`) so a use-case that kept saying `more` can't run the instance out
  * of steps.
  */
 const MAX_BATCHES = 400;
@@ -250,7 +253,7 @@ export async function runSiteMigration(
     // Templates are approved in any order and each waits on its own; their pages are processed
     // one template at a time, so a run holds at most one batch of scripts in flight.
     const work = new SerialWork();
-    const chains = driven.map((t) => new DrivenTemplate(steps, host, params, t, work));
+    const chains = driven.map((t, i) => new DrivenTemplate(steps, host, params, t, i, work));
     const report = () => {
       outcomes.splice(0, outcomes.length, ...chains.map((c) => c.outcome), ...skipped);
     };
@@ -352,38 +355,57 @@ async function finishRun(
   }
   // Fails closed: a go-ahead that names nobody publishes nothing.
   if (!isActor(go?.approvedBy)) throw new RunFailure('The go-ahead to publish names no approver');
-  // After whatever round is running, so what it loads is published too; none is started after it.
-  return work.last(async () => {
-    // What later rounds loaded is relinked before it is published. A link left as it is, is still
-    // a link: whoever relinks having lost access doesn't hold up the go-ahead.
-    await relinkAll(steps, host, params, relinker, 'relink to publish');
-    let cursor: string | undefined;
-    for (let i = 0; i < MAX_BATCHES; i++) {
-      const published = unwrap(
-        await steps.do(`publish ${i}`, STEP, () =>
-          settle(async () => {
-            const principal = await principalFor(ctx, scope, go.approvedBy);
-            const { published, next } = await publishMigration(
-              actingAs(ctx, principal),
-              principal,
-              scope,
-              {
-                runId,
-                ...(go.viaRelease ? { viaRelease: true } : {}),
-                ...(go.releaseId ? { releaseId: go.releaseId } : {}),
-                ...(go.releaseTitle ? { releaseTitle: go.releaseTitle } : {}),
-                ...(cursor ? { after: cursor } : {}),
-              },
-            );
-            return { published, ...(next ? { next } : {}) };
-          }),
-        ),
-      );
-      cursor = published.next;
-      if (!cursor) break;
-    }
-    return ended('published');
-  });
+  // The rounds begun by now are finished first, so what they load is published; none is begun after.
+  // Recorded, because a replay finds the go-ahead and the approvals in another order.
+  work.goAhead = steps.do('go-ahead rounds', STEP, async () => chains.map((c) => c.begun));
+  const begun = await work.goAhead;
+  await Promise.all(chains.map((c, i) => c.finished(begun[i] ?? 0)));
+  // Neither holds up the go-ahead: a link left as it is, is still a link, and what either leaves
+  // undone can be run by hand.
+  await relinkAll(steps, host, params, relinker, 'relink to publish').catch(() => undefined);
+  await steps
+    .do('redirects to publish', STEP, () =>
+      settle(async () => {
+        // A template reopened as it loaded has entries about to be live and no redirects to them:
+        // its round ended with its approval. Written as whoever gave the go-ahead.
+        const principal = await principalFor(ctx, scope, go.approvedBy);
+        for (const t of await ctx.store.migrations.listTemplates(scope, runId)) {
+          if (t.status !== 'authoring' || t.contentTypeId === null) continue;
+          await importMigrationRedirects(actingAs(ctx, principal), principal, scope, {
+            runId,
+            templateId: t.id,
+          });
+        }
+        return true;
+      }),
+    )
+    .catch(() => undefined);
+  let cursor: string | undefined;
+  for (let i = 0; i < MAX_BATCHES; i++) {
+    const published = unwrap(
+      await steps.do(`publish ${i}`, STEP, () =>
+        settle(async () => {
+          const principal = await principalFor(ctx, scope, go.approvedBy);
+          const { published, next } = await publishMigration(
+            actingAs(ctx, principal),
+            principal,
+            scope,
+            {
+              runId,
+              ...(go.viaRelease ? { viaRelease: true } : {}),
+              ...(go.releaseId ? { releaseId: go.releaseId } : {}),
+              ...(go.releaseTitle ? { releaseTitle: go.releaseTitle } : {}),
+              ...(cursor ? { after: cursor } : {}),
+            },
+          );
+          return { published, ...(next ? { next } : {}) };
+        }),
+      ),
+    );
+    cursor = published.next;
+    if (!cursor) break;
+  }
+  return ended('published');
 }
 
 /** A pass over the run's links, a batch per step named `name`; why it stopped, if it failed. */
@@ -420,18 +442,17 @@ async function relinkAll(
 class SerialWork {
   private queue: Promise<unknown> = Promise.resolve();
   private closed = false;
+  /** Set by the go-ahead: how many of each template's waits had ended as it came, in their order. */
+  goAhead: Promise<readonly number[]> | null = null;
 
   /** `fn`'s result once its turn comes; null, without running it, once the work is closed. */
-  async run<T>(fn: () => Promise<T>): Promise<T | null> {
-    return this.enqueue(async () => (this.closed ? null : fn()));
-  }
-
-  /** As {@link run}, and the last of it: nothing asked for after runs. */
-  async last<T>(fn: () => Promise<T>): Promise<T> {
-    return this.enqueue(async () => {
-      this.closed = true;
-      return fn();
-    });
+  run<T>(fn: () => Promise<T>): Promise<T | null> {
+    const next = this.queue.then(() => (this.closed ? null : fn()));
+    this.queue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
   }
 
   /** Lets what is running finish; what is queued behind it isn't run. */
@@ -439,45 +460,44 @@ class SerialWork {
     this.closed = true;
     await this.queue;
   }
-
-  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(fn);
-    this.queue = next.then(
-      () => undefined,
-      () => undefined,
-    );
-    return next;
-  }
 }
 
 /**
- * One template's way through a run, on its own, for as long as the run is driven. Each round waits
- * for `template-approved-<id>` (the first not at all, when it was approved before the driver came
+ * One template's way through a run, on its own, for as long as the run is driven. It waits for
+ * `template-approved-<id>` (the first time not at all, when it was approved before the driver came
  * to it), then reads the template: approved at a version the driver hasn't taken through, its pages
- * are transformed and loaded; anything else (the event of an earlier approval, or of one reopened
- * since) is nothing to do, and it waits again. An event is only ever a wake-up, so one buffered
- * from an earlier round can't stand in for a later approval, whatever order they are read in.
+ * are transformed and loaded, which is a round; anything else (the event of an earlier approval, or
+ * of one reopened since) is nothing to do, and it waits again. An event is only ever a wake-up, so
+ * one buffered from an earlier round can't stand in for a later approval, whatever order they are
+ * read in.
  *
  * A step that finds the template no longer approved as its round began stops that round, with
  * nothing of the step recorded, and the template waits for its next approval. A template that is
- * in, or that failed, goes on listening too: reopened and approved again, its newer version is
- * taken through. Rounds are named apart (`… round 2`), so no step of one answers for another.
+ * in, or failed or timed out, is listened for as long as the run goes on: approved again, its newer
+ * version is taken through. Waits are named apart (`… round 2`), and so are the steps after each,
+ * so no step of one answers for another.
  */
 class DrivenTemplate {
   /** The last round's outcome. */
   outcome: TemplateOutcome;
+  /** Waits that have ended. */
+  begun = 0;
   /** The first round's outcome, which may be that it was reopened. */
   readonly first: Promise<TemplateOutcome>;
   /** The first outcome that isn't that: loaded, failed or timed out. */
   readonly settled: Promise<TemplateOutcome>;
   private resolveFirst!: (outcome: TemplateOutcome) => void;
   private resolveSettled!: (outcome: TemplateOutcome) => void;
+  private done = 0;
+  private readonly watchers: { readonly waits: number; readonly resolve: () => void }[] = [];
 
   constructor(
     private readonly steps: WorkflowSteps,
     private readonly host: SiteMigrationRunHost,
     private readonly params: MigrationRunParams,
     private readonly template: { readonly id: string; readonly status: string },
+    /** Its place among the run's templates. */
+    private readonly index: number,
     private readonly work: SerialWork,
   ) {
     this.outcome = { templateId: template.id, status: 'timed-out' };
@@ -490,6 +510,12 @@ class DrivenTemplate {
     void this.drive();
   }
 
+  /** Once what followed its first `waits` waits is done. */
+  finished(waits: number): Promise<void> {
+    if (this.done >= waits) return Promise.resolve();
+    return new Promise((resolve) => this.watchers.push({ waits, resolve }));
+  }
+
   private report(outcome: TemplateOutcome): void {
     this.outcome = outcome;
     this.resolveFirst(outcome);
@@ -500,38 +526,59 @@ class DrivenTemplate {
     const { id: templateId, status } = this.template;
     // The approval taken through last, as the template's version.
     let handled = 0;
-    for (let round = 0; round < MIGRATION_APPROVAL_ROUNDS; round++) {
-      if (round > 0 || status !== 'approved') {
-        try {
-          // A wake-up only: whether and by whom it is approved is read from the template.
-          await this.steps.waitForEvent<MigrationTemplateApproved>(
-            inRound(`approval ${templateId}`, round),
-            {
-              type: migrationTemplateApprovedEvent(templateId),
-              timeout: MIGRATION_APPROVAL_TIMEOUT,
-            },
-          );
-        } catch {
-          // Nothing more came. What an earlier round took in stays as it was reported.
-          const { outcome } = this;
-          const waiting = outcome.status === 'reopened' || outcome.status === 'timed-out';
-          this.report(waiting ? { templateId, status: 'timed-out' } : outcome);
-          return;
+    let rounds = 0;
+    for (
+      let wait = 0;
+      wait < MIGRATION_APPROVAL_WAITS && rounds < MIGRATION_APPROVAL_ROUNDS;
+      wait++
+    ) {
+      const woken = (wait === 0 && status === 'approved') || (await this.wait(wait));
+      this.begun = wait + 1;
+      if (woken) {
+        const taken = await this.work.run(() =>
+          processTemplate(
+            this.steps,
+            this.host,
+            this.params,
+            templateId,
+            wait,
+            handled,
+            async () =>
+              wait >= ((await this.work.goAhead)?.[this.index] ?? Number.POSITIVE_INFINITY),
+          ),
+        );
+        if (taken) {
+          if (taken.version !== handled) rounds += 1;
+          handled = taken.version;
+          this.report(taken.outcome);
         }
+      } else if (this.outcome.status === 'reopened' || this.outcome.status === 'timed-out') {
+        // What an earlier round took in stays as it was reported.
+        this.report({ templateId, status: 'timed-out' });
       }
-      const taken = await this.work.run(() =>
-        processTemplate(this.steps, this.host, this.params, templateId, round, handled),
-      );
-      if (!taken) continue;
-      handled = taken.version;
-      this.report(taken.outcome);
+      this.done = wait + 1;
+      for (const w of this.watchers) if (w.waits <= this.done) w.resolve();
     }
     if (this.outcome.status === 'reopened' || this.outcome.status === 'timed-out') {
       this.report({
         templateId,
         status: 'failed',
-        error: `Reopened past the ${MIGRATION_APPROVAL_ROUNDS} approvals a background run waits for: take it on step by step`,
+        error: 'Reopened more often than a background run waits for: take it on step by step',
       });
+    }
+  }
+
+  /** Whether an event came: a wake-up only, so nothing of it is read. */
+  private async wait(wait: number): Promise<boolean> {
+    const { id } = this.template;
+    try {
+      await this.steps.waitForEvent<MigrationTemplateApproved>(inRound(`approval ${id}`, wait), {
+        type: migrationTemplateApprovedEvent(id),
+        timeout: MIGRATION_APPROVAL_TIMEOUT,
+      });
+      return true;
+    } catch {
+      return false;
     }
   }
 }
@@ -633,10 +680,8 @@ interface RoundResult {
   readonly outcome: TemplateOutcome;
 }
 
-interface Approval {
-  readonly version: number;
-  readonly approvedBy: MigrationActor;
-}
+/** Who approved it, as recorded before rounds existed, and the version they approved. */
+type Approval = MigrationActor & { readonly version?: number };
 
 /** A step's value, or that the template isn't approved any more as its round began. */
 const underApproval = async <T>(fn: () => Promise<T>): Promise<T | { readonly reopened: true }> => {
@@ -651,7 +696,7 @@ const underApproval = async <T>(fn: () => Promise<T>): Promise<T | { readonly re
 /**
  * A round of an approved template: its pages transformed, then loaded, then its redirects imported.
  * Null when it holds no approval newer than `handled`. Reopened before a batch, the round stops
- * there; its pages loaded by then are redirected like any other, since the go-ahead publishes them.
+ * there; the next one, or the go-ahead, redirects the pages loaded by then.
  */
 async function processTemplate(
   steps: WorkflowSteps,
@@ -660,6 +705,8 @@ async function processTemplate(
   templateId: string,
   round: number,
   handled: number,
+  /** Whether the go-ahead came before this round: nothing is begun after it. */
+  tooLate: () => Promise<boolean>,
 ): Promise<RoundResult | null> {
   const { ctx, authoring, load } = host;
   const { scope, runId } = params;
@@ -669,24 +716,39 @@ async function processTemplate(
     // The store's word, not the event's: `approveTemplate` records who approved it.
     const approval = unwrap(
       await steps.do(named(`approver ${templateId}`), STEP, () =>
-        settle(async (): Promise<Approval | MigrationActor | null> => {
+        settle(async (): Promise<Approval | 'too-late' | null> => {
+          if (await tooLate()) return 'too-late';
           const template = await ctx.store.migrations.getTemplate(scope, runId, templateId);
           if (template?.status !== 'approved') return null;
           if (!isActor(template.approvedBy)) {
             throw new InvalidStateError('The template has no recorded approval');
           }
-          return { version: template.version, approvedBy: template.approvedBy };
+          return { ...template.approvedBy, version: template.version };
         }),
       ),
     );
+    if (approval === 'too-late') return null;
     if (!approval) return { version, outcome: { templateId, status: 'reopened' } };
+    if (approval.version === handled) return null;
+    const { version: recorded, ...approvedBy } = approval;
+    version = recorded ?? handled;
     // A run driven since before templates could be reopened recorded only who approved it: its
-    // round goes on unheld, and the next approval it hears of is newer.
-    const held = 'version' in approval ? approval : null;
-    const approvedBy = 'version' in approval ? approval.approvedBy : approval;
-    if (held?.version === handled) return null;
-    version = held?.version ?? handled;
-    const under = held ? { approval: held.version } : {};
+    // round is held to the template as it is, if it is still theirs, and the next approval it hears
+    // of counts as newer.
+    const held =
+      recorded ??
+      unwrap(
+        await steps.do(named(`approval held ${templateId}`), STEP, () =>
+          settle(async () => {
+            const t = await ctx.store.migrations.getTemplate(scope, runId, templateId);
+            return t?.status === 'approved' && sameActor(t.approvedBy, approvedBy)
+              ? t.version
+              : null;
+          }),
+        ),
+      );
+    if (held === null) return { version, outcome: { templateId, status: 'reopened' } };
+    const under = { approval: held };
     let after: string | undefined;
     for (let i = 0; i < MAX_BATCHES; i++) {
       const batch = unwrap(
@@ -708,7 +770,6 @@ async function processTemplate(
       after = batch.next;
       if (!batch.more) break;
     }
-    let reopened = false;
     for (let i = 0; i < MAX_BATCHES; i++) {
       const batch = unwrap(
         await steps.do(named(`load ${templateId} ${i}`), STEP, () =>
@@ -727,21 +788,30 @@ async function processTemplate(
           ),
         ),
       );
-      reopened = 'reopened' in batch;
-      if ('reopened' in batch || !batch.more) break;
+      if ('reopened' in batch) return { version, outcome: { templateId, status: 'reopened' } };
+      if (!batch.more) break;
     }
-    const redirected = await steps.do(named(`redirects ${templateId}`), STEP, () =>
-      settle(async () => {
-        const principal = await principalFor(ctx, scope, approvedBy);
-        await importMigrationRedirects(actingAs(ctx, principal), principal, scope, {
-          runId,
-          templateId,
-        });
-        return true;
-      }),
+    // Redirects are live at once, so they too are written only under the approval.
+    const redirected = unwrap(
+      await steps.do(named(`redirects ${templateId}`), STEP, () =>
+        settle(() =>
+          underApproval(async () => {
+            const t = await ctx.store.migrations.getTemplate(scope, runId, templateId);
+            if (!t) throw new NotFoundError('Migration template', templateId);
+            assertSameApproval(t, held);
+            const principal = await principalFor(ctx, scope, approvedBy);
+            await importMigrationRedirects(actingAs(ctx, principal), principal, scope, {
+              runId,
+              templateId,
+            });
+            return {};
+          }),
+        ),
+      ),
     );
-    if (reopened) return { version, outcome: { templateId, status: 'reopened' } };
-    unwrap(redirected);
+    if (typeof redirected === 'object' && 'reopened' in redirected) {
+      return { version, outcome: { templateId, status: 'reopened' } };
+    }
     return { version, outcome: { templateId, status: 'loaded', approvedBy } };
   } catch (err) {
     // One template's failure (its script, its approver's access, a step out of retries) leaves
@@ -771,6 +841,11 @@ const isActor = (v: unknown): v is MigrationActor => {
     a?.kind === 'deployment'
   );
 };
+
+const sameActor = (a: MigrationActor | null, b: MigrationActor): boolean =>
+  a?.kind === b.kind &&
+  (a.kind !== 'key' || (b.kind === 'key' && a.keyId === b.keyId)) &&
+  (a.kind !== 'member' || (b.kind === 'member' && a.memberId === b.memberId));
 
 /** Outcomes in a stable order (by template id), whatever order they resolved in. */
 const inOrder = (outcomes: TemplateOutcome[]): TemplateOutcome[] =>

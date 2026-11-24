@@ -641,7 +641,7 @@ describe('reopening an approved template', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('apiId: must stay "post"');
   });
 
-  it('says why it was refused, and offers it only to content:manage', async () => {
+  it('says why it was refused, and gives focus back', async () => {
     client.reopenMigrationTemplate.mockRejectedValueOnce(
       refusal(409, 'conflict', 'The template was approved again'),
     );
@@ -650,6 +650,52 @@ describe('reopening an approved template', () => {
     await press('Reopen template');
     expect(await screen.findByText('It wasn’t reopened')).toBeTruthy();
     expect(screen.getByText('The template was approved again')).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Reopen for changes…' }),
+      ),
+    );
+  });
+
+  it('shows no other question when the answer was lost and it was reopened', async () => {
+    client.listContentTypes.mockResolvedValueOnce([{ apiId: 'post', name: 'Post' }]);
+    client.reopenMigrationTemplate.mockImplementationOnce(async () => {
+      template = { ...template, status: 'authoring' };
+      throw new TypeError('network');
+    });
+    open();
+    await press('Reopen for changes…');
+    await press('Reopen template');
+    expect(await screen.findByText('The reopening didn’t confirm')).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body));
+    // Approving it again says what that replaces, and what it leaves.
+    await press('Approve…');
+    const ask = await screen.findByRole('alertdialog');
+    expect(ask.textContent).toMatch(/This revises and publishes/);
+    expect(ask.textContent).toMatch(/changed on the content type since is replaced/);
+    expect(ask.textContent).not.toMatch(/No entries are made yet/);
+  });
+
+  it('asks for a version nobody here read to be read, once reopened', async () => {
+    template = authored();
+    const { qc } = open();
+    await screen.findByRole('button', { name: 'Approve…' });
+    // Someone else saved another version and approved it.
+    template = authored({ status: 'approved', contentTypeId: 'post', reviewDigest: digest('e') });
+    await qc.invalidateQueries();
+    await press('Reopen for changes…');
+    await press('Reopen template');
+    expect(await screen.findByText('This template changed since you read it')).toBeTruthy();
+  });
+
+  it('isn’t offered on a run that failed, and says so', async () => {
+    status = 'failed';
+    open();
+    expect(
+      await screen.findByText('The run failed, so its templates can’t be reopened.'),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Reopen for changes…' })).toBeNull();
   });
 
   it('isn’t offered without content:manage', async () => {

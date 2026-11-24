@@ -523,12 +523,19 @@ describe('site migrations on D1', () => {
       await store.migrations.countOutputs({ ...scope, environmentId: 'x' }, r.id, 't1', ['v1']),
     ).toEqual([]);
 
-    await store.migrations.stampOutputs({ ...scope, environmentId: 'x' }, r.id, 't1', 'bare', 'v1');
+    await store.migrations.stampOutputs(
+      { ...scope, environmentId: 'x' },
+      r.id,
+      't1',
+      'bare',
+      'v1',
+      LATER,
+    );
     await store.withTransaction((tx) =>
-      tx.migrations.stampOutputs(scope, r.id, 't1', 'bare', 'v0'),
+      tx.migrations.stampOutputs(scope, r.id, 't1', 'bare', 'v0', LATER),
     );
     const stamped = await store.migrations.getPage(scope, r.id, 'p-00004');
-    expect(stamped).toMatchObject({ outputScript: 'v0', stage: 'needs-fix', updatedAt: AT });
+    expect(stamped).toMatchObject({ outputScript: 'v0', stage: 'needs-fix', updatedAt: LATER });
     expect((await store.migrations.getPage(scope, r.id, 'p-00006'))?.outputScript).toBe('bare');
     expect((await store.migrations.getPage(scope, r.id, 'p-00001'))?.outputScript).toBe('v1');
   });

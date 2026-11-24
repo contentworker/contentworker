@@ -124,10 +124,15 @@ export class InMemoryMigrationStore implements MigrationStore {
     templateId: string,
     from: string,
     to: string,
+    at: string,
   ): Promise<void> {
     for (const page of this.pagesOf(scope, runId)) {
       if (page.templateId !== templateId || page.outputScript !== from) continue;
-      this.pageData.set(`${scopeKey(scope)}::${runId}::${page.id}`, { ...page, outputScript: to });
+      this.pageData.set(`${scopeKey(scope)}::${runId}::${page.id}`, {
+        ...page,
+        outputScript: to,
+        updatedAt: at,
+      });
     }
   }
 

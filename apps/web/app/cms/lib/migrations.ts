@@ -323,6 +323,8 @@ export function lockedReason(
   template: Pick<MigrationTemplateView, 'status'>,
   run: MigrationRunView['run'] | undefined,
 ): string | undefined {
+  if (template.status === 'approved' && run?.status === 'failed')
+    return 'This template is approved and the run failed, so its model and script can’t be changed.';
   if (template.status === 'approved')
     return 'This template is approved, so its model and script are held: its pages are transformed and loaded with what was approved. To change them, reopen it under Approve.';
   if (template.status === 'approving')

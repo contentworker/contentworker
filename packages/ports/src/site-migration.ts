@@ -48,8 +48,9 @@ export interface MigrationStore {
    */
   movePages(scope: Scope, runId: string, moves: readonly MigrationPageMove[]): Promise<void>;
   /**
-   * Marks a template's pages whose `outputScript` is `from` as `to`, touching nothing else of them
-   * (not their `updatedAt`): how reopening a template keeps the version of outputs recorded by
+   * Marks a template's pages whose `outputScript` is `from` as `to`, written `at`, touching nothing
+   * else of them (a step that read one before loses its compare-and-set, and reads it again): how
+   * reopening a template keeps the version of outputs recorded by
    * their script alone.
    */
   stampOutputs(
@@ -58,6 +59,7 @@ export interface MigrationStore {
     templateId: string,
     from: string,
     to: string,
+    at: string,
   ): Promise<void>;
   /**
    * Fails the unit of work with `TransactionConflictError` unless the template is `approved` at

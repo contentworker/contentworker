@@ -858,7 +858,7 @@ describe('reopening an approved template', () => {
     // A new model over the same script: the pages are the earlier version's.
     await reapprove(h, { model: REVISED });
     expect((await pagesOf(h)).map((p) => p.outputScript)).toEqual(legacy.map(() => digest));
-    expect((await pagesOf(h)).map((p) => p.updatedAt)).toEqual(legacy.map((p) => p.updatedAt));
+    expect((await pagesOf(h)).map((p) => p.stage)).toEqual(legacy.map((p) => p.stage));
     expect(await transformTemplatePages(ctx, deps, scope, ref)).toMatchObject({ transformed: 5 });
   });
 

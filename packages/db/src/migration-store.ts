@@ -246,11 +246,11 @@ export function makeMigrationStore(x: Exec): MigrationStore {
       statements.push(db.delete(schema.guard));
       await writeAll(x, statements);
     },
-    async stampOutputs(scope, runId, templateId, from, to) {
+    async stampOutputs(scope, runId, templateId, from, to, at) {
       await x.write(
         db
           .update(pages)
-          .set({ outputScript: to })
+          .set({ outputScript: to, updatedAt: new Date(at) })
           .where(
             and(
               ofRun(pages, scope, runId),
