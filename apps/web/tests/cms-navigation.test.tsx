@@ -16,6 +16,7 @@ const client = {
   listEnvironments: vi.fn(async () => []),
   listSpaces: vi.fn(async () => [{ id: 'acme', name: 'Acme' }]),
   countPendingApprovals: vi.fn(async () => ({ workflowTasks: 2, agentReviews: 1, total: 3 })),
+  getSpaceAccess: vi.fn(async () => ({ scopes: ['space:admin'], subject: 'me' })),
 };
 const conn = { space: 'acme', environment: 'staging', locale: 'en-US' };
 
@@ -118,6 +119,17 @@ describe('nav source', () => {
     expect(visibleNav(DEFAULT_FEATURES).some((n) => n.to === '/approvals')).toBe(true);
   });
 
+  it('shows Migrations only to a role that can read a run, once its scopes are known', () => {
+    const at = (scopes?: string[]) =>
+      visibleNav(DEFAULT_FEATURES, scopes).some((n) => n.to === '/migrations');
+    expect(at(undefined)).toBe(false);
+    expect(at(['content:write', 'content:publish'])).toBe(false);
+    expect(at(['content:manage'])).toBe(true);
+    expect(at(['migration:run'])).toBe(true);
+    // An administrator's role holds migration:run without it being written down.
+    expect(at(['space:admin'])).toBe(true);
+  });
+
   it('leaves Approvals out everywhere while its feature is off', () => {
     const off = visibleNav({ ...DEFAULT_FEATURES, approvals: false });
     expect(off.some((n) => n.to === '/approvals')).toBe(false);
@@ -164,7 +176,11 @@ describe('command palette', () => {
     palette('/content/article');
     act(openCommandPalette);
     const list = await screen.findByRole('listbox', { name: 'Results' });
-    for (const n of visibleNav(DEFAULT_FEATURES))
+    const scopes = ['space:admin'];
+    await waitFor(() =>
+      expect(within(list).getByRole('option', { name: 'Migrations' })).toBeTruthy(),
+    );
+    for (const n of visibleNav(DEFAULT_FEATURES, scopes))
       expect(within(list).getByRole('option', { name: n.label })).toBeTruthy();
     expect(within(list).getByRole('option', { name: 'Keyboard shortcuts' })).toBeTruthy();
     expect(within(list).getByRole('option', { name: 'Sign out' })).toBeTruthy();

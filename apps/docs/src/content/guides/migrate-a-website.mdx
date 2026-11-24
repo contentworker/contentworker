@@ -19,9 +19,13 @@ Discovery and clustering are built, on every surface:
   through the steps.
 - `cma.migrations` in the [Management SDK](/guides/sdks/) and `contentworker migrate` in the
   [command-line tool](/guides/cli/).
+- **Migrations** in the admin (under Build, for roles that hold `migration:run` or
+  `content:manage`): the environment's runs, a form to start one, and each run's steps, templates
+  and pages. **Fetch until done** keeps fetching batches until no pages are waiting, and can be
+  stopped at any point.
 
-Template authoring, loading pages as entries, publishing them and an admin screen for runs are not
-part of this yet. A run ends, for now, at its list of templates and the pages in each.
+Template authoring, loading pages as entries and publishing them are not part of this yet. A run
+ends, for now, at its list of templates and the pages in each.
 
 ## Before you start
 

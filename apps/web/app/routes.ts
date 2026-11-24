@@ -55,6 +55,9 @@ export default [
       route('workflows/:id', 'routes/workflow.tsx', { id: 'workflow' }),
       // The block catalog pushed from code (`contentworker blocks push`): read-only here.
       route('blocks', 'routes/blocks.tsx', { id: 'blocks' }),
+      // Site migration: a website brought in as structured content, one run at a time.
+      route('migrations', 'routes/migrations.tsx', { id: 'migrations' }),
+      route('migrations/:runId', 'routes/migration.tsx', { id: 'migration' }),
       route('taxonomy', 'routes/taxonomy.tsx', { id: 'taxonomy' }),
       route('assets', 'routes/assets.tsx', { id: 'assets' }),
       // The screen's old address: bookmarks and links keep working.

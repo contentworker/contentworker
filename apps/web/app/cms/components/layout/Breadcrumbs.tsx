@@ -67,6 +67,14 @@ export function Breadcrumbs({
     { enabled: false },
   ).data;
 
+  // A migration run reads as its name, from its page's own query (never fetched from here).
+  const runId = segments[0] === 'migrations' ? segments[1] : undefined;
+  const run = useScopedQuery(
+    ['migrations', 'run', runId ? decodeURIComponent(runId) : ''],
+    () => client.getMigrationRun(decodeURIComponent(runId ?? '')),
+    { enabled: false },
+  ).data?.run;
+
   if (segments.length === 0) return null;
 
   const labelAt = (i: number): string => {
@@ -80,6 +88,7 @@ export function Breadcrumbs({
     }
     if (isContent && i === 1) return type?.name ?? seg;
     if (workflowId && i === 1) return workflow?.name || 'Workflow';
+    if (runId && i === 1) return run?.name || 'Run';
     if (isContent && i === 2) {
       if (!entryId) return CONTENT_CHILD[seg] ?? sentence(seg);
       const title = entry && entryTitle(entry.fields, type?.displayField, conn.locale);
