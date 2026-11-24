@@ -56,6 +56,7 @@ import type {
   MenuItemInput,
   MenuLink,
   MigrationActor,
+  MigrationAgentTokens,
   MigrationArtifact,
   MigrationDriverStatus,
   MigrationPage,
@@ -1532,11 +1533,14 @@ export interface MigrationRunView {
   readonly driver?: MigrationDriver;
   readonly pages: MigrationPageCounts;
   readonly templates: readonly MigrationTemplateView[];
+  /** Its authoring agents' token cap and spending; absent from an API older than them. */
+  readonly agentTokens?: MigrationAgentTokens;
 }
 
 export interface MigrationRunInput {
   readonly name?: string;
   readonly source: MigrationSourceInput;
+  readonly agentTokenCap?: number;
 }
 
 /** One fetch batch's outcome; `more` while pages still wait, `unavailable` when nothing ran. */

@@ -1589,8 +1589,28 @@ export const migrationRuns = sqliteTable(
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     createdBy: text('created_by'),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+    /** 0054_migration_agent_tokens: written once, outside the rewrite; null, the default cap. */
+    agentTokenCap: integer('agent_token_cap'),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.id] })],
+);
+
+/** A run's template agents' token lines (0054_migration_agent_tokens), one per agent. */
+export const migrationAgentTokens = sqliteTable(
+  'migration_agent_tokens',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    runId: text('run_id').notNull(),
+    templateId: text('template_id').notNull(),
+    seq: integer('seq').notNull(),
+    spent: integer('spent').notNull(),
+    reserved: integer('reserved').notNull().default(0),
+    reservedUntil: integer('reserved_until', { mode: 'timestamp_ms' }),
+    capped: integer('capped', { mode: 'boolean' }).notNull().default(false),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.runId, t.templateId] })],
 );
 
 /** A run's templates (0048_site_migrations), replaced together when its pages are clustered. */

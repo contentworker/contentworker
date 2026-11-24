@@ -187,7 +187,9 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
         'A migration run: its status (the step that last finished: created, inventoried, ' +
         'clustered), what its inventory found and skipped, page counts by stage, and its ' +
         'templates, largest first. `driver` is its background run: state, who started it, and the ' +
-        'go-ahead to publish (none, given, or unknown), which a run takes once.',
+        'go-ahead to publish (none, given, or unknown), which a run takes once. ' +
+        'agentTokens is what a background run’s authoring agents may take (cap) and have; a ' +
+        'template in stoppedTemplateIds is yours to author.',
       inputSchema: toolSchema('migration_status', () => z.object({ ...runArgs, ...scopeArgs })),
       annotations: { readOnlyHint: true },
     },

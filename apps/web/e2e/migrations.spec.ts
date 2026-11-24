@@ -76,6 +76,12 @@ async function stubRun(page: Page) {
         byStage,
       },
       templates,
+      agentTokens: {
+        cap: 12_000_000,
+        spent: 340_000,
+        reserved: 0,
+        stoppedTemplateIds: ['tpl-about'],
+      },
     };
   };
   const json = (route: Route, body: unknown, status = 200) =>
@@ -397,6 +403,8 @@ async function stubRun(page: Page) {
 }
 
 test('a website migration: list, a new run, and its steps', async ({ page }, testInfo) => {
+  // The whole of a run, with a scan at each stop: past the default 30 s on a busy runner.
+  test.setTimeout(90_000);
   const stamp = Date.now();
   const calls = await stubRun(page);
   await openCms(page, '/migrations');
@@ -454,6 +462,11 @@ test('a website migration: list, a new run, and its steps', async ({ page }, tes
   await expect(templates.getByText('Blog post')).toBeVisible();
   await expect(page.getByText('Grouped 24 pages into 2 templates.')).toBeVisible();
   await expect(page.locator('#templates h2 [tabindex="-1"]')).toBeFocused();
+
+  // What its agents may take and have, and the template whose agent stopped short.
+  await expect(page.getByText('12,000,000')).toBeVisible();
+  const stopped = page.getByRole('alert').filter({ hasText: 'One agent stopped at the cap' });
+  await expect(stopped.getByRole('link', { name: 'About page' })).toBeVisible();
 
   // A template narrows the pages to its own; the failed page says what the site answered.
   await templates.getByRole('button', { name: 'Show pages of About page' }).click();

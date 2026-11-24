@@ -14,6 +14,10 @@ describe('@contentworker/sdk-management migrations', () => {
     }) as unknown as typeof fetch;
     const client = createManagementClient({ ...base, fetch: fetchImpl });
     await client.migrations.create({ source: { kind: 'sitemap', url: 'https://old.test/' } });
+    await client.migrations.create({
+      source: { kind: 'sitemap', url: 'https://old.test/' },
+      agentTokenCap: 500_000,
+    });
     await client.migrations.list({ limit: 5 });
     await client.migrations.get('r 1');
     await client.migrations.inventory('r1');
@@ -24,6 +28,7 @@ describe('@contentworker/sdk-management migrations', () => {
     await client.migrations.templates('r1');
     expect(calls).toEqual([
       'POST /migrations/runs {"source":{"kind":"sitemap","url":"https://old.test/"}}',
+      'POST /migrations/runs {"source":{"kind":"sitemap","url":"https://old.test/"},"agentTokenCap":500000}',
       'GET /migrations/runs?limit=5',
       'GET /migrations/runs/r%201',
       'POST /migrations/runs/r1/inventory',

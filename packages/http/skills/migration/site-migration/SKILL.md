@@ -55,7 +55,8 @@ credentials, never from an argument.
    `/sitemap.xml`). Use `kind: "crawl"` from a start page only when the site has no sitemap.
    Narrow it with `include` and `exclude` path globs (`*` stays in one segment, `**` crosses
    them), and cap it with `maxPages` (default 500). Confirm the scope with the person before you
-   start: a run fetches every page it takes.
+   start: a run fetches every page it takes. If it will run in the background, `agentTokenCap` caps
+   what its authoring agents may spend in all (default 12,000,000 tokens); it can't be changed later.
 2. **Create** with `migration_create`. Nothing is fetched yet. Keep the returned `id`; every other
    tool takes it as `run`.
 3. **Inventory** with `migration_inventory`. A sitemap source adds every page it lists that the
@@ -162,7 +163,9 @@ reached that point. A run takes one: a `conflict` (`go_ahead_taken`) means anoth
 stands, so tell the person rather than sending theirs again; `signalled: false` means it was recorded
 but not heard, so send the same one again. Follow the run with `migration_status`: `driver` says
 where its background run is, who started it, and whether the go-ahead was given (`unknown` is not
-no). A `not_found` from `migration_publish`
+no), and `agentTokens` what the authoring agents may take and have: a template in
+`stoppedTemplateIds` lost its agent to the cap, so author it yourself (`template-content-model`,
+`template-import-script`). A `not_found` from `migration_publish`
 means the run has no driver: ask the person whether to start it or publish with
 `migration_publish_entries`. A run whose status is `stopped` (nothing approved in time, or no
 go-ahead) can't be started again; its templates can still be taken through step by step.

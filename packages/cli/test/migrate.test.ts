@@ -61,6 +61,8 @@ describe('migrate', () => {
       '50',
       '--threshold',
       '0.7',
+      '--agent-token-cap',
+      '500000',
     );
     expect(JSON.parse(h.calls[1]?.body ?? '')).toEqual({
       source: {
@@ -71,11 +73,27 @@ describe('migrate', () => {
         maxPages: 50,
       },
       threshold: 0.7,
+      agentTokenCap: 500000,
     });
     expect((await h.run('migrate', 'create')).code).toBe(EXIT.usage);
     expect((await h.run('migrate', 'create', 'https://old.test/', '--threshold', '2')).code).toBe(
       EXIT.usage,
     );
+  });
+
+  it('shows what a run’s agents have taken of its token cap, where the server says', async () => {
+    const agentTokens = {
+      cap: 12_000_000,
+      spent: 340_000,
+      reserved: 40_000,
+      stoppedTemplateIds: ['t1'],
+    };
+    const h = await harness({ [`GET ${R}/r1`]: () => ({ ...view(), agentTokens }) }, { env: ENV });
+    expect((await h.run('migrate', 'status', 'r1')).stdout).toMatch(
+      /340000 of 12000000, 40000 held for calls under way \(1 of its agents stopped at the cap\)/,
+    );
+    const older = await harness({ [`GET ${R}/r1`]: () => view() }, { env: ENV });
+    expect((await older.run('migrate', 'status', 'r1')).stdout).not.toMatch(/agent tokens/);
   });
 
   it('steps: inventories a new run, then fetches batch after batch until none wait', async () => {

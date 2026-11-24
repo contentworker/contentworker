@@ -106,6 +106,44 @@ async function createRun(send: ReturnType<typeof makeApp>['send'], token = 'runn
 }
 
 describe('site migration over HTTP', () => {
+  it('takes a token cap for its agents, within bounds, and reads it back with what is spent', async () => {
+    const { send, wired } = makeApp();
+    const source = { kind: 'sitemap', url: `${O}/` };
+    for (const agentTokenCap of [1, 249_999, 15_000_001, 300_000.5, '200000']) {
+      expect((await send('POST', '', { source, agentTokenCap })).status).toBe(422);
+    }
+    const run = await json<Run>(await send('POST', '', { source, agentTokenCap: 250_000 }));
+    const scope = { spaceId: 's1', environmentId: 'main' };
+    const at = wired.ctx.clock.now();
+    await wired.ctx.store.migrations.reserveAgentTokens(scope, run.id, {
+      templateId: 't1',
+      seq: 1,
+      spent: 70_000,
+      tokens: 30_000,
+      at: at.toISOString(),
+      until: new Date(at.getTime() + 60_000).toISOString(),
+    });
+    const line = { templateId: 't2', seq: 1, spent: 20_000, at: at.toISOString() };
+    await wired.ctx.store.migrations.capAgentTokens(scope, run.id, line);
+    // Whoever may read the run, approver or runner.
+    for (const token of ['runner', 'manager']) {
+      const view = await json<{ agentTokens: unknown }>(
+        await send('GET', `/${run.id}`, undefined, token),
+      );
+      expect(view.agentTokens).toEqual({
+        cap: 250_000,
+        spent: 90_000,
+        reserved: 30_000,
+        stoppedTemplateIds: ['t2'],
+      });
+    }
+    const usual = await createRun(send);
+    expect(
+      (await json<{ agentTokens: { cap: number } }>(await send('GET', `/${usual.id}`))).agentTokens
+        .cap,
+    ).toBe(12_000_000);
+  });
+
   it('creates a run, inventories, fetches in batches, clusters, and reads it all back', async () => {
     const { send, source } = makeApp();
     const run = await createRun(send);

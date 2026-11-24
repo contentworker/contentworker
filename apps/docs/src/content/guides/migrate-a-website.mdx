@@ -229,6 +229,26 @@ whatever becomes of the engine run. Until then you can cluster it by hand as oft
 every page first, because a page fetched after the clustering the engine takes joins no template. To
 group the pages another way afterwards, create another run. Follow the run with its status and pages as before.
 
+### Cap what the agents spend
+
+`agentTokenCap` is the most tokens the run's authoring agents may take in all, prompts and answers,
+however many run at once. Give it when you create the run: 250,000 to 15,000,000, or 12,000,000 when
+you leave it out, which is what the agents' own limits add up to. It can't be changed afterwards, and
+it applies after the space's AI budget. It counts only those agents' calls.
+
+Read the run to see where it stands:
+
+| `agentTokens`        | Meaning                                                                  |
+| -------------------- | ------------------------------------------------------------------------ |
+| `cap`                | The run's cap.                                                           |
+| `spent`              | Tokens counted, with the whole reservation of a call that was cut short. |
+| `reserved`           | Held for calls under way.                                                |
+| `stoppedTemplateIds` | Templates whose agent stopped at the cap.                                |
+
+Each agent reserves the most its next call can take and stops when that no longer fits, so the run
+can end a little under its cap. A stopped agent doesn't fail the run: author its template by hand or
+over MCP, and approve it as usual.
+
 ### With curl
 
 ```sh
@@ -325,7 +345,7 @@ contentworker migrate publish <run> --via-release --release-title 'Site launch'
 ```
 
 `migrate create` takes `--crawl` for a crawl source, `--include` and `--exclude` (repeatable),
-`--max-pages`, `--name` and `--threshold`. `migrate step` inventories a run that was just created,
+`--max-pages`, `--name`, `--threshold` and `--agent-token-cap`. `migrate step` inventories a run that was just created,
 then fetches batches until none wait (`--batch`, `--max-batches`); run it again after a stop. It
 exits `1` with the code `site_unavailable` when the site's `robots.txt` can't be read.
 `migrate template` shows a template's model, script version, last try and `reviewDigest`.

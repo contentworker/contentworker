@@ -379,6 +379,16 @@ describe('site migrations on D1', () => {
       [{ template: template(r.id), pageIds: ['p-00001'] }],
       AT,
     );
+    expect(
+      await store.migrations.reserveAgentTokens(scope, r.id, {
+        templateId: 't1',
+        seq: 1,
+        spent: 0,
+        tokens: 5,
+        at: AT,
+        until: LATER,
+      }),
+    ).toBe('granted');
     await store.spaces.deleteEnvironment(spaceId, env, [], {
       id: uid(),
       spaceId,
@@ -394,6 +404,7 @@ describe('site migrations on D1', () => {
       'migration_templates',
       'migration_pages',
       'migration_assets',
+      'migration_agent_tokens',
     ]) {
       const n = await testDb
         .prepare(`SELECT count(*) AS n FROM ${table} WHERE space_id = ? AND environment_id = ?`)

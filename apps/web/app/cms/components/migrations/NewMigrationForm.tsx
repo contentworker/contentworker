@@ -1,4 +1,10 @@
-import { MIGRATION_MAX_PAGES, type MigrationSourceKind } from '@contentworker/domain';
+import {
+  MIGRATION_DEFAULT_TOKEN_CAP,
+  MIGRATION_MAX_PAGES,
+  MIGRATION_MAX_TOKEN_CAP,
+  MIGRATION_MIN_TOKEN_CAP,
+  type MigrationSourceKind,
+} from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { DialogError } from '@contentworker/ui/dialog';
 import {
@@ -22,6 +28,7 @@ import {
 } from '~/cms/components/discard-guard';
 import { FormSheet } from '~/cms/components/form-sheet';
 import { useClient } from '~/cms/lib/client-context';
+import { count } from '~/cms/lib/format';
 import { type MigrationRun, refusedSave } from '~/cms/lib/management';
 import { globsFrom, type SourceField, sourceIssues } from '~/cms/lib/migrations';
 
@@ -115,6 +122,7 @@ export function NewMigrationForm({
   const [include, setInclude] = useState('');
   const [exclude, setExclude] = useState('');
   const [maxPages, setMaxPages] = useState(DEFAULT_MAX_PAGES);
+  const [tokenCap, setTokenCap] = useState('');
   const [issues, setIssues] = useState<Partial<Record<SourceField | 'form', string>>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -126,7 +134,8 @@ export function NewMigrationForm({
     name.trim() !== '' ||
     include.trim() !== '' ||
     exclude.trim() !== '' ||
-    maxPages !== DEFAULT_MAX_PAGES;
+    maxPages !== DEFAULT_MAX_PAGES ||
+    tokenCap.trim() !== '';
   useEffect(() => {
     onDirty(dirty);
     return () => onDirty(false);
@@ -139,7 +148,9 @@ export function NewMigrationForm({
   /** Says what's wrong beside each field it names, and takes the first of them. */
   const refuse = (next: Partial<Record<SourceField | 'form', string>>) => {
     setIssues(next);
-    const first = (['url', 'name', 'include', 'exclude', 'maxPages'] as const).find((f) => next[f]);
+    const first = (
+      ['url', 'name', 'include', 'exclude', 'maxPages', 'agentTokenCap'] as const
+    ).find((f) => next[f]);
     if (first) fields.current[first]?.focus();
   };
 
@@ -155,12 +166,19 @@ export function NewMigrationForm({
       });
       return;
     }
+    // What the browser couldn't read as a number reads as empty, which would take the default.
+    if ((fields.current.agentTokenCap as HTMLInputElement | null)?.validity.badInput) {
+      refuse({ agentTokenCap: 'Enter a whole number.' });
+      return;
+    }
+    const cap = tokenCap.trim() === '' ? undefined : Number(tokenCap);
     const most = maxPages.trim() === '' ? undefined : Number(maxPages);
     setIssues({});
     setBusy(true);
     try {
       const run = await client.createMigrationRun({
         ...(name.trim() ? { name: name.trim() } : {}),
+        ...(cap !== undefined ? { agentTokenCap: cap } : {}),
         source: {
           kind,
           url: url.trim(),
@@ -334,6 +352,32 @@ export function NewMigrationForm({
           {said(
             'maxPages',
             `The run takes up to this many pages, at most ${MIGRATION_MAX_PAGES.toLocaleString('en-US')}.`,
+          )}
+        </Field>
+        <Field>
+          <div className="flex items-baseline justify-between gap-2">
+            <FieldLabel htmlFor={`${id}-agentTokenCap`}>Agent token cap</FieldLabel>
+            <span className="text-muted-foreground text-xs">Optional</span>
+          </div>
+          <Input
+            id={`${id}-agentTokenCap`}
+            ref={(el) => {
+              fields.current.agentTokenCap = el;
+            }}
+            type="number"
+            inputMode="numeric"
+            min={MIGRATION_MIN_TOKEN_CAP}
+            max={MIGRATION_MAX_TOKEN_CAP}
+            step={1}
+            className="h-8 w-40 tabular"
+            value={tokenCap}
+            onChange={(e) => setTokenCap(e.target.value)}
+            aria-invalid={issues.agentTokenCap ? true : undefined}
+            aria-describedby={describedBy('agentTokenCap', true)}
+          />
+          {said(
+            'agentTokenCap',
+            `The most tokens its authoring agents may use in all when it runs in the background: ${count(MIGRATION_MIN_TOKEN_CAP)} to ${count(MIGRATION_MAX_TOKEN_CAP)}. Empty uses ${count(MIGRATION_DEFAULT_TOKEN_CAP)}. It can’t be changed later.`,
           )}
         </Field>
         {error ? <DialogError>{error}</DialogError> : null}

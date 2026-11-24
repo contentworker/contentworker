@@ -942,7 +942,14 @@ function describeGoAhead(g: MigrationDriver['goAhead']): string | undefined {
 }
 
 function renderRunView(view: MigrationRunView): string {
-  const { run, pages } = view;
+  const { run, pages, agentTokens: t } = view;
+  const agentTokens = t
+    ? `${t.spent} of ${t.cap}` +
+      (t.reserved ? `, ${t.reserved} held for calls under way` : '') +
+      (t.stoppedTemplateIds.length
+        ? ` (${t.stoppedTemplateIds.length} of its agents stopped at the cap)`
+        : '')
+    : undefined;
   const stages = Object.entries(pages.byStage)
     .map(([stage, n]) => `${stage} ${n}`)
     .join(', ');
@@ -956,6 +963,7 @@ function renderRunView(view: MigrationRunView): string {
       'go-ahead': view.driver ? describeGoAhead(view.driver.goAhead) : undefined,
       pages: `${pages.total} (${pages.fetched} fetched, ${pages.failed} failed)`,
       stages: stages || undefined,
+      'agent tokens': agentTokens,
       skipped: run.inventory
         ? Object.entries(run.inventory.skipped)
             .filter(([, n]) => n > 0)
@@ -988,11 +996,16 @@ const migrateCreate: Command = {
     'max-pages': { type: 'string', description: 'Most pages the run takes (default 500)' },
     name: { type: 'string', description: 'The run’s name (default: the host)' },
     threshold: { type: 'string', description: 'Score a page needs to pass, 0..1 (default 0.8)' },
+    'agent-token-cap': {
+      type: 'string',
+      description: 'Tokens the run’s authoring agents may take in all (default 12000000)',
+    },
   },
   async run(ctx) {
     const url = arg(ctx, 0, '<url>');
     const maxPages = int(ctx, 'max-pages');
     const threshold = fraction(ctx, 'threshold');
+    const agentTokenCap = int(ctx, 'agent-token-cap');
     const name = str(ctx, 'name');
     const run = await (await ctx.client()).migrations.create({
       source: {
@@ -1004,6 +1017,7 @@ const migrateCreate: Command = {
       },
       ...(name ? { name } : {}),
       ...(threshold !== undefined ? { threshold } : {}),
+      ...(agentTokenCap !== undefined ? { agentTokenCap } : {}),
     });
     return {
       json: run,

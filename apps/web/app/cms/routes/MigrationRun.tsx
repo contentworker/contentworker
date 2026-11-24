@@ -14,6 +14,7 @@ import { MigrationTemplates } from '~/cms/components/migrations/MigrationTemplat
 import { RunBackground } from '~/cms/components/migrations/RunBackground';
 import { RunFinish } from '~/cms/components/migrations/RunFinish';
 import { RunSteps } from '~/cms/components/migrations/RunSteps';
+import { RunTokens } from '~/cms/components/migrations/RunTokens';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { ToneBadge } from '~/cms/components/status';
 import { useClient } from '~/cms/lib/client-context';
@@ -254,6 +255,7 @@ export function MigrationRunPage() {
           scopes={scopes}
         />
       </Section>
+      <RunTokens view={view.data} />
       <Section
         id="pages"
         title={
@@ -320,6 +322,18 @@ function RunSkeleton() {
         <div aria-hidden="true" className="p-4">
           <SkeletonText width="40%" />
         </div>
+      </Section>
+      <Section title="Agent tokens">
+        <dl className="flex flex-wrap gap-x-10 gap-y-3">
+          {['Spent', 'Held for calls under way', 'Cap'].map((label) => (
+            <div key={label} className="flex flex-col gap-0.5">
+              <dt className="caption">{label}</dt>
+              <dd>
+                <SkeletonText width="4rem" />
+              </dd>
+            </div>
+          ))}
+        </dl>
       </Section>
       <Section title="Pages" flush>
         <div aria-hidden="true" className="p-4">

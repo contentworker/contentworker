@@ -49,6 +49,7 @@ export * from './migration/score';
 export * from './migration/sitemap';
 export * from './migration/structure';
 export * from './migration/template-model';
+export * from './migration/tokens';
 export * from './network/special-addresses';
 export * from './plugin/operation-jobs';
 export * from './plugin/operations';

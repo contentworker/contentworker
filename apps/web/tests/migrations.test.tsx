@@ -196,6 +196,39 @@ describe('a new run', () => {
     });
   });
 
+  it('sends an agent token cap only when one is typed, and shows why it is refused', async () => {
+    client.createMigrationRun.mockRejectedValueOnce(
+      new ApiError(422, 'POST … → 422', {
+        error: {
+          code: 'validation_failed',
+          message: 'Invalid',
+          issues: [{ field: 'agentTokenCap', message: 'must be at least 100000' }],
+        },
+      }),
+    );
+    const sheet = await openForm();
+    fireEvent.change(sheet.getByLabelText('Sitemap or site URL'), {
+      target: { value: 'https://example.com/' },
+    });
+    const cap = sheet.getByLabelText('Agent token cap');
+    // Typed, but not a number: refused here, never read as "the default".
+    const validity = vi
+      .spyOn(cap as HTMLInputElement, 'validity', 'get')
+      .mockReturnValue({ badInput: true } as ValidityState);
+    fireEvent.click(sheet.getByRole('button', { name: 'Create run' }));
+    expect(await sheet.findByText('Enter a whole number.')).toBeTruthy();
+    expect(client.createMigrationRun).not.toHaveBeenCalled();
+    validity.mockRestore();
+    fireEvent.change(cap, { target: { value: '5' } });
+    fireEvent.click(sheet.getByRole('button', { name: 'Create run' }));
+    const said = await sheet.findByText('must be at least 100000');
+    expect(cap.getAttribute('aria-describedby')).toBe(said.id);
+    expect(document.activeElement).toBe(cap);
+    expect(client.createMigrationRun).toHaveBeenCalledWith(
+      expect.objectContaining({ agentTokenCap: 5 }),
+    );
+  });
+
   it('offers to create again when a create may have landed', async () => {
     client.createMigrationRun.mockRejectedValueOnce(new ApiError(502, 'POST … → 502'));
     const sheet = await openForm();

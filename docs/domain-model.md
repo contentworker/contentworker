@@ -1996,13 +1996,56 @@ screenshot tool, because no Worker binds Browser Rendering. Every tool is bound 
 and template. It can't approve, load or publish. Page HTML (comments, scripts and styles removed,
 clipped) and script outputs reach the model fenced by `wrapUntrusted`. Each turn is metered through
 `generateWithBudget` on the background AI window, starting on the `balanced` tier and moving to
-`flagship` after three tries that don't all pass. A run stops at 30 turns or 600,000 tokens. The
+`flagship` after three tries that don't all pass. An agent stops at 30 turns or 600,000 tokens, or
+at its run's [token cap](#the-runs-token-cap). The
 object takes up to three turns per alarm (none started past five minutes), keeps each message
 under its own storage key (a failed turn keeps the turns before it), always sets its next alarm,
 with backoff after a failure, stops after five failed alarms in a row, gets its alarm back when
 started again, and deletes its storage 30 days
 after it finishes. A try's problems, the page URL and every output reach the model inside the
 fence; only a try's counts are outside it.
+
+#### The run's token cap
+
+`agentTokenCap` is what a run's template agents' model calls may take in all, prompt and answer,
+whichever of them run at once. It counts nothing else: no other AI use in the space, and no MCP
+client's own model. It is given when the run is created (250,000 to 15,000,000, default 12,000,000:
+the 20 agents' own limits of 600,000 added up) and can't be changed afterwards: an agent takes its
+template once, and one that stopped leaves it to a person or an MCP client. A read of the run gives
+`agentTokens`: `cap`, `spent`, `reserved` (held for calls under way) and `stoppedTemplateIds` (the
+templates whose agent stopped at the cap).
+
+Each call is reserved before it and settled after (`site-migration-tokens.ts`). The count is in
+the database, one line per agent (`migration_agent_tokens`), beside the run and outside its
+`version`. Each line holds its agent's own total, which the agent keeps in its object, so writing it
+twice counts once.
+
+- **Reserve.** One conditional upsert takes the reservation when every line's `spent + reserved` and
+  it fit under the cap. The space's AI budget is asked first. A reservation is the most the call can
+  take: the last prompt as the model counted it, the bytes added since (a token is at least a byte),
+  an allowance for the chat template, and the 8,000-token answer limit. On the first call, or after
+  the tier changes, it is the whole prompt in bytes.
+- **Settle.** The agent's total replaces the line's and the reservation goes to 0. A settlement that
+  fails is tried again at the agent's next turn, and after it has ended by its object (every five
+  minutes, 24 times at most; a rollback to code without this deletes such an agent's conversation
+  early). An agent put off lets go of what it may hold first, and one whose reservation went
+  unanswered is never put off past its lapse.
+- **Overshoot.** Spent and reserved never pass the cap, so a call overshoots it only by what the
+  provider reports beyond the call's reservation: at most one call per agent, none when the
+  reservation holds. Use the provider doesn't report as the call's (a gateway's own retries) isn't
+  seen.
+- **Waiting and stopping.** An agent refused only because of others' reservations tries again after
+  30 seconds. One that doesn't fit beside what is spent stops, up to one reservation short of the
+  cap. That isn't a failure of the run: its driver goes on waiting for approvals.
+- **A call that never finished.** The agent's state is stored as a call begins, so one evicted
+  mid-call counts the whole reservation once, as does a timeout or an answer with no usage. These
+  count toward the agent's own 600,000 as well, and after a timeout it waits one minute, doubled for
+  each in a row up to 30, so an outage is waited out. An error from the provider counts what it says
+  it billed, or nothing; a connection lost after the model ran reads as one of those, and isn't
+  counted. An
+  agent that never comes back has its open reservation counted as spent after ten minutes.
+- **Older runs.** A run with no cap on record has the default. An agent in flight starts from the
+  total it already kept, at its next turn. One that had finished isn't counted.
 
 Loading, relinking, redirecting and publishing each take the caller's `Principal` and go through
 the path a person's writes do. Callers pass a context acting as that principal
