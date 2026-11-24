@@ -21,6 +21,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AppContext,
   createContentType,
+  createEntry,
   createMigrationRun,
   getEntry,
   importMigrationRedirects,
@@ -32,6 +33,7 @@ import {
   relinkMigratedPages,
   SYSTEM_CALLER,
   sha256Hex,
+  updateEntry,
 } from '../src/index';
 
 const scope = { spaceId: 'site', environmentId: 'main' };
@@ -517,6 +519,184 @@ describe('loading a template’s pages', () => {
   });
 });
 
+describe('loading, under review', () => {
+  const plain = (name: string) =>
+    article(name, '<p>Just text.</p>', {
+      blocks: [{ variant: 'text', fields: { body: { $html: '<p>Just text.</p>' } } }],
+      assets: [],
+    });
+
+  it('records each asset as it lands, so a step stopped partway fetches only the rest again', async () => {
+    const { run, template } = await seed({ '/blog/one': SITE['/blog/one'] });
+    const put = blob.put.bind(blob);
+    let puts = 0;
+    const spy = vi.spyOn(blob, 'put').mockImplementation(async (key, body, type) => {
+      // The second file's write fails: storage, not the file, so the step stops.
+      if (++puts === 2) throw new Error('bucket unavailable');
+      return put(key, body, type);
+    });
+    await expect(
+      loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id }),
+    ).rejects.toThrow('bucket unavailable');
+    spy.mockRestore();
+    const result = await loadTemplatePages(ctx, deps, admin, scope, {
+      runId: run.id,
+      templateId: template.id,
+    });
+    expect(result).toMatchObject({ loaded: 1, assetFailures: [] });
+    // The first file was fetched once; only the one that failed was fetched again.
+    expect(files.calls.filter((u) => u.endsWith('/shared.png'))).toHaveLength(1);
+    expect(files.calls.filter((u) => u.endsWith('/one.png'))).toHaveLength(2);
+    const { items } = await store.assets.list(scope, { limit: 100, filters: { status: 'all' } });
+    expect(items).toHaveLength(2);
+    // Stamped with who asked.
+    expect(items.map((a) => a.createdBy)).toEqual(['admin-token', 'admin-token']);
+  });
+
+  it('loads a page again when another write took its sourceUrl as it planned, rather than refusing it', async () => {
+    const { run, template } = await seed({ '/blog/one': plain('One') });
+    const find = store.entries.findUniqueConflicts.bind(store.entries);
+    let raced = false;
+    const spy = vi
+      .spyOn(store.entries, 'findUniqueConflicts')
+      .mockImplementation(async (s, claims, exclude) => {
+        const held = await find(s, claims, exclude);
+        if (!raced) {
+          raced = true;
+          // Another load wrote the page's entry after this one looked, and stopped before moving
+          // the page: this load plans a create, and the claim refuses it.
+          await createEntry(ctx, scope, {
+            contentTypeApiId: 'article',
+            fields: { title: { 'en-US': 'Other' }, sourceUrl: { 'en-US': `${O}/blog/one` } },
+          });
+        }
+        return held;
+      });
+    const result = await loadTemplatePages(ctx, deps, admin, scope, {
+      runId: run.id,
+      templateId: template.id,
+    });
+    spy.mockRestore();
+    expect(result).toMatchObject({ loaded: 1, failed: [], deferred: [], more: false });
+    expect(await articles()).toBe(1);
+    const page = await pageAt(run, '/blog/one');
+    expect(page).toMatchObject({ stage: 'loaded', error: null });
+    // The second attempt found the other write's entry and updated it.
+    expect((await getEntry(ctx, scope, page.entryId as string)).fields.title).toEqual({
+      'en-US': 'One',
+    });
+  });
+
+  it('leaves a page to the load that won when two load it at once', async () => {
+    const { run, template } = await seed({ '/blog/one': plain('One') });
+    const find = store.entries.findUniqueConflicts.bind(store.entries);
+    let raced = false;
+    const spy = vi
+      .spyOn(store.entries, 'findUniqueConflicts')
+      .mockImplementation(async (s, claims, exclude) => {
+        const held = await find(s, claims, exclude);
+        if (!raced) {
+          raced = true;
+          clock.advance(1);
+          await loadTemplatePages(ctx, deps, admin, scope, {
+            runId: run.id,
+            templateId: template.id,
+          });
+        }
+        return held;
+      });
+    const outer = await loadTemplatePages(ctx, deps, admin, scope, {
+      runId: run.id,
+      templateId: template.id,
+    });
+    spy.mockRestore();
+    expect(outer).toMatchObject({ loaded: 0, failed: [], deferred: [], more: false });
+    expect(await articles()).toBe(1);
+    expect(await pageAt(run, '/blog/one')).toMatchObject({ stage: 'loaded', error: null });
+  });
+
+  it('looks up only the batch’s source URLs, not every entry of the type', async () => {
+    const { run, template } = await seed({ '/blog/one': plain('One') });
+    const list = vi.spyOn(store.entries, 'list');
+    await loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id });
+    expect(list).not.toHaveBeenCalled();
+    list.mockRestore();
+  });
+
+  it('refuses a page whose markers are out of place, or whose text is markup', async () => {
+    const { run, template } = await seed({
+      '/html-in-symbol': plain('A'),
+      '/html-in-block': plain('B'),
+      '/extra-keys': plain('C'),
+      '/markup-title': plain('D'),
+      '/prose': plain('E'),
+    });
+    const pages = await store.migrations.listPages(scope, run.id, { limit: 10 });
+    const outputs: Record<string, ImportScriptOutput> = {
+      '/html-in-symbol': { ...plain('A'), fields: { title: { $html: '<b>A</b>' } } },
+      '/html-in-block': {
+        ...plain('B'),
+        blocks: [{ variant: 'hero', fields: { heading: { $html: '<p>B</p>' } } }],
+      },
+      '/extra-keys': {
+        ...plain('C'),
+        fields: { title: 'C', summary: { $html: '<p>C</p>', note: 'x' } },
+      },
+      '/markup-title': { ...plain('D'), fields: { title: '<p>D</p>' } },
+      '/prose': { ...plain('E'), fields: { title: 'When a < b and b > c' } },
+    };
+    await store.migrations.savePages(
+      scope,
+      run.id,
+      await Promise.all(
+        pages.map(async (p) => {
+          const raw = JSON.stringify(outputs[p.path]);
+          const key = `${p.output?.key}.${p.path.slice(1)}`;
+          await blob.put(key, raw, 'application/json');
+          return { ...p, output: { key, sha256: sha256Hex(raw), bytes: raw.length } };
+        }),
+      ),
+    );
+    const result = await loadTemplatePages(ctx, deps, admin, scope, {
+      runId: run.id,
+      templateId: template.id,
+    });
+    const reasons = Object.fromEntries(
+      result.failed.map((f) => [new URL(f.url).pathname, f.error]),
+    );
+    expect(reasons['/html-in-symbol']).toMatch(
+      /fields\.title: \$html goes only in a RichText field/,
+    );
+    expect(reasons['/html-in-block']).toMatch(/blocks\[0\]\.heading: \$html goes only/);
+    expect(reasons['/extra-keys']).toMatch(/fields\.summary: a \$html or \$asset marker/);
+    expect(reasons['/markup-title']).toMatch(/fields\.title: holds markup/);
+    expect(result.loaded).toBe(1);
+    expect((await entryOf(run, '/prose')).fields.title).toEqual({
+      'en-US': 'When a < b and b > c',
+    });
+  });
+
+  it('refuses a role that may not query or write sourceUrl before downloading anything', async () => {
+    const { run, template } = await seed(SITE);
+    const grant = (over: object): Principal => ({
+      spaceId: 'site',
+      kind: 'user',
+      scopes: [SCOPES.contentWrite],
+      contentGrants: [{ contentTypeApiId: 'article', actions: ['read', 'write'], ...over }],
+    });
+    for (const who of [
+      grant({ readOnlyFields: ['sourceUrl'] }),
+      grant({ deniedFields: ['sourceUrl'] }),
+    ]) {
+      await expect(
+        loadTemplatePages(ctx, deps, who, scope, { runId: run.id, templateId: template.id }),
+      ).rejects.toThrow(ForbiddenError);
+    }
+    expect(files.calls).toEqual([]);
+    expect(await articles()).toBe(0);
+  });
+});
+
 describe('relinking migrated pages', () => {
   it('points the links left as hyperlinks at the entries loaded since, saving only those', async () => {
     const { run, template } = await seed(SITE);
@@ -579,6 +759,38 @@ describe('relinking migrated pages', () => {
       after: first.next as string,
     });
     expect(rest).toEqual({ checked: 0, relinked: 0, unresolvedLinks: 0, skipped: [] });
+    expect((await pageAt(run, '/blog/one')).unresolvedLinks).toBe(1);
+  });
+
+  it('skips an entry edited after it was read, keeping its count for the next pass', async () => {
+    const { run, template } = await seed(SITE);
+    await loadTemplatePages(ctx, deps, admin, scope, {
+      runId: run.id,
+      templateId: template.id,
+      batchSize: 2,
+    });
+    await loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id });
+    const one = await pageAt(run, '/blog/one');
+    const getMany = store.entries.getMany.bind(store.entries);
+    const spy = vi.spyOn(store.entries, 'getMany').mockImplementationOnce(async (s, ids) => {
+      const read = await getMany(s, ids);
+      // An editor saves one's entry after the pass read it.
+      await updateEntry(ctx, scope, one.entryId as string, {
+        title: { 'en-US': 'Edited' },
+        sourceUrl: { 'en-US': one.url },
+      });
+      return read;
+    });
+    const result = await relinkMigratedPages(ctx, admin, scope, { runId: run.id });
+    spy.mockRestore();
+    expect(result.relinked).toBe(1);
+    expect(result.skipped).toEqual([
+      { pageId: one.id, url: one.url, error: expect.stringMatching(/changed after it was read/) },
+    ]);
+    // The edit stands, and the page waits for the next pass.
+    expect((await getEntry(ctx, scope, one.entryId as string)).fields.title).toEqual({
+      'en-US': 'Edited',
+    });
     expect((await pageAt(run, '/blog/one')).unresolvedLinks).toBe(1);
   });
 
@@ -679,6 +891,36 @@ describe('publishing a migration', () => {
       shipped.entry.currentVersion,
     );
     expect((await pageAt(run, '/blog/one')).stage).toBe('published');
+  });
+
+  it('reuses the run’s release when the entries are added again', async () => {
+    const { run, template } = await seed(SITE);
+    await loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id });
+    const first = await publishMigration(ctx, admin, scope, { runId: run.id, viaRelease: true });
+    const again = await publishMigration(ctx, admin, scope, { runId: run.id, viaRelease: true });
+    expect(again.releaseId).toBe(first.releaseId);
+    expect(await store.releases.list(scope)).toHaveLength(1);
+    expect(await store.releases.listItems(scope, first.releaseId as string)).toHaveLength(3);
+    expect((await store.migrations.getRun(scope, run.id))?.releaseId).toBe(first.releaseId);
+    // Once it has shipped, the next add opens a new one.
+    await publishRelease(ctx, scope, first.releaseId as string);
+    const next = await publishMigration(ctx, admin, scope, { runId: run.id, viaRelease: true });
+    expect(next.releaseId).not.toBe(first.releaseId);
+    expect(await store.releases.list(scope)).toHaveLength(2);
+  });
+
+  it('needs content:write to go through a release, as making one does', async () => {
+    const { run, template } = await seed(SITE);
+    await loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id });
+    const publisher: Principal = { spaceId: 'site', kind: 'user', scopes: [SCOPES.contentPublish] };
+    await expect(
+      publishMigration(ctx, publisher, scope, { runId: run.id, viaRelease: true }),
+    ).rejects.toThrow(ForbiddenError);
+    expect(await store.releases.list(scope)).toHaveLength(0);
+    // Publishing directly is what content:publish holds.
+    expect(await publishMigration(ctx, publisher, scope, { runId: run.id })).toMatchObject({
+      published: 3,
+    });
   });
 
   it('needs content:publish, and publish on the type', async () => {

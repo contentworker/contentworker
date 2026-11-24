@@ -37,6 +37,7 @@ const run = (over: Partial<MigrationRun> = {}): MigrationRun => ({
   threshold: 0.8,
   inventory: null,
   error: null,
+  releaseId: null,
   version: 1,
   createdAt: AT,
   createdBy: 'ed@example.com',
@@ -105,6 +106,11 @@ describe('site migrations on D1', () => {
     };
     await store.migrations.saveRun(scope, inventoried, 1);
     expect(await store.migrations.getRun(scope, r.id)).toEqual(inventoried);
+    // The release its entries go through rides on the run (0049).
+    const released: MigrationRun = { ...inventoried, releaseId: 'rel-1', version: 3 };
+    await store.migrations.saveRun(scope, released, 2);
+    expect((await store.migrations.getRun(scope, r.id))?.releaseId).toBe('rel-1');
+    await store.migrations.saveRun(scope, { ...released, releaseId: null, version: 4 }, 3);
     // A stale writer loses, directly and inside a unit of work (at commit).
     await expect(store.migrations.saveRun(scope, { ...r, version: 2 }, 1)).rejects.toThrow(
       TransactionConflictError,

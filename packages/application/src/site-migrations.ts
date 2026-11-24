@@ -87,6 +87,7 @@ export async function createMigrationRun(
     threshold,
     inventory: null,
     error: null,
+    releaseId: null,
     version: 1,
     createdAt: at,
     createdBy: ctx.actor ?? null,

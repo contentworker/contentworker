@@ -1,14 +1,19 @@
 import {
+  assertQueryRespectsFieldRules,
+  assertWritableFields,
   authorize,
   authorizeContent,
   blockVariants,
+  ConflictError,
   type ContentType,
+  DomainError,
   type EntryFields,
   type FieldDefinition,
   type ImportScriptOutput,
   InvalidStateError,
   importScriptAssetUrls,
   importScriptOutputIssues,
+  importScriptValueIssues,
   isRedirectPattern,
   isRichTextDocument,
   MAX_REDIRECT_IMPORT,
@@ -25,6 +30,7 @@ import {
   parseHttpUrl,
   type RedirectChain,
   type RedirectInput,
+  type Release,
   type RichTextNode,
   resolveImportScriptOutput,
   SCOPES,
@@ -43,12 +49,12 @@ import {
   TransactionConflictError,
 } from '@contentworker/ports';
 import { createAssetFromUrl } from './asset-from-url';
+import { auditActor } from './audit';
 import { BULK_LIMIT, bulkEntryAction } from './bulk';
 import type { AppContext } from './context';
 import { updateEntry } from './entries';
 import { executeImport, recordsImportSource } from './import';
 import { importRedirects } from './redirects';
-import { createRelease } from './releases';
 import { sha256Hex } from './token-crypto';
 
 /**
@@ -66,6 +72,10 @@ import { sha256Hex } from './token-crypto';
  * on their `updatedAt` (`movePages`): a step that finds a page written since it read it (another
  * step moved or rescored it) runs its batch again from a fresh read, which the identity match and
  * the steps' own checks make a no-op for what already happened.
+ *
+ * Each use-case acts as `principal` and authorizes it here. Callers pass a context acting as that
+ * same principal (`actingAs(ctx, principal)`), so the entries, versions and assets written are
+ * stamped with who asked.
  */
 
 /** Pages one load reads at most: one Workflow step's worth. */
@@ -119,6 +129,11 @@ export interface LoadTemplatePagesResult {
   readonly assetFailures: readonly MigrationAssetFailure[];
   /** Links in this batch's entries to pages with no entry yet: the relink pass's work. */
   readonly unresolvedLinks: number;
+  /**
+   * Pages that lost a race on every attempt (another load created their entry as this one
+   * planned it, a unit of work that lost its compare-and-set): left as they were for the next call.
+   */
+  readonly deferred: readonly MigrationPageFailure[];
   /** Whether pages are still waiting to be loaded: a Workflow loops while it is true. */
   readonly more: boolean;
 }
@@ -134,7 +149,13 @@ export interface LoadTemplatePagesResult {
  * A page the planner or the output refuses moves to `needs-fix` with the reason, so the batch
  * goes on and the next call doesn't take it again; fixing its script and transforming it again
  * clears that. An asset that can't be downloaded fails only itself: the page loads without it
- * (its images stay links to where they were), and the result names it.
+ * (its images stay links to where they were), and the result names it. A page whose write lost a
+ * race (its `sourceUrl` claimed by a load running at once, a unit that lost its compare-and-set)
+ * is not moved: it is loaded again from a fresh read, which finds the other load's entry and
+ * updates it.
+ *
+ * Refused before any file is downloaded unless `principal` may write the type, its `sourceUrl`
+ * field, assets, and query by `sourceUrl`. Pass `actingAs(ctx, principal)` as `ctx`.
  */
 export async function loadTemplatePages(
   ctx: AppContext,
@@ -156,6 +177,12 @@ export async function loadTemplatePages(
   authorize(principal, SCOPES.contentWrite, scope.spaceId);
   authorize(principal, SCOPES.assetsWrite, scope.spaceId);
   authorizeContent(principal, ['read', 'write'], contentType.apiId);
+  // The planner matches on `sourceUrl` and writes it on every record: refused now, not per page.
+  assertQueryRespectsFieldRules(principal, {
+    contentTypeApiId: contentType.apiId,
+    filters: [{ field: MIGRATION_SOURCE_URL_FIELD }],
+  });
+  assertWritableFields(principal, contentType.apiId, { [MIGRATION_SOURCE_URL_FIELD]: {} });
   const limit = clamp(input.batchSize, MIGRATION_LOAD_BATCH_DEFAULT, MIGRATION_LOAD_BATCH_MAX);
   const stages: readonly MigrationPageStage[] = input.includeNeedsFix
     ? ['validated', 'needs-fix']
@@ -176,11 +203,13 @@ export async function loadTemplatePages(
     return found;
   };
 
-  for (let attempt = 1; ; attempt++) {
-    const pages = await waiting(limit);
-    if (pages.length === 0) {
-      return { loaded: 0, failed: [], assetFailures: [], unresolvedLinks: 0, more: false };
-    }
+  let loaded = 0;
+  let unresolvedLinks = 0;
+  const failed: MigrationPageFailure[] = [];
+  const assetFailures: MigrationAssetFailure[] = [];
+  let deferred: MigrationPageFailure[] = [];
+  let pages = await waiting(limit);
+  for (let attempt = 1; pages.length > 0; attempt++) {
     const batch = await loadBatch(ctx, deps, principal, scope, run, contentType, pages);
     try {
       await ctx.store.withTransaction(async (tx) => {
@@ -189,21 +218,59 @@ export async function loadTemplatePages(
     } catch (err) {
       // A page was written since it was read. The entries are matched by their source URL, so
       // loading the batch again from a fresh read updates them rather than adding to them.
-      if (err instanceof TransactionConflictError && attempt < MOVE_ATTEMPTS) continue;
+      if (err instanceof TransactionConflictError && attempt < MOVE_ATTEMPTS) {
+        pages = await waiting(limit);
+        continue;
+      }
       throw err;
     }
-    return {
-      loaded: batch.loaded,
-      failed: batch.failed,
-      assetFailures: batch.assetFailures,
-      unresolvedLinks: batch.unresolvedLinks,
-      more: (await waiting(1)).length > 0,
-    };
+    loaded += batch.loaded;
+    unresolvedLinks += batch.unresolvedLinks;
+    failed.push(...batch.failed);
+    assetFailures.push(...batch.assetFailures);
+    if (batch.raced.length === 0) break;
+    if (attempt >= MOVE_ATTEMPTS) {
+      deferred = batch.raced.map((r) => ({ pageId: r.page.id, url: r.page.url, error: r.error }));
+      break;
+    }
+    // Only the pages that lost: again from a fresh read, if nothing else has taken them since.
+    pages = (
+      await Promise.all(
+        batch.raced.map((r) => ctx.store.migrations.getPage(scope, run.id, r.page.id)),
+      )
+    ).filter(
+      (p): p is MigrationPage =>
+        p !== null && p.templateId === template.id && p.error === null && stages.includes(p.stage),
+    );
   }
+  return {
+    loaded,
+    failed,
+    assetFailures,
+    unresolvedLinks,
+    deferred,
+    more: (await waiting(1)).length > 0,
+  };
+}
+
+/**
+ * Whether a record's write lost a race rather than being refused: its unit lost a compare-and-set,
+ * or a unique claim was taken under it. A claim on another field than `sourceUrl` that the write's
+ * own check named is a refusal (another entry holds that slug); the constraint failing at commit
+ * names no field, and a fresh read tells the two apart.
+ */
+function lostRace(err: unknown): boolean {
+  if (err instanceof TransactionConflictError) return true;
+  if (!(err instanceof ConflictError)) return false;
+  const conflicts = (err.details as { conflicts?: readonly { fieldApiId: string }[] } | undefined)
+    ?.conflicts;
+  return !conflicts || conflicts.some((c) => c.fieldApiId === MIGRATION_SOURCE_URL_FIELD);
 }
 
 interface LoadedBatch {
   readonly moves: MigrationPageMove[];
+  /** Pages whose write lost a race, not moved. */
+  readonly raced: { readonly page: MigrationPage; readonly error: string }[];
   readonly loaded: number;
   readonly failed: MigrationPageFailure[];
   readonly assetFailures: MigrationAssetFailure[];
@@ -269,23 +336,35 @@ async function loadBatch(
   // Each file the run hasn't brought in yet, once, recorded as it lands: a batch run again (or a
   // second load) finds it rather than downloading it again.
   const assetFailures: MigrationAssetFailure[] = [];
-  const created: { url: string; assetId: string }[] = [];
   for (const [url, { alt, pageIds }] of assetUrls) {
     if (assetIds.has(url)) continue;
+    let assetId: string;
     try {
-      const { asset } = await createAssetFromUrl(ctx, deps, scope, {
-        url,
-        ...(alt ? { alt } : {}),
-      });
-      assetIds.set(url, asset.id);
-      created.push({ url, assetId: asset.id });
+      ({
+        asset: { id: assetId },
+      } = await createAssetFromUrl(
+        ctx,
+        deps,
+        scope,
+        { url, ...(alt ? { alt } : {}) },
+        { createdBy: auditActor(principal) },
+      ));
     } catch (err) {
+      // The file's fault (unreachable, refused, too large): this page goes on without it. A fault
+      // of ours (storage, the database) stops the step, to be run again.
+      if (!(err instanceof DomainError)) throw err;
       const error = clip(messageOf(err));
       for (const pageId of pageIds) assetFailures.push({ pageId, url, error });
+      continue;
     }
-  }
-  if (created.length > 0) {
-    await ctx.store.migrations.addAssets(scope, run.id, created, ctx.clock.now().toISOString());
+    assetIds.set(url, assetId);
+    // Recorded as it lands, so a step stopped by a later file finds this one when it runs again.
+    await ctx.store.migrations.addAssets(
+      scope,
+      run.id,
+      [{ url, assetId }],
+      ctx.clock.now().toISOString(),
+    );
   }
 
   const blocksField = topLevelBlocksFields(contentType);
@@ -312,7 +391,7 @@ async function loadBatch(
         return undefined;
       },
     });
-    const values = recordValues(contentType, blocksField, resolved, page.url);
+    const values = recordValues(contentType, blocksField, read.output, resolved, page.url);
     return 'error' in values
       ? { page, error: values.error }
       : { page, record: { externalId: page.url, values: values.values }, unresolved };
@@ -323,6 +402,7 @@ async function loadBatch(
   );
   const written = new Map<string, string>();
   const refused = new Map<string, string>();
+  const racing = new Set<string>();
   if (ready.length > 0) {
     const result = await executeImport(
       ctx,
@@ -339,7 +419,13 @@ async function loadBatch(
           identityField: MIGRATION_SOURCE_URL_FIELD,
         },
       },
-      { conflicts: 'update', onWritten: (w) => written.set(w.externalId, w.entryId) },
+      {
+        conflicts: 'update',
+        onWritten: (w) => written.set(w.externalId, w.entryId),
+        onFailed: (externalId, err) => {
+          if (lostRace(err)) racing.add(externalId);
+        },
+      },
     );
     for (const issue of result.analysis.issues) {
       refused.set(issue.externalId, issue.messages.join('; '));
@@ -349,10 +435,15 @@ async function loadBatch(
 
   const at = ctx.clock.now().toISOString();
   const moves: MigrationPageMove[] = [];
+  const raced: LoadedBatch['raced'] = [];
   const failed: MigrationPageFailure[] = [];
   let loaded = 0;
   let unresolvedLinks = 0;
   for (const p of prepared) {
+    if (racing.has(p.page.url)) {
+      raced.push({ page: p.page, error: clip(refused.get(p.page.url) ?? 'Lost a race') });
+      continue;
+    }
     const entryId = 'record' in p ? written.get(p.page.url) : undefined;
     if ('record' in p && entryId) {
       loaded += 1;
@@ -379,7 +470,7 @@ async function loadBatch(
       expected: p.page.updatedAt,
     });
   }
-  return { moves, loaded, failed, assetFailures, unresolvedLinks };
+  return { moves, raced, loaded, failed, assetFailures, unresolvedLinks };
 }
 
 /** A page's output, read and checked against the hash its record holds. */
@@ -414,9 +505,13 @@ async function readOutput(
 function recordValues(
   contentType: ContentType,
   blocksFields: readonly FieldDefinition[],
+  raw: ImportScriptOutput,
   output: ImportScriptOutput,
   url: string,
 ): { values: Record<string, unknown> } | { error: string } {
+  // On what the script returned: once resolved, a misplaced marker is a document like any other.
+  const misplaced = importScriptValueIssues(raw, contentType);
+  if (misplaced.length > 0) return { error: misplaced.join('; ') };
   const defined = new Set(contentType.fields.map((f) => f.apiId));
   const unknown = Object.keys(output.fields).filter((k) => !defined.has(k));
   if (unknown.length > 0) {
@@ -503,7 +598,7 @@ export interface RelinkMigratedPagesResult {
  * the entry only when one changed, at the version it read (an edit made since wins; that page is
  * skipped and keeps its count). A page's count goes down to the links still waiting. A cursor
  * walks the run once (`after` / `next`), so a link to a page that never loads is read once per
- * pass, not forever.
+ * pass, not forever. Pass `actingAs(ctx, principal)` as `ctx`.
  */
 export async function relinkMigratedPages(
   ctx: AppContext,
@@ -692,6 +787,7 @@ export interface ImportMigrationRedirectsResult {
  * an upsert by source, `origin: 'import'`, checked as a whole set (a loop is refused), in
  * imports of at most {@link MAX_REDIRECT_IMPORT}. Run again, every redirect is `unchanged`. A page
  * whose old path is its new one is skipped. Needs `content:manage`, as the redirects import does.
+ * Pass `actingAs(ctx, principal)` as `ctx`.
  */
 export async function importMigrationRedirects(
   ctx: AppContext,
@@ -759,6 +855,8 @@ export async function importMigrationRedirects(
     created += report.created;
     updated += report.updated;
     unchanged += report.unchanged;
+    // Each report's chains are the whole set's after its import, and a later import only adds
+    // redirects (no source repeats across them), so the last report holds every chain.
     chains = report.chains;
   }
   return { created, updated, unchanged, skipped, chains };
@@ -825,9 +923,11 @@ export interface PublishMigrationResult {
  * shipped, a step run again) moves without a second publish. A failure stays `loaded` with the
  * reason, and a pass from the start tries it again.
  *
- * With `viaRelease`, every loaded entry is added to one release (new, or `releaseId`) and nothing
- * is published: the pages stay `loaded` until the release ships and a publish pass finds their
- * entries published.
+ * With `viaRelease`, every loaded entry is added to one release and nothing is published: the
+ * pages stay `loaded` until the release ships and a publish pass finds their entries live. The
+ * release is `releaseId`, or the run's own (recorded on the run, and reused by an add run again
+ * while it is open). That needs `content:write` too, as making a release and adding to it do.
+ * Pass `actingAs(ctx, principal)` as `ctx`.
  */
 export async function publishMigration(
   ctx: AppContext,
@@ -931,7 +1031,9 @@ async function publishViaRelease(
     scope,
     pages.flatMap((p) => (p.entryId ? [p.entryId] : [])),
   );
-  // Authorized as adding each to a release is (`addEntryToRelease`), before the release exists.
+  // Authorized as making a release and adding each to it are (`POST …/releases`, `…/items`,
+  // `addEntryToRelease`), before the release exists.
+  authorize(principal, SCOPES.contentWrite, scope.spaceId);
   for (const type of new Set([...entries.values()].map((e) => e.entry.contentTypeApiId))) {
     authorizeContent(principal, ['read', 'publish'], type);
   }
@@ -943,9 +1045,7 @@ async function publishViaRelease(
       throw new InvalidStateError(`Cannot modify a ${release.status} release`);
     }
   } else {
-    releaseId = (
-      await createRelease(ctx, scope, { title: input.releaseTitle ?? `Migration: ${run.name}` })
-    ).id;
+    releaseId = await runRelease(ctx, scope, run, input.releaseTitle);
   }
   const ids = [...entries.keys()];
   for (let at = 0; at < ids.length; at += ENTRY_READ_BATCH) {
@@ -966,6 +1066,47 @@ async function publishViaRelease(
       : [{ pageId: p.id, url: p.url, error: 'The page’s entry no longer exists' }],
   );
   return { published: 0, added: ids.length, releaseId, failed };
+}
+
+/**
+ * The run's release: the one it recorded while that is still open, else a new one, created in the
+ * same unit as the run records it (at the run's compare-and-set). Two adds at once can't both
+ * open one: the loser's unit writes nothing, and it reads the run again and takes the winner's.
+ */
+async function runRelease(
+  ctx: AppContext,
+  scope: Scope,
+  first: MigrationRun,
+  title: string | undefined,
+): Promise<string> {
+  let run = first;
+  for (let attempt = 1; ; attempt++) {
+    if (run.releaseId) {
+      const held = await ctx.store.releases.get(scope, run.releaseId);
+      if (held?.status === 'open') return held.id;
+    }
+    const at = ctx.clock.now().toISOString();
+    const release: Release = {
+      id: ctx.ids.newId(),
+      title: title ?? `Migration: ${run.name}`,
+      status: 'open',
+      createdAt: at,
+    };
+    try {
+      await ctx.store.withTransaction(async (tx) => {
+        await tx.releases.create(scope, release);
+        await tx.migrations.saveRun(
+          scope,
+          { ...run, releaseId: release.id, version: run.version + 1, updatedAt: at },
+          run.version,
+        );
+      });
+      return release.id;
+    } catch (err) {
+      if (!(err instanceof TransactionConflictError) || attempt >= MOVE_ATTEMPTS) throw err;
+      run = await requireRun(ctx, scope, run.id);
+    }
+  }
 }
 
 // --- shared -----------------------------------------------------------------

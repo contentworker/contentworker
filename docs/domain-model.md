@@ -1806,29 +1806,39 @@ They aren't on the HTTP API or MCP yet.
     `unavailable`, writes nothing, and the batch waits.
 
 Loading, relinking, redirecting and publishing each take the caller's `Principal` and go through
-the path a person's writes do. Pages move at a compare-and-set on their `updatedAt`
+the path a person's writes do. Callers pass a context acting as that principal
+(`actingAs(ctx, principal)`), so what is written is stamped with who asked. Pages move at a compare-and-set on their `updatedAt`
 (`movePages`). A step that finds a page written since it read it runs its batch again from a fresh
 read, up to three times in all, then the `TransactionConflictError` surfaces.
 
 - `loadTemplatePages` loads up to 50 `validated` pages of an approved template (and `needs-fix`
   ones with `includeNeedsFix`) whose last step didn't fail. It refuses a template whose content
   type is missing, or lacks a `sourceUrl` field (`MIGRATION_SOURCE_URL_FIELD`: `Symbol` or `Text`,
-  `unique`, not localized). For each page it:
+  `unique`, not localized). Before downloading anything, it also refuses a caller who can't write
+  the type, assets or `sourceUrl`, or query by `sourceUrl`. For each page it:
   - reads the output artifact, checked against the hash the page holds;
   - creates each asset the output names with `createAssetFromUrl`, relative URLs resolved against
     the page's. Each file is fetched once per run: `migration_assets` records the asset made from
-    each URL. A download that fails is reported, and the page loads without that file;
+    each URL as soon as it is created. A download that fails is reported, and the page loads
+    without that file;
+  - refuses values that put a marker where it doesn't belong (`importScriptValueIssues`): `$html`
+    outside a `RichText` field, `$asset` outside an asset link, a marker with other keys, or a
+    `Symbol` or `Text` value that holds an element tag;
   - resolves the output, so a link to a page of the run that already has an entry becomes an
     `entry-hyperlink`. A link to a page not loaded yet stays a hyperlink and is counted in the
     page's `unresolvedLinks`;
   - writes the entries through the import planner (`executeImport` over `recordsImportSource`),
     with `sourceUrl` as the `identityField` and `conflicts: 'update'`. Blocks go into the type's
     one top-level blocks field as `{ _type, …fields }`. A rerun updates the same entries, and the
-    unique field keeps two racing loads from both creating.
+    unique field keeps two racing loads from both creating. Because the field is unique, the
+    planner looks up only the batch's source URLs among the unique claims, not every entry of
+    the type.
 
   Each page moves to `loaded` with its `entryId`. A page the output or the planner refuses moves
   to `needs-fix` with the reason as its `error`, and isn't taken again until it is transformed
-  again.
+  again. A page whose write lost a race (its `sourceUrl` claimed by another load at the same time,
+  or a unit that lost its compare-and-set) isn't moved. It is loaded again from a fresh read, up to
+  three times, and then reported as `deferred`.
 - `relinkMigratedPages` walks the loaded pages that still have `unresolvedLinks`, with an
   `after`/`next` cursor. It turns hyperlinks to pages that now have an entry into
   `entry-hyperlink`s and saves only the entries that changed, at the version it read. An entry
@@ -1839,9 +1849,11 @@ read, up to three times in all, then the `TransactionConflictError` surfaces.
   a type with no pattern, and an old path that would read as a pattern are skipped.
 - `publishMigration` (`content:publish`, and `publish` on each entry's type) publishes a batch of
   loaded entries with `bulkEntryAction` and moves their pages to `published`. An entry already
-  published at its current version moves without a second publish. With `viaRelease` it adds
-  every loaded entry to one release (new, or `releaseId`) instead. The pages stay `loaded` until
-  the release ships and a publish pass finds their entries live.
+  published at its current version moves without a second publish. With `viaRelease`
+  (`content:write` too) it adds every loaded entry to one release instead: `releaseId`, or the
+  run's own. The run records that release (`MigrationRun.releaseId`) in the same unit that creates
+  it, and reuses it while it is open. The pages stay `loaded` until the release ships and a
+  publish pass finds their entries live.
 
 ## Domain events
 

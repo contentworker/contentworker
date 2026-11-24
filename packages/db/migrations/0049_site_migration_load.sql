@@ -1,9 +1,13 @@
--- 0049_site_migration_load: what loading a site migration's pages keeps. Mirrors
--- `migrationPages.unresolvedLinks` and `migrationAssets` in packages/db/src/schema.ts.
+-- 0049_site_migration_load: what loading and publishing a site migration's pages keeps. Mirrors
+-- `migrationRuns.releaseId`, `migrationPages.unresolvedLinks` and `migrationAssets` in
+-- packages/db/src/schema.ts.
 --
--- Expand-only. The new column has a default, so code deployed before it (which never names it)
--- writes rows that read as 0: no links waiting. The new table is read and written only by the
+-- Expand-only. The new columns are nullable or have a default, so code deployed before them
+-- (which never names them) writes rows that read as no release and no links waiting. The new table is read and written only by the
 -- load. Environment-scoped: the environment purge clears it with the other migration tables.
+
+-- The release a run's entries were added to, which adding them again reuses while it is open.
+ALTER TABLE `migration_runs` ADD `release_id` text;
 
 -- Links in a loaded page's entry to pages of the run that had no entry yet, which the relink pass
 -- looks for.

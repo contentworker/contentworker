@@ -38,6 +38,7 @@ const toRun = (r: RunRow): MigrationRun => ({
   threshold: r.threshold,
   inventory: r.inventory ?? null,
   error: r.error ?? null,
+  releaseId: r.releaseId ?? null,
   version: r.version,
   createdAt: r.createdAt.toISOString(),
   createdBy: r.createdBy ?? null,
@@ -133,6 +134,7 @@ export function makeMigrationStore(x: Exec): MigrationStore {
           threshold: run.threshold,
           inventory: run.inventory,
           error: run.error,
+          releaseId: run.releaseId,
           version: run.version,
           createdAt: new Date(run.createdAt),
           createdBy: run.createdBy,
@@ -166,6 +168,7 @@ export function makeMigrationStore(x: Exec): MigrationStore {
           threshold: run.threshold,
           inventory: run.inventory,
           error: run.error,
+          releaseId: run.releaseId,
           version: run.version,
           updatedAt: new Date(run.updatedAt),
         })

@@ -1,3 +1,5 @@
+import type { ContentType } from '../content-type/content-type';
+import { blockVariants, type FieldDefinition } from '../content-type/field';
 import { type RichTextFromHtmlOptions, richTextFromHtml } from '../rich-text/from-html';
 
 /**
@@ -167,4 +169,93 @@ export function importScriptAssetUrls(output: ImportScriptOutput): string[] {
   visit(output.fields);
   for (const b of output.blocks) visit(b.fields);
   return [...urls];
+}
+
+/** The parts of a field definition a value is checked against: a field, or a list's element. */
+interface ValueShape {
+  readonly type: string;
+  readonly linkType?: string;
+  readonly fields?: readonly FieldDefinition[];
+  readonly items?: FieldDefinition['items'];
+}
+
+/** An element tag (`<p>`, `</div>`, `<br/>`): text that holds one is markup, not prose. */
+const ELEMENT_TAG = /<\/?[a-z][a-z0-9-]*(?:\s[^<>]*)?\/?>/i;
+
+/**
+ * What is wrong with the output's values for the content type it is loaded into, as messages
+ * naming the path; empty when nothing is. The markers go only where they become what the field
+ * holds: `$html` in a `RichText` field, `$asset` in an asset link (or a list of them). A marker
+ * with other keys beside it is refused rather than read as an object, and so is a `Symbol` or
+ * `Text` value that holds an element tag: markup handed back as plain text would be stored as
+ * markup. (Prose with a bare `<`, as in `a < b`, is no tag and passes.) Fields and variants the
+ * type doesn't define aren't judged here, only the markers in them: the planner refuses those.
+ */
+export function importScriptValueIssues(
+  output: ImportScriptOutput,
+  contentType: Pick<ContentType, 'fields'>,
+): string[] {
+  const issues: string[] = [];
+  const byId = (defs: readonly FieldDefinition[] | undefined, apiId: string) =>
+    defs?.find((f) => f.apiId === apiId);
+  for (const [apiId, value] of Object.entries(output.fields)) {
+    checkValue(value, byId(contentType.fields, apiId), `fields.${apiId}`, issues);
+  }
+  const blocks = contentType.fields.map(blockVariants).find((v) => v !== undefined);
+  output.blocks.forEach((block, i) => {
+    const variant = blocks?.find((v) => v.apiId === block.variant);
+    for (const [apiId, value] of Object.entries(block.fields)) {
+      checkValue(value, byId(variant?.fields, apiId), `blocks[${i}].${apiId}`, issues);
+    }
+  });
+  return issues;
+}
+
+function checkValue(
+  value: unknown,
+  shape: ValueShape | undefined,
+  path: string,
+  issues: string[],
+): void {
+  if (isRecord(value) && (Object.hasOwn(value, '$html') || Object.hasOwn(value, '$asset'))) {
+    if (isImportScriptHtml(value)) {
+      if (shape?.type !== 'RichText') issues.push(`${path}: $html goes only in a RichText field`);
+    } else if (isImportScriptAssetRef(value)) {
+      if (shape?.type !== 'Link' || shape.linkType !== 'Asset') {
+        issues.push(`${path}: $asset goes only in an asset link field`);
+      }
+    } else {
+      issues.push(`${path}: a $html or $asset marker is an object with that one key, as text`);
+    }
+    return;
+  }
+  if (typeof value === 'string') {
+    if ((shape?.type === 'Symbol' || shape?.type === 'Text') && ELEMENT_TAG.test(value)) {
+      issues.push(`${path}: holds markup; hand rich text back as { $html } in a RichText field`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    const items = shape?.type === 'Array' ? shape.items : undefined;
+    value.forEach((element, i) => {
+      let each: ValueShape | undefined = items;
+      if (items?.variants) {
+        const type = isRecord(element) ? element._type : undefined;
+        const variant = items.variants.find((v) => v.apiId === type);
+        each = variant ? { type: 'Component', fields: variant.fields } : undefined;
+      }
+      checkValue(element, each, `${path}[${i}]`, issues);
+    });
+    return;
+  }
+  if (!isRecord(value)) return;
+  const fields = shape?.type === 'Component' ? shape.fields : undefined;
+  for (const [key, inner] of Object.entries(value)) {
+    checkValue(
+      inner,
+      fields?.find((f) => f.apiId === key),
+      `${path}.${key}`,
+      issues,
+    );
+  }
 }

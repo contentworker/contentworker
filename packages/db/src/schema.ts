@@ -1542,6 +1542,8 @@ export const migrationRuns = sqliteTable(
     threshold: real('threshold').notNull(),
     inventory: text('inventory', { mode: 'json' }).$type<MigrationInventory>(),
     error: text('error'),
+    /** 0049_site_migration_load. */
+    releaseId: text('release_id'),
     version: integer('version').notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     createdBy: text('created_by'),
