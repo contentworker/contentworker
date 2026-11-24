@@ -325,17 +325,20 @@ export function parentBlock(
 export function slotCount(slot: CanvasSlot): string {
   const n = slot.blocks.length;
   const { min, max } = slot;
-  if (slot.full) return `full, ${n} of ${max}`;
+  // "n/max used", never "n of max": "of" is a block's place ("Block 1 of 3 in Main").
+  if (slot.full) return `full (${n}/${max})`;
   if (max !== undefined) {
-    return min !== undefined && min > 0 && min !== max ? `${n} of ${min}–${max}` : `${n} of ${max}`;
+    return min !== undefined && min > 0 && min !== max
+      ? `${n}/${min}–${max} used`
+      : `${n}/${max} used`;
   }
   const blocks = `${n} ${n === 1 ? 'block' : 'blocks'}`;
   return min !== undefined && n < min ? `${blocks}, needs ${min}` : blocks;
 }
 
 /**
- * A seam's (and a slot's) words: the slot's name and how full it is ("Main · 3 of 8"), and
- * "locked" when the config locks it or it is inside a locked region ("Main · 3 of 8 · locked").
+ * A seam's (and a slot's) words: the slot's name and how full it is ("Main · 3/8 used"),
+ * and "locked" when the config locks it or it is inside a locked region ("Main · 3/8 used · locked").
  */
 export function slotFill(slot: CanvasSlot): string {
   // A field already named for its blocks says the count bare: "Blocks · 3", not "Blocks · 3 blocks".

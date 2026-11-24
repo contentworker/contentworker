@@ -1407,6 +1407,7 @@ function Canvas({
         setInspectorOpen(true);
       }}
       editable={editable}
+      seamsShown={seams.length > 0}
       formPath={formPath}
       stale={locksQuery.data?.stale ?? []}
       fieldName={(apiId) => contentType?.fields.find((f) => f.apiId === apiId)?.name ?? apiId}
@@ -1482,17 +1483,8 @@ function Canvas({
           {said}
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {/* The device in view, in words: its icon names it only on hover and aloud. (The
-              catalog's breakpoints are named on the switch itself.) */}
-          {preset.device ? (
-            <span
-              aria-hidden="true"
-              className="hidden text-muted-foreground text-xs tabular-nums xl:inline"
-            >
-              {preset.label} · {preset.width}px
-            </span>
-          ) : null}
-          <WidthSwitch presets={presets} value={preset} onChange={setPreset} />
+          {/* The device in view is named on the switch itself, as the catalog's breakpoints are. */}
+          <WidthSwitch presets={presets} value={preset} onChange={setPreset} named />
           <Button
             type="button"
             variant={layersOpen ? 'secondary' : 'ghost'}
@@ -1503,7 +1495,7 @@ function Canvas({
             <ListTree aria-hidden="true" /> Layers
           </Button>
           {editable ? (
-            <>
+            <div className="flex items-center">
               <Button
                 type="button"
                 variant="ghost"
@@ -1526,7 +1518,7 @@ function Canvas({
               >
                 <Redo2 aria-hidden="true" />
               </Button>
-            </>
+            </div>
           ) : null}
           {/* The form's ⋯ too, so both views end in the same row: ⋯, Save draft, Publish. */}
           <DropdownMenu>
@@ -1956,6 +1948,8 @@ function PagePanel(props: {
   checks: ReturnType<typeof canvasChecks>;
   onSelect: (key: string) => void;
   editable: boolean;
+  /** Whether the page has seams drawn on it: the hint offers them only then. */
+  seamsShown: boolean;
   formPath: string;
   /** Locks whose blocks are gone: they hold nothing, and someone with `lock` clears them. */
   stale: readonly EntryBlockLock[];
@@ -2009,7 +2003,9 @@ function PagePanel(props: {
       ) : null}
       {props.editable ? (
         <p className="max-w-measure text-muted-foreground text-sm">
-          Choose a seam between blocks to see what fits there, or a block to edit it.{' '}
+          {props.seamsShown
+            ? 'Point between two blocks to add one there, or choose a block to edit it.'
+            : 'Choose a block in the page or in Layers to edit it.'}{' '}
           <span className="pointer-coarse:hidden">
             Press <kbd className="font-mono">/</kbd> to add after the selected block, and{' '}
             <kbd className="font-mono">?</kbd> for every shortcut.

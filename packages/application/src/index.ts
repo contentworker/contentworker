@@ -20,6 +20,7 @@ export * from './asset-collections';
 export * from './asset-copy';
 export * from './asset-delivery';
 export * from './asset-folders';
+export * from './asset-from-url';
 export * from './asset-gate';
 export * from './asset-ingest';
 export * from './asset-renditions';

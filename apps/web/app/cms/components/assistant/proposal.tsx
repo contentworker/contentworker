@@ -381,8 +381,12 @@ export function ProposalDetail({
         ) : null}
         {note(
           // The colon introduces the list below it; open, the list steps aside, and so does it.
+          // A block patch's steps above say what it does, one each: a count of what they touch
+          // (the slot's order and the block, for one add) would read as more than was asked.
           (blocks
-            ? `${n} ${n === 1 ? 'change' : 'changes'} in the draft:`
+            ? review.steps?.length
+              ? 'In the draft:'
+              : `${n} ${n === 1 ? 'change' : 'changes'} in the draft:`
             : fieldsChange(n, create)
           ).replace(/:$/, open ? '.' : ':'),
         )}

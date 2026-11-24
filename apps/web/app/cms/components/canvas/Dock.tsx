@@ -185,8 +185,7 @@ export function Dock({ place, catalog, onInsert, onClose, inSheet, ask }: DockPr
         </p>
       ) : slot.full ? (
         <p className="max-w-measure px-4 pb-3 text-sm">
-          {slot.name} is full: it holds {slot.max} of {slot.max}. Remove a block from it to add
-          another.
+          {slot.name} is full ({slot.max}/{slot.max}). Remove a block from it to add another.
         </p>
       ) : items.length === 0 ? (
         <p className="max-w-measure px-4 pb-3 text-sm">

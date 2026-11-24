@@ -224,11 +224,13 @@ const select = (key: string) => {
 };
 const grip = () => document.querySelector('[data-drag-handle]') as HTMLElement | null;
 const said = () => document.querySelector('[aria-live="polite"]')?.textContent ?? '';
-/** The keys of a section's cards, as Layers lists them. */
-const cardsIn = (section: string) =>
-  [...layer(section).querySelectorAll('[role="group"] [data-layer]')].map((el) =>
+/** The keys of a section's cards, as Layers lists them (in the group its item owns). */
+const cardsIn = (section: string) => {
+  const owned = document.getElementById(layer(section).getAttribute('aria-owns') ?? '');
+  return [...(owned?.querySelectorAll('[data-layer]') ?? [])].map((el) =>
     el.getAttribute('data-layer'),
   );
+};
 
 /** Presses the grip, travels to `(x, y)` (in the stage, which jsdom places at 0,0) and lets go. */
 function drag(to: { x: number; y: number }, opts: { release?: boolean } = {}) {

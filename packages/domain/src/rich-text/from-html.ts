@@ -12,7 +12,10 @@
  * What does not map is converted to something visible rather than lost.
  * Images and unknown media become links to their source, because there is no
  * asset to point a node at yet, and a link is something an editor can see and
- * fix. Media from an allowed embed provider (a YouTube iframe, a tweet's
+ * fix. A caller that has already brought the files and pages in says so through
+ * {@link RichTextFromHtmlOptions}: an image it knows becomes an
+ * `embedded-asset-block`, and a link it knows an `entry-hyperlink` or
+ * `asset-hyperlink`. Media from an allowed embed provider (a YouTube iframe, a tweet's
  * blockquote, a WordPress embed block, a bare URL on its own line) becomes an
  * `embed` node holding only its URL and provider: the player markup is
  * discarded, and metadata is the import's or the editor's to resolve later.
@@ -181,9 +184,32 @@ const ENTITIES: Record<string, string> = {
   iquest: '¿',
 };
 
+/**
+ * What the caller already holds for the HTML's images and links. Synchronous on purpose: the
+ * domain does no I/O, so a caller resolves the sources it found (assets created from their URLs,
+ * entries imported from their pages) into a map first and answers from it here. Each is asked with
+ * the attribute as written, relative URLs included; `undefined` leaves that image or link as it
+ * would be without the resolver.
+ */
+export interface RichTextFromHtmlOptions {
+  /** The asset an image's `src` (with its `alt`) is, if any. */
+  readonly resolveAsset?: (src: string, alt?: string) => { readonly id: string } | undefined;
+  /** The entry or asset a link's `href` points at, if any. */
+  readonly resolveLink?: (
+    href: string,
+  ) => { readonly linkType: 'Entry' | 'Asset'; readonly id: string } | undefined;
+}
+
 /** Converts an HTML fragment (or a whole document) into a rich-text document. */
-export function richTextFromHtml(html: string): RichTextDocument {
-  return { nodeType: 'document', data: {}, content: blocks(parseHtml(html).children, true) };
+export function richTextFromHtml(
+  html: string,
+  options: RichTextFromHtmlOptions = {},
+): RichTextDocument {
+  return {
+    nodeType: 'document',
+    data: {},
+    content: blocks(parseHtml(html).children, true, options),
+  };
 }
 
 // --- reading ---------------------------------------------------------------
@@ -339,7 +365,11 @@ function decodeHtmlEntities(text: string): string {
  * That reading (`autop`) applies at the top level and in a blockquote, where
  * such text lives; inside other elements a newline is just whitespace.
  */
-function blocks(nodes: readonly HtmlNode[], autop: boolean): RichTextNode[] {
+function blocks(
+  nodes: readonly HtmlNode[],
+  autop: boolean,
+  r: RichTextFromHtmlOptions,
+): RichTextNode[] {
   const out: RichTextNode[] = [];
   let pending: RichTextNode[] = [];
 
@@ -378,17 +408,17 @@ function blocks(nodes: readonly HtmlNode[], autop: boolean): RichTextNode[] {
     }
     if (DROPPED.has(node.tag)) return;
     if (!BLOCK.has(node.tag)) {
-      const embed = embedOf(node);
+      const embed = blockOf(node, r);
       if (embed) {
         flush();
         out.push(embed);
       } else {
-        pending.push(...inline(node, []));
+        pending.push(...inline(node, [], false, r));
       }
       return;
     }
     flush();
-    out.push(...block(node));
+    out.push(...block(node, r));
   });
   flush();
   return out;
@@ -399,7 +429,7 @@ function standsAlone(next: HtmlNode | undefined): boolean {
   return next === undefined || (typeof next !== 'string' && BLOCK.has(next.tag));
 }
 
-function block(element: HtmlElement): RichTextNode[] {
+function block(element: HtmlElement, r: RichTextFromHtmlOptions): RichTextNode[] {
   const { tag } = element;
   const embed = embedOf(element);
   if (embed) {
@@ -407,13 +437,13 @@ function block(element: HtmlElement): RichTextNode[] {
     const caption = element.children.filter(
       (c): c is HtmlElement => typeof c !== 'string' && c.tag === 'figcaption',
     );
-    return [embed, ...caption.flatMap((c) => blocks(c.children, false))];
+    return [embed, ...caption.flatMap((c) => blocks(c.children, false, r))];
   }
   const heading = HEADINGS[tag];
-  if (heading) return withInline(heading, element);
+  if (heading) return withInline(heading, element, r);
   switch (tag) {
     case 'p':
-      return withInline('paragraph', element);
+      return withInline('paragraph', element, r);
     case 'hr':
       return [{ nodeType: 'hr', data: {}, content: [] }];
     case 'pre': {
@@ -423,7 +453,7 @@ function block(element: HtmlElement): RichTextNode[] {
         : [];
     }
     case 'blockquote': {
-      const content = blocks(element.children, true);
+      const content = blocks(element.children, true, r);
       return content.length ? [{ nodeType: 'blockquote', data: {}, content }] : [];
     }
     case 'ul':
@@ -431,14 +461,14 @@ function block(element: HtmlElement): RichTextNode[] {
       const items: RichTextNode[] = [];
       let stray: HtmlNode[] = [];
       const flushStray = () => {
-        const content = blocks(stray, false);
+        const content = blocks(stray, false, r);
         if (content.length) items.push({ nodeType: 'list-item', data: {}, content });
         stray = [];
       };
       for (const node of element.children) {
         if (typeof node !== 'string' && node.tag === 'li') {
           flushStray();
-          items.push({ nodeType: 'list-item', data: {}, content: nonEmptyBlocks(node) });
+          items.push({ nodeType: 'list-item', data: {}, content: nonEmptyBlocks(node, r) });
         } else {
           stray.push(node);
         }
@@ -450,12 +480,12 @@ function block(element: HtmlElement): RichTextNode[] {
       ];
     }
     case 'table':
-      return table(element);
+      return table(element, r);
     case 'li':
       // A list item outside a list reads as what it holds.
-      return blocks(element.children, false);
+      return blocks(element.children, false, r);
     default:
-      return blocks(element.children, false);
+      return blocks(element.children, false, r);
   }
 }
 
@@ -463,8 +493,8 @@ function block(element: HtmlElement): RichTextNode[] {
  * A list item or table cell always holds at least one block, so it is never an
  * empty bullet or a cell the editor cannot put a cursor in.
  */
-function nonEmptyBlocks(element: HtmlElement): RichTextNode[] {
-  const content = blocks(element.children, false);
+function nonEmptyBlocks(element: HtmlElement, r: RichTextFromHtmlOptions): RichTextNode[] {
+  const content = blocks(element.children, false, r);
   return content.length
     ? content
     : [{ nodeType: 'paragraph', data: {}, content: [textNode('', [])] }];
@@ -479,7 +509,7 @@ function nonEmptyBlocks(element: HtmlElement): RichTextNode[] {
  * browser shows it too. A table past the domain's bounds, or with no cells at
  * all, reads as what it holds instead: its text survives, its grid does not.
  */
-function table(element: HtmlElement): RichTextNode[] {
+function table(element: HtmlElement, r: RichTextFromHtmlOptions): RichTextNode[] {
   const rows: RichTextNode[] = [];
   const outside: HtmlNode[] = [];
   let tooLarge = false;
@@ -490,7 +520,7 @@ function table(element: HtmlElement): RichTextNode[] {
         cells.push({
           nodeType: node.tag === 'th' ? 'table-header-cell' : 'table-cell',
           data: spans(node),
-          content: nonEmptyBlocks(node),
+          content: nonEmptyBlocks(node, r),
         });
       } else {
         outside.push(node);
@@ -510,9 +540,9 @@ function table(element: HtmlElement): RichTextNode[] {
     } else if (node.tag !== 'colgroup') outside.push(node);
   }
   if (!rows.length || tooLarge || rows.length > MAX_TABLE_ROWS) {
-    return blocks(element.children, false);
+    return blocks(element.children, false, r);
   }
-  return [...blocks(outside, false), { nodeType: 'table', data: {}, content: rows }];
+  return [...blocks(outside, false, r), { nodeType: 'table', data: {}, content: rows }];
 }
 
 /** A cell's `colspan`/`rowspan`, kept only when it actually spans and stays in bounds. */
@@ -532,9 +562,14 @@ function spans(cell: HtmlElement): Record<string, number> {
  * A block of inline content. An embeddable player inside it (`<p><iframe>`, as
  * editors commonly store one) is lifted out as an `embed` block of its own,
  * splitting the text around it, because an embed is a block and cannot sit in
- * a line of text.
+ * a line of text. A resolved image (`<p><img>`) is lifted out the same way, as
+ * an `embedded-asset-block`.
  */
-function withInline(nodeType: string, element: HtmlElement): RichTextNode[] {
+function withInline(
+  nodeType: string,
+  element: HtmlElement,
+  r: RichTextFromHtmlOptions,
+): RichTextNode[] {
   const out: RichTextNode[] = [];
   let run: RichTextNode[] = [];
   const flush = () => {
@@ -543,16 +578,61 @@ function withInline(nodeType: string, element: HtmlElement): RichTextNode[] {
     run = [];
   };
   for (const child of element.children) {
-    const embed = typeof child === 'string' ? undefined : embedOf(child);
+    const embed = typeof child === 'string' ? undefined : blockOf(child, r);
     if (embed) {
       flush();
       out.push(embed);
     } else {
-      run.push(...inline(child, []));
+      run.push(...inline(child, [], false, r));
     }
   }
   flush();
   return out;
+}
+
+// --- assets ------------------------------------------------------------------
+
+/** The block an element that stands apart from text becomes: an embed, or a resolved image. */
+function blockOf(element: HtmlElement, r: RichTextFromHtmlOptions): RichTextNode | undefined {
+  return embedOf(element) ?? assetBlockOf(element, r);
+}
+
+/**
+ * An `embedded-asset-block` for an image the caller resolved: an `<img>`, a `<picture>`'s `<img>`,
+ * or a link around one image alone (WordPress's `<a href="full.jpg"><img src="thumb.jpg"></a>`),
+ * where the link's target, the full-size file, is the asset asked for. A link to anything the
+ * caller doesn't resolve as an asset (a page) stays the link it was, the image its text.
+ */
+function assetBlockOf(element: HtmlElement, r: RichTextFromHtmlOptions): RichTextNode | undefined {
+  if (!r.resolveAsset) return undefined;
+  let src: string | undefined;
+  let image: HtmlElement | undefined;
+  if (element.tag === 'a') {
+    const only = element.children.filter((c) => typeof c !== 'string' || c.trim() !== '');
+    const child = only.length === 1 ? only[0] : undefined;
+    image = typeof child === 'string' || !child ? undefined : imageOf(child);
+    src = image ? element.attributes.href : undefined;
+  } else {
+    image = imageOf(element);
+    src = image?.attributes.src;
+  }
+  const source = src?.trim();
+  if (!image || !source) return undefined;
+  const alt = image.attributes.alt;
+  const target = r.resolveAsset(source, alt === undefined || alt === '' ? undefined : alt);
+  if (!target) return undefined;
+  return {
+    nodeType: 'embedded-asset-block',
+    data: { target: { id: target.id, linkType: 'Asset' } },
+    content: [],
+  };
+}
+
+/** The `<img>` an element is, or a `<picture>` holds. */
+function imageOf(element: HtmlElement): HtmlElement | undefined {
+  if (element.tag === 'img') return element;
+  if (element.tag !== 'picture') return undefined;
+  return element.children.find((c): c is HtmlElement => typeof c !== 'string' && c.tag === 'img');
 }
 
 // --- embeds ------------------------------------------------------------------
@@ -686,7 +766,12 @@ function findElement(node: HtmlNode, tag: string): HtmlElement | undefined {
  * image contributes its text to the outer link instead — the common WordPress
  * `<a href="full.jpg"><img src="thumb.jpg"></a>` is one link, to the full image.
  */
-function inline(node: HtmlNode, marks: readonly RichTextMark[], inLink = false): RichTextNode[] {
+function inline(
+  node: HtmlNode,
+  marks: readonly RichTextMark[],
+  inLink: boolean,
+  r: RichTextFromHtmlOptions,
+): RichTextNode[] {
   if (typeof node === 'string') return [textNode(node, marks)];
   const { tag } = node;
   if (DROPPED.has(tag)) return [];
@@ -698,10 +783,21 @@ function inline(node: HtmlNode, marks: readonly RichTextMark[], inLink = false):
         c,
         extra && !marks.some((m) => m.type === extra.type) ? [...marks, extra] : marks,
         linked,
+        r,
       ),
     );
 
   if (MEDIA.has(tag)) {
+    // A resolved image that can't stand as a block (inside bold, say) links to its asset instead.
+    const image = inLink ? undefined : imageOf(node);
+    const imageSrc = image?.attributes.src?.trim();
+    const asset = imageSrc
+      ? r.resolveAsset?.(imageSrc, image?.attributes.alt || undefined)
+      : undefined;
+    if (asset) {
+      const text = image?.attributes.alt || image?.attributes.title || (imageSrc as string);
+      return [referenceLink({ linkType: 'Asset', id: asset.id }, [textNode(text, marks)])];
+    }
     // `<video><source src>` carries its source on a child, not the element.
     const source = node.children.find(
       (c): c is HtmlElement => typeof c !== 'string' && c.tag === 'source' && !!c.attributes.src,
@@ -721,7 +817,10 @@ function inline(node: HtmlNode, marks: readonly RichTextMark[], inLink = false):
     const content = children(undefined, true);
     // A link with no text is nothing a reader can click; its breaks, if any, stay.
     const hasText = content.some((n) => n.nodeType === 'text' && n.value?.trim());
-    return hasText ? [hyperlink(href, content)] : content;
+    if (!hasText) return content;
+    // A link to something the caller holds points at it, not at the page it was.
+    const target = r.resolveLink?.(href);
+    return target ? [referenceLink(target, content)] : [hyperlink(href, content)];
   }
   const mark = MARKS[tag];
   return mark ? children({ type: mark }) : children();
@@ -729,6 +828,17 @@ function inline(node: HtmlNode, marks: readonly RichTextMark[], inLink = false):
 
 function hyperlink(uri: string, content: RichTextNode[]): RichTextNode {
   return { nodeType: 'hyperlink', data: { uri }, content };
+}
+
+function referenceLink(
+  target: { readonly linkType: 'Entry' | 'Asset'; readonly id: string },
+  content: RichTextNode[],
+): RichTextNode {
+  return {
+    nodeType: target.linkType === 'Entry' ? 'entry-hyperlink' : 'asset-hyperlink',
+    data: { target: { id: target.id, linkType: target.linkType } },
+    content,
+  };
 }
 
 function textNode(

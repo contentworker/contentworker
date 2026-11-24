@@ -264,6 +264,17 @@ caption stays as a paragraph after it), and a provider URL alone on its line or 
 (WordPress's classic editor) as an `embed` node. A player inside a paragraph is lifted out, splitting
 the paragraph. Media from any other host stays a link to its source, as before.
 
+A caller that has already brought the files and pages in passes resolvers
+(`richTextFromHtml(html, { resolveAsset, resolveLink })`, both synchronous: resolve into a map
+first, the domain does no I/O). Each is asked with the attribute as written, relative URLs
+included. An `<img>` whose `src` `resolveAsset(src, alt)` names becomes an `embedded-asset-block`,
+as does a `<picture>`'s image and a link around one image alone when the link's `href` resolves
+(WordPress's `<a href="full.jpg"><img src="thumb.jpg"></a>` embeds the full-size file); in a
+paragraph or heading it is lifted out, splitting the text, and one nested in inline formatting
+becomes an `asset-hyperlink` instead, which a line of text can hold. A link whose `href`
+`resolveLink(href)` names becomes an `entry-hyperlink` or `asset-hyperlink`. Without resolvers, or
+for what they answer `undefined`, the output is as above; the CSV and WordPress imports pass none.
+
 In Delivery, `?include=` resolves rich-text references like `Link` fields: each reference node's
 `data.target` becomes the embedded entry or asset (the node and its `nodeType` stay), and a
 dangling, unpublished or cyclic target stays a `{ id, linkType }` stub.
