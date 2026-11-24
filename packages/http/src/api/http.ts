@@ -1,3 +1,4 @@
+import { SiteUnavailableError } from '@contentworker/application';
 import {
   AiCapabilityDisabledError,
   AiProjectInUseError,
@@ -17,6 +18,7 @@ import {
   SecretUnreadableError,
   ValidationError,
 } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 
@@ -27,6 +29,14 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
     return {
       status: 422,
       body: { error: { code: err.code, message: err.message, issues: err.issues } },
+    };
+  }
+  // A concurrent write won the compare-and-set and nothing was written: the same request, sent
+  // again, reads the new state and goes ahead (or finds the work done).
+  if (err instanceof TransactionConflictError) {
+    return {
+      status: 409,
+      body: { error: { code: err.code, message: err.message, retryable: true } },
     };
   }
   // A conflict's details say what it conflicts with (the entries still using a removed field or
@@ -141,6 +151,14 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
             : {}),
         },
       },
+    };
+  }
+  // A migration's source site can't say what may be fetched now (its robots.txt answered a server
+  // error or nothing): the upstream, not the request, so 503, and nothing was written.
+  if (err instanceof SiteUnavailableError) {
+    return {
+      status: 503,
+      body: { error: { code: err.code, message: err.message, retryable: true } },
     };
   }
   if (err instanceof NotConfiguredError) return { status: 501, body: errBody(err) };

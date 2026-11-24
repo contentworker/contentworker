@@ -3,7 +3,7 @@
 > A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/sdk/README.md) as its `contentworker` binary; the examples below use that name.
 
 The `contentworker` command: sign in to a workspace, keep the content model and the block catalog
-in files, read and write entries, upload assets, import files and generate types. Every command
+in files, read and write entries, upload assets, import files, migrate a website's pages and generate types. Every command
 takes `--json` for scripts and agents. Node 24 or later.
 
 ```sh
@@ -17,6 +17,9 @@ npx contentworker blocks push --dry-run
 npx contentworker entries list --content-type article --json
 npx contentworker import posts.xml --content-type article --map title=title --map body=content --dry-run
 npx contentworker types --out src/generated/content-types.ts
+npx contentworker migrate create https://example.com --exclude '/blog/**'
+npx contentworker migrate step <run>
+npx contentworker migrate cluster <run>
 ```
 
 `blocks push` imports a manifest's `{ url }` (https) or `{ file }` thumbnail into the space's

@@ -60,7 +60,11 @@ describe('role presets', () => {
       SCOPES.contentPublish,
     ]);
     expect(scopes.manager).toEqual([...(scopes.editor ?? []), SCOPES.contentManage]);
-    expect(scopes.admin).toEqual([...(scopes.manager ?? []), SCOPES.spaceAdmin]);
+    expect(scopes.admin).toEqual([
+      ...(scopes.manager ?? []),
+      SCOPES.spaceAdmin,
+      SCOPES.migrationRun,
+    ]);
     // Admin holds every scope there is.
     expect(new Set(scopes.admin)).toEqual(new Set(Object.values(SCOPES)));
     // Every preset reaches every content type: viewers and approvers read, editors and up write,

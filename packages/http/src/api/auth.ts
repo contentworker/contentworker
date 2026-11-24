@@ -23,6 +23,7 @@ import {
 import {
   type AgentReview,
   authorize,
+  authorizeAny,
   ForbiddenError,
   inScope,
   type PermissionScope,
@@ -42,6 +43,7 @@ import type {
   Hasher,
   ImportSource,
   RemoteFetcher,
+  SiteSource,
   SpaceExportReader,
   WorkflowEngine,
 } from '@contentworker/ports';
@@ -106,6 +108,11 @@ export interface AuthDeps {
   readonly spaceExportReader?: SpaceExportReader;
   /** Downloads plugin packages. Absent means install-from-URL is unavailable. */
   readonly remoteFetcher?: RemoteFetcher;
+  /**
+   * Reads a site for a migration (sitemap or same-origin crawl, robots.txt kept). Absent: the
+   * inventory and fetch steps answer 501.
+   */
+  readonly siteSource?: SiteSource;
   /** Deployment policy for where plugin packages may come from. */
   readonly pluginSources?: PluginSourcePolicy;
   /** Delivers review decisions to a durable HITL watcher (optional). */
@@ -406,6 +413,14 @@ export function requireScope(scope: PermissionScope): MiddlewareHandler<AuthVars
     const space = c.req.param('space');
     // authorize throws ForbiddenError → mapped to 403 by the error handler.
     authorize(principal, scope, space ?? '*');
+    await next();
+  };
+}
+
+/** As {@link requireScope}, for a route any one of `scopes` permits. */
+export function requireAnyScope(...scopes: PermissionScope[]): MiddlewareHandler<AuthVars> {
+  return async (c, next) => {
+    authorizeAny(c.get('principal'), scopes, c.req.param('space') ?? '*');
     await next();
   };
 }

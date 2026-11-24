@@ -37,6 +37,7 @@ export class AssistantAgent extends AssistantAgentBase {
         moderateBeforePublish: wired.config.moderateBeforePublish,
         accessPolicy: WEB_SIGN_IN,
         remoteFetcher: wired.remoteFetcher,
+        siteSource: wired.siteSource,
         signalReview: env.AGENT_WF
           ? (review, decision) => sendReviewDecision(env.AGENT_WF as Workflow, review.id, decision)
           : undefined,

@@ -1,0 +1,164 @@
+---
+title: Migrate a website
+description: Read a published website from its sitemap or a crawl, fetch its pages and group them into templates by structure, over the API, MCP, the SDK and the command line.
+---
+
+A migration run reads a published website and finds out what it is made of. You point a run at a
+site, it lists the pages, fetches them a batch at a time and groups the pages that share a
+structure into **templates**: a home page, a product page, an article. The run lives in one
+[environment](/guides/environments/), so you can do it in a scratch environment and look at the
+result before anything is built.
+
+## What exists now
+
+Discovery and clustering are built, on every surface:
+
+- Management API routes under `/spaces/{space}/environments/{env}/migrations/runs` (the "Site
+  migration" tag in the [API reference](/reference/rest-api/)).
+- Eight [MCP](/guides/mcp/) tools, `migration_*`, and a `site-migration` skill that walks an agent
+  through the steps.
+- `cma.migrations` in the [Management SDK](/guides/sdks/) and `contentworker migrate` in the
+  [command-line tool](/guides/cli/).
+
+Template authoring, loading pages as entries, publishing them and an admin screen for runs are not
+part of this yet. A run ends, for now, at its list of templates and the pages in each.
+
+## Before you start
+
+- Running a step (create, inventory, fetch, cluster) needs `migration:run`. Reading a run back
+  (list, status, pages, templates) needs `migration:run` or `content:manage`.
+- `space:admin` carries `migration:run`, so the Administrator role and every admin key can run a
+  migration. Other roles and keys can be given the scope on its own; the token picker calls it
+  **Migrate websites**. See [API keys and access](/guides/api-keys/#scopes).
+- A connected app (OAuth, which includes `contentworker login`) can't be granted `migration:run`.
+  Use a [personal access token](/guides/api-keys/#personal-access-tokens) or a Management key.
+- The site must be public: a run has no way to sign in to it.
+
+## How the site is read
+
+| Rule                | Behavior                                                                                                                                           |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Same origin         | Every request stays on the origin of the source URL. Links to other hosts are counted and never followed.                                          |
+| `robots.txt`        | Read as the user agent token `ContentWorker`. Pages it disallows are left out and counted. A crawl delay it asks for is honoured, up to 10 seconds. |
+| Unreadable `robots.txt` | A server error or no answer means nothing is fetched or written: an inventory answers `503`, a fetch answers with `unavailable`. A `4xx` answer means no rules.                |
+| Public addresses    | A source URL on a loopback, link-local or private address is refused when the run is created (`422`, naming `source.url`).                         |
+| Page URLs           | The query string and fragment are dropped, so `/shop?page=2#top` is the page `/shop`.                                                              |
+| Stored HTML         | Each page's HTML is kept in object storage, addressed by its hash. It is never returned: a page reports `{ sha256, bytes }` only.                  |
+
+## Choose a source
+
+A source is a `kind`, a `url` and optional limits.
+
+| Field      | Meaning                                                                                                                                              |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`     | `sitemap` or `crawl`                                                                                                                                 |
+| `url`      | For `sitemap`, a sitemap URL, a sitemap index, or the site's origin (its `robots.txt` `Sitemap` lines are read, then `/sitemap.xml`). For `crawl`, the start page. |
+| `include`  | Path globs; a page must match one. Empty means every page.                                                                                           |
+| `exclude`  | Path globs that leave a page out, over `include`.                                                                                                    |
+| `maxPages` | The most pages the run takes. Default 500, at most 10,000.                                                                                           |
+
+A glob starts with `/`. `*` matches within one path segment and `**` across segments, so `/blog/*`
+takes `/blog/hello` but not `/blog/2024/hello`, and `/blog/**` takes both. Prefer a sitemap: it
+lists the pages directly. A crawl starts at one page and follows its links up to eight levels
+deep, adding the pages the globs take as it goes, so it needs more fetches and can miss pages
+nothing links to.
+
+## Run it
+
+1. **Create** the run. Nothing is fetched yet. `name` defaults to the source host, and `threshold`
+   (0 to 1, default 0.8) is the score a page will need later to count as validated.
+2. **Inventory** it. A sitemap source adds every listed page the globs take, up to `maxPages`; a
+   crawl adds its start page. The run's `inventory` says how many pages were found and added, how
+   many were skipped (by `robots.txt`, globs, origin, `maxPages` or an unusable URL) and any
+   warnings. Repeating it adds only URLs the run doesn't hold, and it is refused (`400`,
+   `invalid_state`) once the run is clustered.
+3. **Fetch** in batches. Each call fetches up to `limit` pages (1 to 10, default 10) that haven't
+   been fetched, and answers `{ fetched, failed, added, more }`. Call again while `more` is
+   `true`. A crawl's `added` counts the links it found on the batch's pages. A page that fails
+   (a `404`, a timeout) keeps its `error` and isn't tried again. When the site can't be read,
+   the answer carries `unavailable`, nothing was written, and you call again later with the same
+   arguments.
+4. **Cluster.** Pages that share an HTML structure become one template. `threshold` (0 to 1,
+   default 0.6) is how similar a page must be to join one: lower it if one page shape was split
+   into several templates, raise it if unlike pages were merged. Clustering again replaces the
+   earlier grouping whole, until a template is being authored.
+5. **Read the result.** The run shows its page counts by stage and its templates, largest first,
+   each with sample pages. List a run's pages by `stage` or `template`; a one-page template is
+   usually a one-off such as a home page.
+
+`status` on a run is the step that last finished: `created`, `inventoried`, `clustered` or
+`failed`.
+
+### With curl
+
+```sh
+BASE="$API/spaces/$SPACE/environments/main/migrations/runs"
+AUTH="Authorization: Bearer $TOKEN"
+
+RUN=$(curl -s -X POST "$BASE" -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"source":{"kind":"sitemap","url":"https://example.com","exclude":["/blog/**"],"maxPages":2000}}' \
+  | jq -r .id)
+
+curl -s -X POST "$BASE/$RUN/inventory" -H "$AUTH"
+
+# Fetch until no page waits.
+while [ "$(curl -s -X POST "$BASE/$RUN/fetch" -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"limit":10}' | tee /dev/stderr | jq -r '.more and (.unavailable | not)')" = true ]; do :; done
+
+curl -s -X POST "$BASE/$RUN/cluster" -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"threshold":0.6}'
+curl -s "$BASE/$RUN/templates" -H "$AUTH"
+curl -s "$BASE/$RUN/pages?stage=clustered&limit=50" -H "$AUTH"
+```
+
+A page list returns `nextCursor` only while more pages follow; send it back as `cursor`.
+
+### With an agent
+
+Connect an agent that holds the scope and ask for the migration in plain words. The
+`site-migration` skill tells it to confirm the source and limits first, prefer a sitemap, and walk
+you through the templates at the end. Under it, the calls are:
+
+```json
+{ "name": "migration_create", "arguments": { "source": { "kind": "sitemap", "url": "https://example.com", "exclude": ["/blog/**"] } } }
+{ "name": "migration_inventory", "arguments": { "run": "<run id>" } }
+{ "name": "migration_fetch_pages", "arguments": { "run": "<run id>", "limit": 10 } }
+{ "name": "migration_cluster", "arguments": { "run": "<run id>", "threshold": 0.6 } }
+{ "name": "migration_templates", "arguments": { "run": "<run id>" } }
+```
+
+`migration_list`, `migration_status` and `migration_pages` read a run back. Every tool takes
+`space` and `environment` like the rest of the server.
+
+### With the command line
+
+```sh
+contentworker migrate create https://example.com --exclude '/blog/**' --max-pages 2000
+contentworker migrate step <run>
+contentworker migrate cluster <run> --threshold 0.6
+contentworker migrate pages <run> --stage clustered
+```
+
+`migrate create` takes `--crawl` for a crawl source, `--include` and `--exclude` (repeatable),
+`--max-pages`, `--name` and `--threshold`. `migrate step` inventories a run that was just created,
+then fetches batches until none wait (`--batch`, `--max-batches`); run it again after a stop. It
+exits `1` with the code `site_unavailable` when the site's `robots.txt` can't be read.
+
+## When a call is refused
+
+| Status | Code                | Means                                                                                                                      |
+| ------ | ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `403`  | `forbidden`         | The token lacks the scope; the message names it.                                                                           |
+| `400`  | `invalid_state`     | The step is out of order: clustering before an inventory, or an inventory after clustering.                                |
+| `404`  | `not_found`         | No such run in this environment.                                                                                           |
+| `409`  | `conflict`          | Another step wrote the run first (`retryable: true`). Send the call again.                                                 |
+| `422`  | `validation_failed` | A source field is malformed, or the URL is on a private address. The issue names the field, such as `source.include[0]`. |
+| `501`  | `not_configured`    | This deployment can't read source sites.                                                                                   |
+| `503`  | `site_unavailable`  | The site's `robots.txt` can't be read (`retryable: true`). Nothing was written; try again later.                            |
+
+## Next steps
+
+- [Import content](/guides/editing-and-publishing/#import-content) brings in a WordPress export,
+  CSV or JSON file as drafts.
+- [Command-line tool](/guides/cli/) and [MCP server](/guides/mcp/) for the other surfaces.
+- [API keys and access](/guides/api-keys/) to mint a key with `migration:run`.

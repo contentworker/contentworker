@@ -52,7 +52,7 @@ const EDITOR: readonly PermissionScope[] = [
   SCOPES.contentPublish,
 ];
 const MANAGER: readonly PermissionScope[] = [...EDITOR, SCOPES.contentManage];
-const ADMIN: readonly PermissionScope[] = [...MANAGER, SCOPES.spaceAdmin];
+const ADMIN: readonly PermissionScope[] = [...MANAGER, SCOPES.spaceAdmin, SCOPES.migrationRun];
 
 /**
  * The presets, in order. Starting and cancelling workflow runs and delivering workflow events
@@ -93,7 +93,7 @@ export const ROLE_PRESET_DEFINITIONS: readonly RolePresetDefinition[] = [
     preset: 'admin',
     name: 'Administrator',
     description:
-      'Everything a manager can do, and also manages the team, API keys, roles, webhooks, environments, plugins and the audit log.',
+      'Everything a manager can do, and also manages the team, API keys, roles, webhooks, environments, plugins and the audit log, and runs site migrations.',
     scopes: ADMIN,
     contentGrants: MANAGES,
   },

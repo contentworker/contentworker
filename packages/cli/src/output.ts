@@ -67,6 +67,16 @@ export function apiErrorText(err: ManagementError): string {
   return issues.length ? `${message}:\n${issues.join('\n')}` : message;
 }
 
+/**
+ * Text for a terminal: control characters other than tab and newline removed. What a command
+ * prints can hold text from elsewhere (a migrated site's titles, errors and robots.txt lines), and
+ * an escape sequence in it would otherwise reach the terminal as a command.
+ */
+export function printable(text: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point.
+  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+}
+
 /** A command's outcome: `json` is printed with `--json`, `human` without it. */
 export interface Result {
   readonly json: unknown;

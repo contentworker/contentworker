@@ -650,7 +650,8 @@ function kindForScopes(scopes: readonly string[]): ApiKeyKind {
     scopes.includes(SCOPES.assetsWrite) ||
     scopes.includes(SCOPES.contentPublish) ||
     scopes.includes(SCOPES.contentManage) ||
-    scopes.includes(SCOPES.spaceAdmin)
+    scopes.includes(SCOPES.spaceAdmin) ||
+    scopes.includes(SCOPES.migrationRun)
   ) {
     return 'cma';
   }

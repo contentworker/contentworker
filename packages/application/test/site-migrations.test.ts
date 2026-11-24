@@ -20,6 +20,9 @@ import {
   fetchSourcePages,
   getMigrationRun,
   inventorySite,
+  listMigrationPages,
+  listMigrationRuns,
+  listMigrationTemplates,
   SiteUnavailableError,
   sha256Hex,
 } from '../src/index';
@@ -336,5 +339,70 @@ describe('inventory, fetch and cluster, end to end', () => {
     expect(await store.migrations.listTemplates(scope, run.id)).toEqual([]);
     expect((await store.migrations.countPages(scope, run.id)).byStage).toEqual({ discovered: 6 });
     expect((await store.migrations.getRun(scope, run.id))?.status).toBe('inventoried');
+  });
+});
+
+describe('reading a run back', () => {
+  it('lists runs newest first, per environment, capped', async () => {
+    const { ctx } = harness({});
+    const first = await createMigrationRun(ctx, scope, { source: { kind: 'crawl', url: `${O}/` } });
+    const second = await createMigrationRun(ctx, scope, {
+      source: { kind: 'sitemap', url: `${O}/sitemap.xml` },
+    });
+    await createMigrationRun(ctx, other, { source: { kind: 'crawl', url: `${O}/` } });
+    expect((await listMigrationRuns(ctx, scope)).items.map((r) => r.id)).toEqual([
+      second.id,
+      first.id,
+    ]);
+    expect((await listMigrationRuns(ctx, scope, { limit: 1 })).items).toHaveLength(1);
+    expect((await listMigrationRuns(ctx, scope, { limit: 0 })).items).toHaveLength(1);
+    expect((await listMigrationRuns(ctx, other)).items).toHaveLength(1);
+  });
+
+  it('pages through pages by stage and template, with a cursor only while more follow', async () => {
+    const { ctx, deps } = harness(SITE);
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: `${O}/` } });
+    await inventorySite(ctx, deps, scope, run.id);
+    for (let more = true; more; ) {
+      more = (await fetchSourcePages(ctx, deps, scope, run.id)).more;
+    }
+    const { templates } = await clusterPages(ctx, scope, run.id);
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await listMigrationPages(ctx, scope, run.id, {
+        limit: 2,
+        ...(cursor ? { cursor } : {}),
+      });
+      expect(page.items.length).toBeLessThanOrEqual(2);
+      seen.push(...page.items.map((p) => p.url));
+      cursor = page.nextCursor;
+    } while (cursor);
+    expect(seen).toEqual(Object.keys(SITE));
+    // Exactly a page's worth left: no cursor to a page that would be empty.
+    const all = await listMigrationPages(ctx, scope, run.id, { limit: 6 });
+    expect(all.items).toHaveLength(6);
+    expect(all.nextCursor).toBeUndefined();
+
+    // The 404 never got HTML, so clustering left it discovered.
+    const discovered = await listMigrationPages(ctx, scope, run.id, { stage: 'discovered' });
+    expect(discovered.items.map((p) => p.url)).toEqual([`${O}/blog/gone`]);
+    const largest = templates[0] as MigrationTemplate;
+    const ofTemplate = await listMigrationPages(ctx, scope, run.id, { templateId: largest.id });
+    expect(ofTemplate.items).toHaveLength(largest.pageCount);
+    expect(ofTemplate.items.every((p) => p.stage === 'clustered')).toBe(true);
+
+    expect((await listMigrationTemplates(ctx, scope, run.id)).items).toEqual(templates);
+  });
+
+  it('answers 404 for a run in another environment and refuses an unknown stage', async () => {
+    const { ctx } = harness({});
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'crawl', url: `${O}/` } });
+    await expect(listMigrationPages(ctx, other, run.id)).rejects.toThrow(NotFoundError);
+    await expect(listMigrationTemplates(ctx, other, run.id)).rejects.toThrow(NotFoundError);
+    await expect(
+      listMigrationPages(ctx, scope, run.id, { stage: 'finished' as 'loaded' }),
+    ).rejects.toThrow(ValidationError);
   });
 });

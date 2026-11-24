@@ -1776,8 +1776,13 @@ sites, and its adapter (`@contentworker/adapters/site-source`) works over `Remot
   after the first waits that long after the one before, across batches and calls.
 
 The use-cases (`packages/application/src/site-migrations.ts`) are `createMigrationRun`,
-`inventorySite`, `fetchSourcePages`, `clusterPages` and `getMigrationRun`. They aren't on the HTTP
-API or MCP yet.
+`inventorySite`, `fetchSourcePages`, `clusterPages`, `getMigrationRun`, `listMigrationRuns`,
+`listMigrationPages` and `listMigrationTemplates`. Each is on the Management API
+([Site migration](./api-reference.md#site-migration)) and MCP (`migration_*`, [MCP server](./mcp.md#tools)),
+and in the management SDK and `contentworker migrate`; the guide for people is
+[Migrate a website](https://docs.contentworker.app/guides/migrate-a-website/). The scope is
+`migration:run` ([Auth & RBAC](./auth-and-rbac.md#permission-scopes)). Responses never carry a
+page's HTML, its object key or its fingerprint: an artifact is `{ sha256, bytes }`.
 
 - `inventorySite` adds the pages a sitemap lists, or a crawl's start page, skipping URLs the run
   already holds. It throws `SiteUnavailableError` (`site_unavailable`), with nothing written,

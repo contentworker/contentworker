@@ -80,7 +80,12 @@ describe('a delegated bearer and the people on a team', () => {
   });
 
   it('resolves the personal access token as a space admin, so only delegation refuses it', () => {
-    expect(pat).toMatchObject({ kind: 'user', issuance: 'pat', scopes: [SCOPES.spaceAdmin] });
+    // Capped by Ada's Administrator role, which lists `migration:run`: `space:admin` implies it.
+    expect(pat).toMatchObject({
+      kind: 'user',
+      issuance: 'pat',
+      scopes: [SCOPES.spaceAdmin, SCOPES.migrationRun],
+    });
   });
 
   it('refuses adding a person to the team, with a 403 that says to sign in', async () => {

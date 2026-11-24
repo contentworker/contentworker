@@ -346,6 +346,134 @@ export interface RedirectWrite {
   readonly chains: readonly RedirectChain[];
 }
 
+// --- site migration ------------------------------------------------------------
+
+/** Where a run finds its pages: a sitemap (or index, or the origin), or a same-origin crawl. */
+export interface MigrationSource {
+  readonly kind: 'sitemap' | 'crawl';
+  readonly url: string;
+  /** Path globs a page must match one of (`*` in a segment, `**` across); empty, every page. */
+  readonly include: readonly string[];
+  readonly exclude: readonly string[];
+  readonly maxPages: number;
+}
+
+export interface MigrationRunInput {
+  /** Default: the source host. */
+  readonly name?: string;
+  /** Score a page needs to count as validated, 0..1 (default 0.8). */
+  readonly threshold?: number;
+  readonly source: Pick<MigrationSource, 'kind' | 'url'> &
+    Partial<Pick<MigrationSource, 'include' | 'exclude' | 'maxPages'>>;
+}
+
+export interface MigrationRun {
+  readonly id: string;
+  readonly name: string;
+  readonly source: MigrationSource;
+  /** The step that last finished. */
+  readonly status: 'created' | 'inventoried' | 'clustered' | 'failed';
+  readonly threshold: number;
+  readonly inventory: {
+    readonly discovered: number;
+    readonly added: number;
+    readonly skipped: {
+      readonly robots: number;
+      readonly filtered: number;
+      readonly offOrigin: number;
+      readonly overLimit: number;
+      readonly invalid: number;
+    };
+    readonly warnings: readonly string[];
+  } | null;
+  readonly error: string | null;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly createdBy: string | null;
+  readonly updatedAt: string;
+}
+
+export type MigrationPageStage =
+  | 'discovered'
+  | 'clustered'
+  | 'transformed'
+  | 'validated'
+  | 'needs-fix'
+  | 'loaded'
+  | 'published';
+
+/** A stored file, by hash and size: its bytes are never sent inline. */
+export interface MigrationArtifact {
+  readonly sha256: string;
+  readonly bytes: number;
+}
+
+export interface MigrationTemplate {
+  readonly id: string;
+  readonly runId: string;
+  readonly label: string;
+  readonly status: 'pending' | 'authoring' | 'approved';
+  readonly pageCount: number;
+  readonly samplePageIds: readonly string[];
+  readonly contentTypeId: string | null;
+  readonly script: MigrationArtifact | null;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface MigrationPage {
+  readonly id: string;
+  readonly runId: string;
+  readonly url: string;
+  readonly path: string;
+  readonly depth: number;
+  readonly stage: MigrationPageStage;
+  readonly templateId: string | null;
+  readonly title: string | null;
+  readonly lastModified: string | null;
+  /** 0 when no response came. */
+  readonly httpStatus: number | null;
+  readonly html: MigrationArtifact | null;
+  readonly output: MigrationArtifact | null;
+  readonly score: {
+    readonly overall: number;
+    readonly textCoverage: number;
+    readonly imagesMissing: number;
+    readonly imagesLost: number;
+    readonly sourceLinks: number;
+    readonly outputLinks: number;
+    readonly issues: readonly string[];
+  } | null;
+  readonly entryId: string | null;
+  readonly error: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface MigrationRunView {
+  readonly run: MigrationRun;
+  readonly pages: {
+    readonly total: number;
+    readonly fetched: number;
+    readonly failed: number;
+    readonly byStage: Readonly<Partial<Record<MigrationPageStage, number>>>;
+  };
+  /** Largest first. */
+  readonly templates: readonly MigrationTemplate[];
+}
+
+export interface MigrationFetchResult {
+  readonly fetched: number;
+  readonly failed: number;
+  /** Pages a crawl found on this batch and added. */
+  readonly added: number;
+  /** Pages are still waiting: fetch again while true. */
+  readonly more: boolean;
+  /** The site can't be read now (robots.txt unreadable); nothing was written. */
+  readonly unavailable?: string;
+}
+
 /** Where a menu item points: an entry (by its type's URL pattern), a taxonomy term, or a URL. */
 export type MenuLink =
   | { readonly type: 'entry'; readonly entryId: string }
@@ -2648,6 +2776,45 @@ export function createManagementClient(opts: ManagementClientOptions) {
         ),
       job: <T = unknown>(id: string) => get<AppOperationJob<T>>(`${envBase}/apps/jobs/${e(id)}`),
       jobs: () => get<{ items: AppOperationJob[] }>(`${envBase}/apps/jobs`),
+    },
+    /**
+     * Site migration: bring a published website in as structured content. Running a step needs
+     * `migration:run`; reading a run needs `migration:run` or `content:manage`.
+     */
+    migrations: {
+      /** Nothing is fetched yet. 422 for a malformed source or a private, loopback or link-local URL. */
+      create: (input: MigrationRunInput) => post<MigrationRun>(`${envBase}/migrations/runs`, input),
+      /** Newest first. */
+      list: (o: { readonly limit?: number } = {}) =>
+        get<{ items: MigrationRun[] }>(`${envBase}/migrations/runs`, { ...o }),
+      /** The run, its page counts by stage, and its templates. */
+      get: (id: string) => get<MigrationRunView>(`${envBase}/migrations/runs/${e(id)}`),
+      /** Adds the pages the source takes (only new URLs); 503 while robots.txt can't be read. */
+      inventory: (id: string) =>
+        post<MigrationRun>(`${envBase}/migrations/runs/${e(id)}/inventory`),
+      /** One bounded batch: call again while `more` is true. */
+      fetchPages: (id: string, o: { readonly limit?: number } = {}) =>
+        post<MigrationFetchResult>(`${envBase}/migrations/runs/${e(id)}/fetch`, o),
+      /** Groups fetched pages into templates by structure, replacing any earlier grouping. */
+      cluster: (id: string, o: { readonly threshold?: number } = {}) =>
+        post<MigrationRunView>(`${envBase}/migrations/runs/${e(id)}/cluster`, o),
+      /** One page of the run's pages; pass `nextCursor` back as `cursor`. */
+      pages: (
+        id: string,
+        o: {
+          readonly stage?: MigrationPageStage;
+          readonly template?: string;
+          readonly limit?: number;
+          readonly cursor?: string;
+        } = {},
+      ) =>
+        get<{ items: MigrationPage[]; nextCursor?: string }>(
+          `${envBase}/migrations/runs/${e(id)}/pages`,
+          { ...o },
+        ),
+      /** Largest first. */
+      templates: (id: string) =>
+        get<{ items: MigrationTemplate[] }>(`${envBase}/migrations/runs/${e(id)}/templates`),
     },
     /** Redirects: delivery data a front end applies (content:manage to change them). */
     redirects: {

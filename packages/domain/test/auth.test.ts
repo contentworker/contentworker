@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertWritableFields,
   authorize,
+  authorizeAny,
   authorizeApproval,
   authorizeContent,
   canAccessContentType,
@@ -211,5 +212,27 @@ describe('asset scopes by implication', () => {
       'preview:read',
     ]);
     expect(intersectScopes(['assets:write'], ['preview:read'])).toEqual([]);
+  });
+});
+
+describe('the migration scope', () => {
+  it('comes with space:admin and nothing narrower, and never implies anything itself', () => {
+    expect(holdsScope(['space:admin'], SCOPES.migrationRun)).toBe(true);
+    expect(holdsScope(['content:manage'], SCOPES.migrationRun)).toBe(false);
+    expect(holdsScope(['content:write', 'content:publish'], SCOPES.migrationRun)).toBe(false);
+    expect(holdsScope(['migration:run'], SCOPES.spaceAdmin)).toBe(false);
+    expect(holdsScope(['migration:run'], SCOPES.contentWrite)).toBe(false);
+    expect(scopesForKind('cma')).toContain(SCOPES.migrationRun);
+    expect(scopesForKind('cpa')).not.toContain(SCOPES.migrationRun);
+  });
+
+  it('authorizes on any one of several scopes, in the target space only', () => {
+    const reader = { spaceId: 's1', kind: 'cma' as const, scopes: ['content:manage'] };
+    const either = [SCOPES.migrationRun, SCOPES.contentManage];
+    expect(() => authorizeAny(reader, either, 's1')).not.toThrow();
+    expect(() => authorizeAny(reader, either, 's2')).toThrow(/migration:run" or "content:manage/);
+    expect(() => authorizeAny({ ...reader, scopes: ['preview:read'] }, either, 's1')).toThrow(
+      /Missing required scope/,
+    );
   });
 });

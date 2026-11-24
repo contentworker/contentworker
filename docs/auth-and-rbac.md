@@ -134,6 +134,7 @@ The three key kinds (`ApiKeyKind`):
 | `delivery:read`    | Read published entries and assets                                               |
 | `search:read`      | Semantic search over published content                                          |
 | `space:admin`      | Manage API keys, create spaces/environments, manage webhooks                    |
+| `migration:run`    | Run site migrations: create a run, inventory, fetch, cluster (+ read its runs)  |
 | `workflow:approve` | Decide workflow approvals (the Approver preset)                                 |
 
 ### Default scopes per kind
@@ -142,7 +143,7 @@ The three key kinds (`ApiKeyKind`):
 
 | Kind  | Scopes                                         |
 | ----- | ---------------------------------------------- |
-| `cma` | **all ten** scopes                             |
+| `cma` | **all eleven** scopes                          |
 | `cda` | `delivery:read`, `search:read`                 |
 | `cpa` | `preview:read`, `delivery:read`, `search:read` |
 
@@ -160,7 +161,16 @@ point (`authorize`), never written back: no stored key, role or token changed, a
 reach assets before still can. `intersectScopes` applies it when a delegated token (OAuth, PAT) is
 capped by a role: consent to `preview:read` capped by a role granting only `assets:read` leaves
 `assets:read`. An OAuth grant holding only `assets:write` mints a `cma`-kind token; only
-`assets:read`, a `cpa`-kind one.
+`assets:read`, a `cpa`-kind one; a grant holding `migration:run` mints a `cma`-kind token.
+
+`space:admin` implies `migration:run` (`IMPLIED_SCOPES`, the same way `preview:read` implies
+`assets:read`): every Administrator role and admin key stored before the scope existed can run a
+migration without being rewritten, and `migration:run` alone grants nothing else. The steps (create,
+inventory, fetch, cluster) need `migration:run`; listing runs and reading a run, its pages and its
+templates need `migration:run` or `content:manage` (`authorizeAny`). An anonymously registered
+OAuth client can't ask for it (the registration ceiling holds `delivery:read`, `preview:read`,
+`search:read`, `content:write` and `content:publish`), so a migration is run with a personal access
+token or a Management key.
 
 Asset operations by scope. `assets:read`: every asset read, drafts included (library list and
 search, files, metadata, folders, collections, renditions, usage, versions, transform URLs,
@@ -176,13 +186,13 @@ ordinary roles: assignable to API keys and to people, resolved live, editable, a
 custom roles. A preset role carries `preset` and can't be deleted. Each one can do everything the
 one before it can:
 
-| Preset     | Name          | Scopes                                                        | In words                                                                                      |
-| ---------- | ------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `viewer`   | Viewer        | `preview:read`, `assets:read`, `delivery:read`, `search:read` | Reads drafts, published content, workflows and approvals; searches                            |
-| `approver` | Approver      | viewer + `workflow:approve`                                   | Also approves or rejects workflow approvals                                                   |
-| `editor`   | Editor        | approver + `content:write`, `assets:write`, `content:publish` | Also writes and publishes content, starts and cancels workflow runs, delivers workflow events |
-| `manager`  | Manager       | editor + `content:manage`                                     | Also changes content types, workflows, taxonomy, functions, AI actions                        |
-| `admin`    | Administrator | manager + `space:admin`                                       | Also manages the team, API keys, roles, webhooks, environments, plugins, audit log            |
+| Preset     | Name          | Scopes                                                        | In words                                                                                                     |
+| ---------- | ------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `viewer`   | Viewer        | `preview:read`, `assets:read`, `delivery:read`, `search:read` | Reads drafts, published content, workflows and approvals; searches                                           |
+| `approver` | Approver      | viewer + `workflow:approve`                                   | Also approves or rejects workflow approvals                                                                  |
+| `editor`   | Editor        | approver + `content:write`, `assets:write`, `content:publish` | Also writes and publishes content, starts and cancels workflow runs, delivers workflow events                |
+| `manager`  | Manager       | editor + `content:manage`                                     | Also changes content types, workflows, taxonomy, functions, AI actions                                       |
+| `admin`    | Administrator | manager + `space:admin`, `migration:run`                      | Also manages the team, API keys, roles, webhooks, environments, plugins, audit log, and runs site migrations |
 
 Each preset grants every content type (`*`): `read` for Viewer and Approver, `read`/`write`/`publish`
 for Editor, and `read`/`write`/`publish`/`lock` for Manager and Administrator (a role-bound key is
@@ -997,6 +1007,7 @@ entry holding it.
 | `search:read`      | Hybrid/semantic search, related/duplicates/embedding                                                   |
 | `space:admin`      | Spaces, environments, aliases, API keys, roles, team, access settings, webhooks, audit log, agent runs |
 | `workflow:approve` | Deciding workflow approvals whose node asks for it (the default)                                       |
+| `migration:run`    | Site migration steps: create, inventory, fetch, cluster; its reads also accept `content:manage`        |
 
 `GET /spaces` returns all spaces for an admin principal (`spaceId: '*'`) or only the key's own
 space for scoped keys.

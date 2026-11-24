@@ -1,6 +1,7 @@
 import { createRemoteFetcher } from '@contentworker/adapters/http-effects';
 import { createSpaceExportReader } from '@contentworker/adapters/import-space-export';
 import { structuredImportSources } from '@contentworker/adapters/import-structured';
+import { createSiteSource } from '@contentworker/adapters/site-source';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
@@ -158,6 +159,7 @@ export function createApp(
     (c) => c.json({ status: 'ready', role: config.role }),
   );
 
+  const remoteFetcher = createRemoteFetcher();
   const deps: AuthDeps = {
     ctx,
     hasher: createApiHasher(config.tokenPepper),
@@ -177,7 +179,9 @@ export function createApp(
     spaceExportReader: createSpaceExportReader(),
     // Downloading a plugin package is a fetch like any other, bounded and
     // redirect-refusing; the policy that decides *whether* is config, not code.
-    remoteFetcher: createRemoteFetcher(),
+    remoteFetcher,
+    // A migration's reads of a source site go through the same fetcher.
+    siteSource: createSiteSource(remoteFetcher),
     pluginSources: config.pluginSources ?? {},
     rateLimiter,
     signalReview,

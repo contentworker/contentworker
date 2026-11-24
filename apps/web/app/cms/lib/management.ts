@@ -922,6 +922,7 @@ export const PERMISSION_SCOPES = [
   { value: 'assets:write', label: 'Upload and edit assets' },
   { value: 'space:admin', label: 'Administer the space' },
   { value: 'workflow:approve', label: 'Decide workflow approvals' },
+  { value: 'migration:run', label: 'Migrate websites' },
 ] as const;
 
 /** Event topics a webhook can subscribe to ("*" matches everything). */

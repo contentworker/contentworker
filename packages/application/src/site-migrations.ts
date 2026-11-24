@@ -5,9 +5,11 @@ import {
   DomainError,
   InvalidStateError,
   MIGRATION_MAX_CRAWL_DEPTH,
+  MIGRATION_PAGE_STAGES,
   type MigrationArtifact,
   type MigrationInventory,
   type MigrationPage,
+  type MigrationPageStage,
   type MigrationRun,
   type MigrationSourceInput,
   type MigrationTemplate,
@@ -15,6 +17,7 @@ import {
   readPageFacts,
   type Scope,
   sourceTakesPath,
+  ValidationError,
 } from '@contentworker/domain';
 import type {
   BlobStore,
@@ -113,6 +116,75 @@ export async function getMigrationRun(
     ctx.store.migrations.listTemplates(scope, id),
   ]);
   return { run, pages, templates };
+}
+
+/** Runs listed at most per call. */
+export const MIGRATION_RUNS_MAX = 100;
+const MIGRATION_RUNS_DEFAULT = 25;
+/** Pages listed at most per call. */
+export const MIGRATION_PAGES_MAX = 200;
+const MIGRATION_PAGES_DEFAULT = 50;
+
+/** The environment's runs, newest first. */
+export async function listMigrationRuns(
+  ctx: AppContext,
+  scope: Scope,
+  opts: { readonly limit?: number } = {},
+): Promise<{ items: MigrationRun[] }> {
+  const limit = clampLimit(opts.limit, MIGRATION_RUNS_DEFAULT, MIGRATION_RUNS_MAX);
+  return { items: await ctx.store.migrations.listRuns(scope, { limit }) };
+}
+
+export interface MigrationPageListQuery {
+  readonly stage?: MigrationPageStage;
+  readonly templateId?: string;
+  readonly limit?: number;
+  /** `nextCursor` from the page before. */
+  readonly cursor?: string;
+}
+
+/**
+ * A page of the run's pages in discovery order, optionally of one stage or one template. A
+ * `nextCursor` comes back only when more pages follow.
+ */
+export async function listMigrationPages(
+  ctx: AppContext,
+  scope: Scope,
+  runId: string,
+  query: MigrationPageListQuery = {},
+): Promise<{ items: MigrationPage[]; nextCursor?: string }> {
+  await requireRun(ctx, scope, runId);
+  if (query.stage !== undefined && !MIGRATION_PAGE_STAGES.includes(query.stage)) {
+    throw new ValidationError([
+      { field: 'stage', message: `must be one of ${MIGRATION_PAGE_STAGES.join(', ')}` },
+    ]);
+  }
+  const limit = clampLimit(query.limit, MIGRATION_PAGES_DEFAULT, MIGRATION_PAGES_MAX);
+  // One past the page says whether another follows, without a count.
+  const found = await ctx.store.migrations.listPages(scope, runId, {
+    limit: limit + 1,
+    ...(query.stage ? { stage: query.stage } : {}),
+    ...(query.templateId ? { templateId: query.templateId } : {}),
+    ...(query.cursor ? { after: query.cursor } : {}),
+  });
+  const items = found.slice(0, limit);
+  const last = items.at(-1);
+  return found.length > limit && last ? { items, nextCursor: last.id } : { items };
+}
+
+/** The run's templates, largest first. */
+export async function listMigrationTemplates(
+  ctx: AppContext,
+  scope: Scope,
+  runId: string,
+): Promise<{ items: MigrationTemplate[] }> {
+  await requireRun(ctx, scope, runId);
+  return { items: await ctx.store.migrations.listTemplates(scope, runId) };
+}
+
+function clampLimit(limit: number | undefined, fallback: number, max: number): number {
+  if (limit === undefined || !Number.isFinite(limit)) return fallback;
+  return Math.max(1, Math.min(Math.trunc(limit), max));
 }
 
 /**

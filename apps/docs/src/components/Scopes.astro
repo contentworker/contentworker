@@ -32,7 +32,9 @@ const GRANTS: Record<string, string> = {
   'search:read':
     'Search published content (hybrid, semantic and lexical) and find related entries.',
   'space:admin':
-    'Manage the team, API keys, roles, environments and aliases, webhooks, the audit log and agent runs.',
+    'Manage the team, API keys, roles, environments and aliases, webhooks, the audit log and agent runs. Includes `migration:run`.',
+  'migration:run':
+    'Run site migrations: create a run, inventory its source, fetch its pages and cluster them into templates. Reading a run also accepts `content:manage`. Implied by `space:admin`.',
   'workflow:approve': 'Decide workflow approvals that ask for it (the default).',
 };
 

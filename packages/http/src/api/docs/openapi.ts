@@ -136,6 +136,12 @@ export const TAGS: { name: string; description: string }[] = [
       'rendition presets and transforms.',
   },
   { name: 'Comments & tasks', description: 'Editorial collaboration on entries.' },
+  {
+    name: 'Site migration',
+    description:
+      'Bringing a published website in as structured content: runs, their source pages and the ' +
+      'templates clustered from them.',
+  },
   { name: 'Workflows', description: 'Editorial workflow definitions and entry transitions.' },
   {
     name: 'Saved views',
@@ -194,7 +200,15 @@ const TAG_GROUPS = [
   { name: 'Content model', tags: ['Content types', 'Block catalog', 'Block config', 'Taxonomy'] },
   {
     name: 'Authoring',
-    tags: ['Entries', 'Saved views', 'Versions', 'Assets', 'Comments & tasks', 'Workflows'],
+    tags: [
+      'Entries',
+      'Saved views',
+      'Versions',
+      'Assets',
+      'Comments & tasks',
+      'Workflows',
+      'Site migration',
+    ],
   },
   {
     name: 'Publishing & automation',
@@ -233,6 +247,7 @@ const TAG_RULES: [RegExp, string][] = [
   [/\/audit(-log)?$/, 'Audit'],
   [/\/(releases|scheduled-actions)/, 'Releases & scheduling'],
   [/\/redirects/, 'Redirects'],
+  [/\/migrations\//, 'Site migration'],
   [/\/menus/, 'Menus'],
   [/\/saved-views/, 'Saved views'],
   [/\/webhooks/, 'Webhooks'],

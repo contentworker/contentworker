@@ -143,6 +143,7 @@ export default defineConfig({
             { label: 'Live preview', slug: 'guides/live-preview' },
             { label: 'MCP server', slug: 'guides/mcp' },
             { label: 'Command-line tool', slug: 'guides/cli' },
+            { label: 'Migrate a website', slug: 'guides/migrate-a-website' },
             { label: 'Agent skills', slug: 'guides/agent-skills' },
           ],
         },

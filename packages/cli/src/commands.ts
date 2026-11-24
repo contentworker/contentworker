@@ -8,6 +8,9 @@ import {
   type ImportInput,
   type ManagementClient,
   ManagementError,
+  type MigrationFetchResult,
+  type MigrationPageStage,
+  type MigrationRunView,
 } from '@contentworker/sdk-management';
 import { DEFAULT_BLOCKS_FILE, loadBlocks, pushInput, renderPush } from './blocks.js';
 import {
@@ -865,6 +868,239 @@ function renderAnalysis(a: ImportAnalysis): string {
   ].join('\n');
 }
 
+// --- migrate -----------------------------------------------------------------
+
+const PAGE_STAGES: readonly MigrationPageStage[] = [
+  'discovered',
+  'clustered',
+  'transformed',
+  'validated',
+  'needs-fix',
+  'loaded',
+  'published',
+];
+
+/** A threshold flag: a number from 0 to 1. */
+function fraction(ctx: CommandContext, key: string): number | undefined {
+  const raw = str(ctx, key);
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (raw.trim() === '' || !(n >= 0 && n <= 1)) {
+    throw usageError(`--${key} must be a number from 0 to 1.`);
+  }
+  return n;
+}
+
+function renderRunView(view: MigrationRunView): string {
+  const { run, pages } = view;
+  const stages = Object.entries(pages.byStage)
+    .map(([stage, n]) => `${stage} ${n}`)
+    .join(', ');
+  return [
+    pairs({
+      id: run.id,
+      name: run.name,
+      source: `${run.source.kind} ${run.source.url}`,
+      status: run.status,
+      pages: `${pages.total} (${pages.fetched} fetched, ${pages.failed} failed)`,
+      stages: stages || undefined,
+      skipped: run.inventory
+        ? Object.entries(run.inventory.skipped)
+            .filter(([, n]) => n > 0)
+            .map(([why, n]) => `${why} ${n}`)
+            .join(', ') || undefined
+        : undefined,
+    }),
+    ...(run.inventory?.warnings ?? []).map((w) => `warning: ${w}`),
+    ...(view.templates.length
+      ? ['', table(view.templates, ['id', 'label', 'status', 'pageCount'])]
+      : []),
+  ].join('\n');
+}
+
+const migrateCreate: Command = {
+  name: 'migrate create',
+  args: '<url>',
+  summary: 'Start migrating a website from its sitemap, or by crawling from a page',
+  options: {
+    crawl: {
+      type: 'boolean',
+      description: 'Follow same-origin links from <url> (default: sitemap)',
+    },
+    include: {
+      type: 'string',
+      multiple: true,
+      description: 'Path glob a page must match one of, repeated (`*` in a segment, `**` across)',
+    },
+    exclude: { type: 'string', multiple: true, description: 'Path glob to leave out, repeated' },
+    'max-pages': { type: 'string', description: 'Most pages the run takes (default 500)' },
+    name: { type: 'string', description: 'The run’s name (default: the host)' },
+    threshold: { type: 'string', description: 'Score a page needs to pass, 0..1 (default 0.8)' },
+  },
+  async run(ctx) {
+    const url = arg(ctx, 0, '<url>');
+    const maxPages = int(ctx, 'max-pages');
+    const threshold = fraction(ctx, 'threshold');
+    const name = str(ctx, 'name');
+    const run = await (await ctx.client()).migrations.create({
+      source: {
+        kind: bool(ctx, 'crawl') ? 'crawl' : 'sitemap',
+        url,
+        ...(list(ctx, 'include').length ? { include: list(ctx, 'include') } : {}),
+        ...(list(ctx, 'exclude').length ? { exclude: list(ctx, 'exclude') } : {}),
+        ...(maxPages !== undefined ? { maxPages } : {}),
+      },
+      ...(name ? { name } : {}),
+      ...(threshold !== undefined ? { threshold } : {}),
+    });
+    return {
+      json: run,
+      human: `Created run ${run.id} (${run.source.kind} ${run.source.url}). Next: contentworker migrate step ${run.id}`,
+    };
+  },
+};
+
+const migrateList: Command = {
+  name: 'migrate list',
+  summary: 'List the environment’s migration runs, newest first',
+  options: { limit: { type: 'string', description: 'Most runs, at most 100' } },
+  async run(ctx) {
+    const limit = int(ctx, 'limit');
+    const page = await (await ctx.client()).migrations.list(limit !== undefined ? { limit } : {});
+    return { json: page, human: table(page.items, ['id', 'name', 'status', 'createdAt']) };
+  },
+};
+
+const migrateStatus: Command = {
+  name: 'migrate status',
+  args: '<run>',
+  summary: 'Show a run: its status, pages by stage, and templates',
+  options: {},
+  async run(ctx) {
+    const view = await (await ctx.client()).migrations.get(arg(ctx, 0, '<run>'));
+    return { json: view, human: renderRunView(view) };
+  },
+};
+
+const migrateStep: Command = {
+  name: 'migrate step',
+  args: '<run>',
+  summary: 'Inventory the run’s source if it hasn’t been, then fetch its pages until none wait',
+  options: {
+    batch: { type: 'string', description: 'Pages per request, at most 10 (default 10)' },
+    'max-batches': { type: 'string', description: 'Stop after this many requests' },
+  },
+  async run(ctx) {
+    const id = arg(ctx, 0, '<run>');
+    const batch = int(ctx, 'batch');
+    const maxBatches = int(ctx, 'max-batches');
+    const cma = await ctx.client();
+    const progress = (line: string) => {
+      if (!ctx.json) ctx.io.stderr(line);
+    };
+    let run = (await cma.migrations.get(id)).run;
+    let inventoried = false;
+    if (run.status === 'created') {
+      run = await cma.migrations.inventory(id);
+      inventoried = true;
+      progress(`Inventoried: ${run.inventory?.added ?? 0} page(s) added.`);
+    }
+    const totals = { fetched: 0, failed: 0, added: 0, batches: 0 };
+    let last: MigrationFetchResult | undefined;
+    while (maxBatches === undefined || totals.batches < maxBatches) {
+      last = await cma.migrations.fetchPages(id, batch !== undefined ? { limit: batch } : {});
+      totals.batches += 1;
+      if (last.unavailable) break;
+      totals.fetched += last.fetched;
+      totals.failed += last.failed;
+      totals.added += last.added;
+      progress(
+        `Batch ${totals.batches}: ${last.fetched} fetched, ${last.failed} failed` +
+          (last.added ? `, ${last.added} found` : ''),
+      );
+      // A batch that moved nothing would only repeat itself.
+      if (!last.more || last.fetched + last.failed === 0) break;
+    }
+    const json = {
+      run: id,
+      inventoried,
+      ...totals,
+      more: last?.more ?? false,
+      ...(last?.unavailable ? { unavailable: last.unavailable } : {}),
+    };
+    if (last?.unavailable) {
+      throw new CliError(
+        `The site can’t be read now (${last.unavailable}); nothing was written. Run this again later.`,
+        EXIT.failure,
+        'site_unavailable',
+        json,
+      );
+    }
+    return {
+      json,
+      human:
+        `Fetched ${totals.fetched}, failed ${totals.failed}` +
+        (totals.added ? `, found ${totals.added} more by crawling` : '') +
+        (json.more
+          ? '. Pages are still waiting: run this again.'
+          : `. Next: contentworker migrate cluster ${id}`),
+    };
+  },
+};
+
+const migrateCluster: Command = {
+  name: 'migrate cluster',
+  args: '<run>',
+  summary: 'Group the run’s fetched pages into templates by structure',
+  options: {
+    threshold: {
+      type: 'string',
+      description: 'Similarity a page needs to join a template, 0..1 (default 0.6)',
+    },
+  },
+  async run(ctx) {
+    const threshold = fraction(ctx, 'threshold');
+    const view = await (await ctx.client()).migrations.cluster(
+      arg(ctx, 0, '<run>'),
+      threshold !== undefined ? { threshold } : {},
+    );
+    return { json: view, human: renderRunView(view) };
+  },
+};
+
+const migratePages: Command = {
+  name: 'migrate pages',
+  args: '<run>',
+  summary: 'List a run’s pages, by stage or template',
+  options: {
+    stage: { type: 'string', description: `One stage: ${PAGE_STAGES.join(', ')}` },
+    template: { type: 'string', description: 'One template’s pages' },
+    limit: { type: 'string', description: 'Page size, at most 200' },
+    cursor: { type: 'string', description: 'The nextCursor of the previous page' },
+  },
+  async run(ctx) {
+    const stage = str(ctx, 'stage');
+    if (stage !== undefined && !PAGE_STAGES.includes(stage as MigrationPageStage)) {
+      throw usageError(`--stage is one of ${PAGE_STAGES.join(', ')}.`);
+    }
+    const limit = int(ctx, 'limit');
+    const template = str(ctx, 'template');
+    const cursor = str(ctx, 'cursor');
+    const page = await (await ctx.client()).migrations.pages(arg(ctx, 0, '<run>'), {
+      ...(stage ? { stage: stage as MigrationPageStage } : {}),
+      ...(template ? { template } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+      ...(cursor ? { cursor } : {}),
+    });
+    return {
+      json: page,
+      human:
+        table(page.items, ['id', 'path', 'stage', 'httpStatus', 'error']) +
+        (page.nextCursor ? `\n\nNext page: --cursor ${page.nextCursor}` : ''),
+    };
+  },
+};
+
 // --- types -------------------------------------------------------------------
 
 const types: Command = {
@@ -1030,6 +1266,12 @@ export const COMMANDS: readonly Command[] = [
   entriesPublish,
   assetsUpload,
   importCommand,
+  migrateCreate,
+  migrateList,
+  migrateStatus,
+  migrateStep,
+  migrateCluster,
+  migratePages,
   types,
   doctor,
 ];
