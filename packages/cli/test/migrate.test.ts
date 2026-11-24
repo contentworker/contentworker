@@ -437,4 +437,32 @@ describe('migrate, authoring and publishing', () => {
     const bad = await h.run('migrate', 'publish', 'r1', '--release', 'rel1');
     expect(bad.code).toBe(EXIT.usage);
   });
+
+  it('cleans the site’s text from the review and the failures it prints', async () => {
+    const hostile = {
+      ...template(),
+      lastTry: { ...template().lastTry, problems: ['x: \u001b]8;;https://x.test\u0007ok'] },
+    };
+    const h = await harness(
+      {
+        [`GET ${T}`]: () => hostile,
+        [`POST ${T}/approve`]: () => ({ template: template('approved'), signalled: false }),
+        [`POST ${R}/r1/publish`]: () => ({
+          published: 0,
+          added: 0,
+          failed: [{ pageId: 'p1', url: 'https://old.test/a', error: '\u001b[2Jgone' }],
+        }),
+      },
+      { env: ENV, interactive: true, answers: ['y'] },
+    );
+    const approved = await h.run('migrate', 'approve', 'r1', 't1');
+    expect(approved.code).toBe(EXIT.ok);
+    expect(approved.stderr).toMatch(/problem: x: \]8;;https:\/\/x\.testok/);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: checking none got through.
+    expect(approved.stderr).not.toMatch(/[\u001b\u0007]/);
+    const published = await h.run('migrate', 'publish', 'r1', '--now');
+    expect(published.stderr).toMatch(/failed: https:\/\/old\.test\/a: \[2Jgone/);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: checking none got through.
+    expect(published.stderr).not.toMatch(/[\u001b\u0007]/);
+  });
 });

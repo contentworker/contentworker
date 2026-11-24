@@ -198,6 +198,19 @@ describe('CloudflareMigrationRunner', () => {
       NotFoundError,
     );
   });
+
+  it('never reads a binding that fails as a run with no driver', async () => {
+    const broken = new CloudflareMigrationRunner({
+      createBatch: env.MIGRATION_WF.createBatch.bind(env.MIGRATION_WF),
+      get: async () => {
+        throw new Error('internal error: the Workflows service is unavailable');
+      },
+    });
+    const scope = { spaceId: 'mig-none', environmentId: 'main' };
+    const sent = broken.publishApproved(scope, 'r', { approvedBy: { kind: 'deployment' } });
+    await expect(sent).rejects.toThrow(/unavailable/);
+    await expect(sent).rejects.not.toThrow(NotFoundError);
+  });
 });
 
 /** A model that answers from a script, one turn at a time. */

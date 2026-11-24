@@ -83,14 +83,18 @@ export class CloudflareMigrationRunner implements MigrationRunner {
 
   /**
    * The run's instance. `get` throws for an id with no instance (a run driven by hand, never
-   * started, or one past its retention), and the binding gives that no code: it is a
-   * `NotFoundError` here, so a caller can tell "nothing to signal" from a refusal.
+   * started, or one past its retention), with no code, only `instance.not_found` in its message:
+   * that is a `NotFoundError` here, so a caller can tell "nothing to signal" from a refusal. Any
+   * other failure (the binding unreachable) is rethrown as it is, never read as "no driver".
    */
   private async driver(runId: string) {
     try {
       return await this.wf.get(migrationInstanceId(runId));
-    } catch {
-      throw new NotFoundError('Migration driver', runId);
+    } catch (err) {
+      if (err instanceof Error && /not[._ ]?found/i.test(err.message)) {
+        throw new NotFoundError('Migration driver', runId);
+      }
+      throw err;
     }
   }
 }

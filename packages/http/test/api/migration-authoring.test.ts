@@ -505,4 +505,20 @@ describe('authorization and isolation', () => {
     expect(runner.calls).toEqual([]);
     expect((await json<Template>(await send('GET', c.t))).status).toBe('authoring');
   });
+
+  it('refuses a key of this space on another space’s path, telling no driver', async () => {
+    const { send, runner } = makeApp();
+    const c = await authored(send);
+    const other = '/spaces/s2/environments/main/migrations/runs';
+    for (const [method, path, body, token] of [
+      ['GET', c.t, undefined, 'manager'],
+      ['POST', `${c.t}/approve`, { reviewed: c.digest }, 'manager'],
+      ['POST', `/${c.run}/start`, undefined, 'runner'],
+      ['POST', `/${c.run}/publish-approval`, {}, 'publisher'],
+      ['POST', `${c.t}/load`, {}, 'loader'],
+    ] as const) {
+      expect((await send(method, path, body, token, other)).status, `${method} ${path}`).toBe(403);
+    }
+    expect(runner.calls).toEqual([]);
+  });
 });

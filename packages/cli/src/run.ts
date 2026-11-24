@@ -57,7 +57,8 @@ export async function run(argv: readonly string[], io: Io): Promise<number> {
     const ctx: CommandContext = {
       args: parsed.positionals,
       values,
-      io,
+      // Progress and review lines can carry a migrated site's text too: cleaned as `human` is.
+      io: { ...io, stderr: (text) => io.stderr(printable(text)) },
       target,
       json,
       session: () => {

@@ -1115,6 +1115,9 @@ function renderTemplate(t: MigrationTemplate): string {
       status: t.status,
       pages: t.pageCount,
       model: t.proposal ? `${t.proposal.apiId} (${t.proposal.fields.length} fields)` : undefined,
+      fields: t.proposal
+        ? t.proposal.fields.map((f) => `${f.apiId}:${f.type}`).join(', ') || undefined
+        : undefined,
       contentType: t.contentTypeId ?? undefined,
       script: t.script ? `${t.script.sha256.slice(0, 12)} (${t.script.bytes} bytes)` : undefined,
       lastTry: tried
