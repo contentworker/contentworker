@@ -461,6 +461,61 @@ describe('migrate, authoring and publishing', () => {
     expect(bad.code).toBe(EXIT.usage);
   });
 
+  it('says a go-ahead was recorded but not heard, to be sent again', async () => {
+    let signalled = false;
+    const h = await harness(
+      {
+        [`POST ${R}/r1/publish-approval`]: () => ({
+          accepted: true,
+          signalled,
+          ...(signalled ? {} : { reason: 'unreachable' }),
+        }),
+      },
+      { env: ENV },
+    );
+    const first = await h.run('migrate', 'publish', 'r1');
+    expect(first.code).toBe(EXIT.failure);
+    expect(first.stdout).toMatch(/Recorded the go-ahead .* Send it again/);
+    signalled = true;
+    expect((await h.run('migrate', 'publish', 'r1')).code).toBe(EXIT.ok);
+  });
+
+  it('shows where the background run is, and its go-ahead', async () => {
+    const at = '2026-11-20T00:00:00.000Z';
+    let driver: unknown = {
+      state: 'waiting',
+      startedBy: { kind: 'member', memberId: 'm1' },
+      startedAt: at,
+      startedByYou: true,
+      goAhead: {
+        status: 'given',
+        approvedBy: { kind: 'key', keyId: 'k1' },
+        approvedAt: at,
+        viaRelease: true,
+        byYou: false,
+        delivered: false,
+      },
+    };
+    const h = await harness(
+      { [`GET ${R}/r1`]: () => ({ ...view('clustered'), driver }) },
+      { env: ENV },
+    );
+    const shown = (await h.run('migrate', 'status', 'r1')).stdout;
+    expect(shown).toMatch(/background:\s+waiting .*started by you at 2026-11-20/);
+    expect(shown).toMatch(/go-ahead:\s+given by API key k1 .*to a release; not known to have/);
+    driver = {
+      state: 'unknown',
+      startedBy: null,
+      startedAt: null,
+      startedByYou: false,
+      goAhead: { status: 'unknown' },
+    };
+    expect((await h.run('migrate', 'status', 'r1')).stdout).toMatch(/go-ahead:\s+unknown/);
+    // A server from before it answers none of it.
+    driver = undefined;
+    expect((await h.run('migrate', 'status', 'r1')).stdout).not.toMatch(/background|go-ahead/);
+  });
+
   it('cleans the site’s text from the review and the failures it prints', async () => {
     const hostile = {
       ...template(),

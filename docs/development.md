@@ -491,6 +491,12 @@ approvals when this is deployed isn't held (a template being authored still refu
 clustering), and an api deployed before it, during a deploy or after a rollback, doesn't read the
 hold.
 
+`0053_site_migration_driver.sql` adds `migration_runs.driver` (who started the run's background driver
+and when, JSON) and `migration_runs.go_ahead` (the go-ahead to publish: who, when, for what, and
+whether it reached the driver, JSON). Nullable columns: code deployed before them never names them
+and leaves them as they are when it writes a run, and nothing is backfilled. See
+[Site migrations](./domain-model.md#site-migrations).
+
 `0049_site_migration_load.sql` adds `migration_runs.release_id` (nullable: the release a run's
 entries were added to), `migration_pages.unresolved_links` (integer, default 0, not
 null: the links in a loaded page's entry still waiting for their page's entry) and

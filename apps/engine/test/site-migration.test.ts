@@ -6,11 +6,13 @@ import {
 } from 'cloudflare:test';
 import {
   type AppContext,
+  approveMigrationPublish,
   approveTemplate,
   clusterPages,
   createMigrationRun,
   fetchSourcePages,
   inventorySite,
+  migrationDriver,
   proposeTemplateModel,
   reopenTemplate,
   setImportScript,
@@ -284,7 +286,12 @@ describe('MigrationWorkflow with a template reopened', () => {
       env.MIGRATION_WF,
       migrationInstanceId(run.id),
     );
-    await runner.start({ scope, runId: run.id, startedBy: { kind: 'deployment' } });
+    await runner.start({
+      scope,
+      runId: run.id,
+      startedBy: { kind: 'deployment' },
+      recorded: true,
+    });
     const clustered = (await instance.waitForStepResult({ name: 'cluster' })) as {
       ok: { id: string }[];
     };
@@ -338,6 +345,139 @@ describe('MigrationWorkflow with a template reopened', () => {
   });
 });
 
+describe('MigrationWorkflow’s go-ahead', () => {
+  /** A run driven to its wait for the go-ahead. */
+  async function waiting() {
+    const { ctx, scope } = context();
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: O } });
+    const runner = new CloudflareMigrationRunner(env.MIGRATION_WF);
+    const editor = { spaceId: scope.spaceId, kind: 'admin' as const, scopes: scopesForKind('cma') };
+    const instance = await introspectWorkflowInstance(
+      env.MIGRATION_WF,
+      migrationInstanceId(run.id),
+    );
+    expect(await runner.status(scope, run.id)).toBe('none');
+    await runner.start({
+      scope,
+      runId: run.id,
+      startedBy: { kind: 'deployment' },
+      recorded: true,
+    });
+    const clustered = (await instance.waitForStepResult({ name: 'cluster' })) as {
+      ok: { id: string }[];
+    };
+    const ref = { runId: run.id, templateId: clustered.ok[0]?.id as string };
+    const blob = migrationTestState.blob as FakeBlobStore;
+    await proposeTemplateModel(ctx, scope, { ...ref, model: MODEL });
+    await setImportScript(ctx, { blob }, scope, { ...ref, script: 'export default () => ({})' });
+    const t = await ctx.store.migrations.getTemplate(scope, run.id, ref.templateId);
+    await approveTemplate(ctx, editor, scope, {
+      ...ref,
+      reviewed: templateReviewDigest(t as never),
+    });
+    await runner.templateApproved(scope, run.id, ref.templateId, {});
+    await instance.waitForStepResult({ name: 'relink 0' });
+    const read = async () => {
+      const r = await ctx.store.migrations.getRun(scope, run.id);
+      return migrationDriver(runner, editor, scope, r as NonNullable<typeof r>);
+    };
+    return { ctx, scope, run, runner, editor, instance, read };
+  }
+
+  it('is given once and taken from the run; its event told again is dropped', async () => {
+    const { ctx, scope, run, runner, editor, instance, read } = await waiting();
+    await using _ = instance;
+    expect(await read()).toMatchObject({
+      state: expect.stringMatching(/^(running|waiting)$/),
+      startedBy: { kind: 'deployment' },
+      goAhead: { status: 'none' },
+    });
+    const given = { runId: run.id, viaRelease: true };
+    expect(await approveMigrationPublish(ctx, runner, editor, scope, given)).toEqual({
+      signalled: true,
+    });
+    // Sent twice over, and once as something else: only what the run holds is done.
+    await runner
+      .publishApproved(scope, run.id, { approvedBy: { kind: 'deployment' }, recorded: true })
+      .catch(() => undefined);
+    await instance.waitForStatus('complete');
+    expect(await instance.getOutput()).toMatchObject({ status: 'published' });
+    expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({ loaded: 2 });
+    expect((await ctx.store.migrations.getRun(scope, run.id))?.releaseId).toBeTruthy();
+    expect(await read()).toMatchObject({
+      state: 'finished',
+      goAhead: { status: 'given', viaRelease: true, delivered: true },
+    });
+    // Told again after it finished, by the one who gave it: answered, as it was.
+    expect(await approveMigrationPublish(ctx, runner, editor, scope, given)).toEqual({
+      signalled: true,
+    });
+  });
+
+  it('takes one an api from before they were recorded sent, and records it', async () => {
+    const { ctx, scope, run, runner, instance } = await waiting();
+    await using _ = instance;
+    await runner.publishApproved(scope, run.id, { approvedBy: { kind: 'deployment' } });
+    await instance.waitForStatus('complete');
+    expect(await instance.getOutput()).toMatchObject({ status: 'published' });
+    expect((await ctx.store.migrations.getRun(scope, run.id))?.goAhead).toMatchObject({
+      approvedBy: { kind: 'deployment' },
+      target: {},
+      deliveredAt: expect.any(String),
+    });
+    expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({
+      published: 2,
+    });
+  });
+
+  it('publishes one it was never told of when its wait runs out', async () => {
+    const { ctx, scope } = context();
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: O } });
+    const runner = new CloudflareMigrationRunner(env.MIGRATION_WF);
+    const editor = { spaceId: scope.spaceId, kind: 'admin' as const, scopes: scopesForKind('cma') };
+    await using instance = await introspectWorkflowInstance(
+      env.MIGRATION_WF,
+      migrationInstanceId(run.id),
+    );
+    await instance.modify(async (m) => {
+      await m.forceEventTimeout({ name: 'publish approval' });
+    });
+    await runner.start({
+      scope,
+      runId: run.id,
+      startedBy: { kind: 'deployment' },
+      recorded: true,
+    });
+    const clustered = (await instance.waitForStepResult({ name: 'cluster' })) as {
+      ok: { id: string }[];
+    };
+    const ref = { runId: run.id, templateId: clustered.ok[0]?.id as string };
+    const blob = migrationTestState.blob as FakeBlobStore;
+    await proposeTemplateModel(ctx, scope, { ...ref, model: MODEL });
+    await setImportScript(ctx, { blob }, scope, { ...ref, script: 'export default () => ({})' });
+    const t = await ctx.store.migrations.getTemplate(scope, run.id, ref.templateId);
+    await approveTemplate(ctx, editor, scope, {
+      ...ref,
+      reviewed: templateReviewDigest(t as never),
+    });
+    const mute = {
+      start: runner.start.bind(runner),
+      templateApproved: runner.templateApproved.bind(runner),
+      status: runner.status.bind(runner),
+      publishApproved: async () => {
+        throw new Error('unreachable');
+      },
+    };
+    expect(await approveMigrationPublish(ctx, mute, editor, scope, { runId: run.id })).toEqual({
+      signalled: false,
+      reason: 'unreachable',
+    });
+    await runner.templateApproved(scope, run.id, ref.templateId, {});
+    await instance.waitForStatus('complete');
+    expect(await instance.getOutput()).toMatchObject({ status: 'published' });
+  });
+});
+
 describe('CloudflareMigrationRunner', () => {
   it('answers a run with no driver as not found, for either signal', async () => {
     const runner = new CloudflareMigrationRunner(env.MIGRATION_WF);
@@ -365,6 +505,7 @@ describe('CloudflareMigrationRunner', () => {
     await instance.waitForStatus('terminated');
 
     expect(await runner.start(params)).toBe('finished');
+    expect(await runner.status(scope, run.id)).toBe('finished');
     await expect(runner.templateApproved(scope, run.id, 't', {})).rejects.toThrow(
       MigrationDriverFinishedError,
     );
@@ -384,6 +525,28 @@ describe('CloudflareMigrationRunner', () => {
     const sent = broken.publishApproved(scope, 'r', { approvedBy: { kind: 'deployment' } });
     await expect(sent).rejects.toThrow(/unavailable/);
     await expect(sent).rejects.not.toThrow(NotFoundError);
+    await expect(broken.status(scope, 'r')).rejects.toThrow(/unavailable/);
+  });
+});
+
+describe('a driver’s status', () => {
+  it.each([
+    ['queued', 'running'],
+    ['running', 'running'],
+    ['waiting', 'waiting'],
+    ['paused', 'paused'],
+    ['waitingForPause', 'paused'],
+    ['complete', 'finished'],
+    ['errored', 'finished'],
+    ['terminated', 'finished'],
+    ['unknown', 'unknown'],
+    ['somethingNew', 'unknown'],
+  ])('reads %s as %s', async (status, expected) => {
+    const runner = new CloudflareMigrationRunner({
+      createBatch: env.MIGRATION_WF.createBatch.bind(env.MIGRATION_WF),
+      get: async () => ({ status: async () => ({ status }) }) as never,
+    });
+    expect(await runner.status({ spaceId: 's', environmentId: 'main' }, 'r')).toBe(expected);
   });
 });
 

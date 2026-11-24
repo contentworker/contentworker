@@ -109,7 +109,9 @@ await cma.migrations.publish(run.id, { viaRelease: true, releaseTitle: 'Site lau
 
 `transform`, `relink` and `publish` (including `viaRelease`) page with `after: next`; `load` needs `content:write` and `assets:write`,
 `redirects` `content:manage` and `publish` `content:publish`. After `start`, `approvePublish` is the
-driver's go-ahead to publish. `reopen(run, template, reviewDigest)` (`content:manage`) takes an
+driver's go-ahead to publish: a run takes one, and sending the same one again is safe (do, after
+`signalled: false`). `get`'s `driver` says where the background run is, who started it and whether the
+go-ahead was given. `reopen(run, template, reviewDigest)` (`content:manage`) takes an
 approved template back to `authoring`, to change its model or script and approve it again; its
 `apiId` stays. `transform` then retakes its pages that aren't loaded, and `load` leaves pages of an
 earlier version where they are (`stale`). `template`'s `pageVersions` counts both.

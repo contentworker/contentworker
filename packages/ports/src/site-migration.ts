@@ -1,7 +1,9 @@
 import type {
   MigrationActor,
+  MigrationDriverStatus,
   MigrationPage,
   MigrationPageStage,
+  MigrationPublishTarget,
   MigrationRun,
   MigrationSource,
   MigrationTemplate,
@@ -147,6 +149,11 @@ export interface MigrationRunParams {
   readonly runId: string;
   /** Who started it: the inventory, transforms and the template agents act for them. */
   readonly startedBy: MigrationActor;
+  /**
+   * Started by an api that records go-aheads on the run, so the driver records its start there too.
+   * Absent from one started before that, whose go-ahead may be an event alone.
+   */
+  readonly recorded?: true;
 }
 
 /**
@@ -157,14 +164,21 @@ export interface MigrationTemplateApproved {
   readonly approvedBy?: MigrationActor;
 }
 
-/** The go-ahead to publish a run, delivered to its driver. */
-export interface MigrationPublishApproved {
+/**
+ * The go-ahead to publish a run, delivered to its driver. With `recorded` it is a wake-up only: the
+ * run holds the go-ahead (`MigrationRun.goAhead`) and the driver takes it from there. Without, it
+ * was sent before go-aheads were recorded, and is itself the go-ahead.
+ */
+export interface MigrationPublishApproved extends MigrationPublishTarget {
   readonly approvedBy: MigrationActor;
-  /** Add the entries to a release rather than publish them now. */
-  readonly viaRelease?: boolean;
-  readonly releaseId?: string;
-  readonly releaseTitle?: string;
+  readonly recorded?: true;
 }
+
+/**
+ * What starting a run's driver found: `started` by this call, `running` already (waiting counts),
+ * or `finished` (completed, errored or terminated, and still held by Workflows).
+ */
+export type MigrationDriverState = 'started' | 'running' | 'finished';
 
 /**
  * Starts and signals a migration run's durable driver (one Workflow instance per run). Each call
@@ -172,12 +186,6 @@ export interface MigrationPublishApproved {
  * twice is taken once (the driver waits for each event once). Signalling a run with no driver
  * throws `NotFoundError`, and one whose driver has finished `MigrationDriverFinishedError`.
  */
-/**
- * What starting a run's driver found: `started` by this call, `running` already (waiting counts),
- * or `finished` (completed, errored or terminated, and still held by Workflows).
- */
-export type MigrationDriverState = 'started' | 'running' | 'finished';
-
 export interface MigrationRunner {
   start(params: MigrationRunParams): Promise<MigrationDriverState>;
   templateApproved(
@@ -187,6 +195,8 @@ export interface MigrationRunner {
     event: MigrationTemplateApproved,
   ): Promise<void>;
   publishApproved(scope: Scope, runId: string, event: MigrationPublishApproved): Promise<void>;
+  /** The run's driver now. Throws when it can't be asked; never reads that as `none`. */
+  status(scope: Scope, runId: string): Promise<MigrationDriverStatus>;
 }
 
 export interface MigrationCluster {

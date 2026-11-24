@@ -1,5 +1,6 @@
 import {
   type ApproveMigrationTemplateResult,
+  type MigrationDriverView,
   type MigrationRunView,
   type MigrationTemplateDetail,
   sha256Hex,
@@ -9,6 +10,7 @@ import {
 import {
   type MigrationArtifact,
   type MigrationPage,
+  type MigrationRun,
   type MigrationTemplate,
   resolveImportScriptOutput,
 } from '@contentworker/domain';
@@ -27,6 +29,9 @@ import {
 
 export type MigrationArtifactResponse = Omit<MigrationArtifact, 'key'>;
 
+/** A run without its driver's record, which a read of one run answers as its `driver`. */
+export type MigrationRunResponse = Omit<MigrationRun, 'driver' | 'goAhead'>;
+
 export type MigrationPageResponse = Omit<MigrationPage, 'html' | 'output' | 'fingerprint'> & {
   readonly html: MigrationArtifactResponse | null;
   readonly output: MigrationArtifactResponse | null;
@@ -42,6 +47,11 @@ export type MigrationTemplateResponse = Omit<MigrationTemplate, 'script' | 'fing
 
 const artifact = (a: MigrationArtifact | null): MigrationArtifactResponse | null =>
   a ? { sha256: a.sha256, bytes: a.bytes } : null;
+
+export function migrationRunResponse(run: MigrationRun): MigrationRunResponse {
+  const { driver: _driver, goAhead: _goAhead, ...rest } = run;
+  return rest;
+}
 
 export function migrationPageResponse(page: MigrationPage): MigrationPageResponse {
   const { html, output, fingerprint: _fingerprint, ...rest } = page;
@@ -79,9 +89,10 @@ export function migrationScriptResponse(script: string | null) {
   return { script, sha256: script === null ? null : sha256Hex(script) };
 }
 
-export function migrationRunViewResponse(view: MigrationRunView) {
+export function migrationRunViewResponse(view: MigrationRunView, driver: MigrationDriverView) {
   return {
-    run: view.run,
+    run: migrationRunResponse(view.run),
+    driver,
     pages: view.pages,
     templates: view.templates.map(migrationTemplateResponse),
   };

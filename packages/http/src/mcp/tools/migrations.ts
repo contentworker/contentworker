@@ -16,6 +16,8 @@ import {
   MIGRATION_PAGES_MAX,
   MIGRATION_RUNS_MAX,
   type MigrationLoadDeps,
+  type MigrationRunView,
+  migrationDriver,
   proposeTemplateModel,
   publishMigration,
   relinkMigratedPages,
@@ -42,6 +44,7 @@ import { z } from 'zod';
 import {
   migrationApprovalResponse,
   migrationPageResponse,
+  migrationRunResponse,
   migrationRunViewResponse,
   migrationScriptResponse,
   migrationTemplateResponse,
@@ -121,6 +124,11 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
     }
     return deps.migrationRunner;
   };
+  const viewResponse = async (s: Scope, view: MigrationRunView) =>
+    migrationRunViewResponse(
+      view,
+      await migrationDriver(deps.migrationRunner, t.principal, s, view.run),
+    );
   const runArgs = { run: z.string().describe('The run id (migration_create returns it)') };
   const templateArgs = {
     ...runArgs,
@@ -145,7 +153,7 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       guard(SCOPES.migrationRun, scopeOf(args));
       const { space: _space, environment: _environment, ...input } = args;
-      return ok(await createMigrationRun(ctx, scopeOf(args), input));
+      return ok(migrationRunResponse(await createMigrationRun(ctx, scopeOf(args), input)));
     },
   );
 
@@ -163,13 +171,12 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guardAny([SCOPES.migrationRun, SCOPES.contentManage], scopeOf(args));
-      return ok(
-        await listMigrationRuns(
-          ctx,
-          scopeOf(args),
-          args.limit !== undefined ? { limit: args.limit } : {},
-        ),
+      const { items } = await listMigrationRuns(
+        ctx,
+        scopeOf(args),
+        args.limit !== undefined ? { limit: args.limit } : {},
       );
+      return ok({ items: items.map(migrationRunResponse) });
     },
   );
 
@@ -179,13 +186,15 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
       description:
         'A migration run: its status (the step that last finished: created, inventoried, ' +
         'clustered), what its inventory found and skipped, page counts by stage, and its ' +
-        'templates, largest first.',
+        'templates, largest first. `driver` is its background run: state, who started it, and the ' +
+        'go-ahead to publish (none, given, or unknown), which a run takes once.',
       inputSchema: toolSchema('migration_status', () => z.object({ ...runArgs, ...scopeArgs })),
       annotations: { readOnlyHint: true },
     },
     async (args) => {
       guardAny([SCOPES.migrationRun, SCOPES.contentManage], scopeOf(args));
-      return ok(migrationRunViewResponse(await getMigrationRun(ctx, scopeOf(args), args.run)));
+      const s = scopeOf(args);
+      return ok(await viewResponse(s, await getMigrationRun(ctx, s, args.run)));
     },
   );
 
@@ -203,7 +212,7 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.migrationRun, scopeOf(args));
-      return ok(await inventorySite(ctx, site(), scopeOf(args), args.run));
+      return ok(migrationRunResponse(await inventorySite(ctx, site(), scopeOf(args), args.run)));
     },
   );
 
@@ -246,7 +255,8 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       guard(SCOPES.migrationRun, scopeOf(args));
       return ok(
-        migrationRunViewResponse(
+        await viewResponse(
+          scopeOf(args),
           await clusterPages(
             ctx,
             scopeOf(args),
@@ -634,7 +644,9 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
       description:
         'Give a started run’s driver the go-ahead to publish its loaded entries, as you (needs ' +
         'content:publish; with viaRelease it adds them to a release instead, and needs ' +
-        'content:write). Send it only when the person says to publish. A not_found error means ' +
+        'content:write). Send it only when the person says to publish. A run takes one: a ' +
+        'conflict (go_ahead_taken) means another was given and stands, so tell the person and ' +
+        'don’t retry; `signalled` false means send the same one again. A not_found error means ' +
         'the run has no driver; invalid_state that it failed, stopped or its driver finished: ' +
         'ask the person whether to publish with migration_publish_entries.',
       inputSchema: toolSchema('migration_publish', () =>
@@ -646,11 +658,11 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
       guard(SCOPES.contentPublish, scopeOf(args));
       if (args.viaRelease) guard(SCOPES.contentWrite, scopeOf(args));
       const { run, space: _space, environment: _environment, ...input } = args;
-      await approveMigrationPublish(ctx, runner(), t.principal, scopeOf(args), {
+      const result = await approveMigrationPublish(ctx, runner(), t.principal, scopeOf(args), {
         runId: run,
         ...input,
       });
-      return ok({ accepted: true });
+      return ok({ accepted: true, ...result });
     },
   );
 }

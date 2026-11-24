@@ -1,12 +1,17 @@
 import {
   DomainError,
   InvalidStateError,
+  isMigrationActor,
   type MigrationActor,
   MigrationApprovalChangedError,
+  type MigrationGoAhead,
+  type MigrationPublishTarget,
   type MigrationRun,
+  migrationPublishTarget,
   NotFoundError,
   type Principal,
   type Scope,
+  sameMigrationActor,
   scopesForKind,
 } from '@contentworker/domain';
 import {
@@ -14,10 +19,12 @@ import {
   type MigrationRunParams,
   type MigrationTemplateApproved,
   TransactionConflictError,
+  type WorkflowStepEvent,
   type WorkflowSteps,
 } from '@contentworker/ports';
 import { type AppContext, actingAs } from './context';
 import { resolveStarter } from './job-starter';
+import { recordDelivered, recordDriver } from './site-migration-driver';
 import {
   importMigrationRedirects,
   loadTemplatePages,
@@ -60,8 +67,9 @@ import {
  *
  * The agents only author: they can't approve, load or publish. Approvals and the go-ahead come
  * from people, as events ({@link migrationTemplateApprovedEvent}, {@link MIGRATION_PUBLISH_EVENT}).
- * An approval is a wake-up: who approved is read from the template (`approvedBy`), never from
- * the event. The go-ahead names who gave it. Every actor (the run's starter too) is resolved
+ * Each is a wake-up: who approved is read from the template (`approvedBy`), and the go-ahead from the
+ * run (`goAhead`), never from the event. A go-ahead sent before they were recorded names who gave it
+ * itself, and is recorded as it is taken. Every actor (the run's starter too) is resolved
  * again before each step that acts for them.
  */
 
@@ -204,8 +212,12 @@ export async function runSiteMigration(
 ): Promise<SiteMigrationRunResult> {
   const { ctx } = host;
   const { scope, runId } = params;
+  // Recorded in the step every instance takes first, and only for one whose go-aheads are recorded
+  // too: one that began before this was, or was started by an api from before it, never is.
   const loaded = await steps.do('read run', STEP, async () =>
-    ctx.store.migrations.getRun(scope, runId),
+    params.recorded
+      ? recordDriver(ctx, scope, runId, params.startedBy)
+      : ctx.store.migrations.getRun(scope, runId),
   );
   if (!loaded) return { status: 'gone', templates: [] };
   const outcomes: TemplateOutcome[] = [];
@@ -347,23 +359,65 @@ async function finishRun(
   }
   unwrap(await relinkAll(steps, host, params, relinker, 'relink'));
 
-  let go: MigrationPublishApproved;
+  let event: WorkflowStepEvent<MigrationPublishApproved> | null = null;
   try {
-    const event = await steps.waitForEvent<MigrationPublishApproved>('publish approval', {
+    event = await steps.waitForEvent<MigrationPublishApproved>('publish approval', {
       type: MIGRATION_PUBLISH_EVENT,
       timeout: MIGRATION_APPROVAL_TIMEOUT,
     });
-    go = event.payload;
   } catch {
-    await recordStop(steps, ctx, scope, runId, 'The go-ahead to publish never came');
-    return ended('loaded');
+    // Not told of one in time.
   }
+  const sent = event?.payload;
   // Fails closed: a go-ahead that names nobody publishes nothing.
-  if (!isActor(go?.approvedBy)) throw new RunFailure('The go-ahead to publish names no approver');
+  if (event && !sent?.recorded && !isMigrationActor(sent?.approvedBy)) {
+    throw new RunFailure('The go-ahead to publish names no approver');
+  }
   // The rounds begun by now are finished first, so what they load is published; none is begun after.
   // Recorded, because a replay finds the go-ahead and the approvals in another order.
-  work.goAhead = steps.do('go-ahead rounds', STEP, async () => chains.map((c) => c.begun));
-  const begun = await work.goAhead;
+  const rounds = () => steps.do('go-ahead rounds', STEP, async () => chains.map((c) => c.begun));
+  let go: GoAhead | null = null;
+  let begun: readonly number[];
+  if (sent) {
+    work.goAhead = rounds();
+    begun = await work.goAhead;
+    go = unwrap(
+      await steps.do('go-ahead', STEP, () =>
+        settle(() =>
+          sent.recorded
+            ? recordedGoAhead(ctx, scope, runId)
+            : adoptGoAhead(ctx, scope, runId, sent, event?.timestamp),
+        ),
+      ),
+    );
+    // A wake-up for a go-ahead the run doesn't hold is nobody's go-ahead.
+    if (!go) {
+      await recordStop(steps, ctx, scope, runId, 'The go-ahead to publish isn’t on record');
+      return ended('loaded');
+    }
+  } else {
+    // One given but never delivered is still the run's: it is taken now rather than said not to
+    // have come. Set at once, as above, so no round begins between it and what it counts.
+    const late = recordStop(
+      steps,
+      ctx,
+      scope,
+      runId,
+      'The go-ahead to publish never came',
+      (run) => run.goAhead,
+    );
+    // Stopped, no round begins at all.
+    work.goAhead = late.then((given) => (given ? rounds() : chains.map(() => 0)));
+    begun = await work.goAhead;
+    const given = await late;
+    if (!given) return ended('loaded');
+    // Read again, which records that it was acted on.
+    const held = await steps.do('go-ahead', STEP, () =>
+      settle(() => recordedGoAhead(ctx, scope, runId)),
+    );
+    go = unwrap(held) ?? asGoAhead(given);
+  }
+  const { approvedBy, target } = go;
   await Promise.all(chains.map((c, i) => c.finished(begun[i] ?? 0)));
   // Neither holds up the go-ahead: a link left as it is, is still a link, and what either leaves
   // undone can be run by hand.
@@ -373,7 +427,7 @@ async function finishRun(
       settle(async () => {
         // A template reopened as it loaded has entries about to be live and no redirects to them:
         // its round ended with its approval. Written as whoever gave the go-ahead.
-        const principal = await principalFor(ctx, scope, go.approvedBy);
+        const principal = await principalFor(ctx, scope, approvedBy);
         for (const t of await ctx.store.migrations.listTemplates(scope, runId)) {
           if (t.status !== 'authoring' || t.contentTypeId === null) continue;
           await importMigrationRedirects(actingAs(ctx, principal), principal, scope, {
@@ -390,16 +444,14 @@ async function finishRun(
     const published = unwrap(
       await steps.do(`publish ${i}`, STEP, () =>
         settle(async () => {
-          const principal = await principalFor(ctx, scope, go.approvedBy);
+          const principal = await principalFor(ctx, scope, approvedBy);
           const { published, next } = await publishMigration(
             actingAs(ctx, principal),
             principal,
             scope,
             {
               runId,
-              ...(go.viaRelease ? { viaRelease: true } : {}),
-              ...(go.releaseId ? { releaseId: go.releaseId } : {}),
-              ...(go.releaseTitle ? { releaseTitle: go.releaseTitle } : {}),
+              ...target,
               ...(cursor ? { after: cursor } : {}),
             },
           );
@@ -411,6 +463,73 @@ async function finishRun(
     if (!cursor) break;
   }
   return ended('published');
+}
+
+/** The go-ahead a driver acts on. */
+interface GoAhead {
+  readonly approvedBy: MigrationActor;
+  readonly target: MigrationPublishTarget;
+}
+
+/** Fails closed, as an event's does: a record that names nobody publishes nothing. */
+function asGoAhead({ approvedBy, target }: MigrationGoAhead): GoAhead {
+  if (!isMigrationActor(approvedBy)) {
+    throw new InvalidStateError('The go-ahead to publish names no approver');
+  }
+  return { approvedBy, target };
+}
+
+/** The go-ahead the run holds, recorded as having reached its driver; null when it holds none. */
+async function recordedGoAhead(
+  ctx: AppContext,
+  scope: Scope,
+  runId: string,
+): Promise<GoAhead | null> {
+  const run = await recordDelivered(ctx, scope, runId);
+  return run?.goAhead ? asGoAhead(run.goAhead) : null;
+}
+
+/**
+ * A go-ahead sent before they were recorded: it is what it says, as it was then, so an instance
+ * that began publishing under it goes on under it. Recorded over any the run holds, which came
+ * after this one had been sent and was never taken: the record says what is being done.
+ */
+async function adoptGoAhead(
+  ctx: AppContext,
+  scope: Scope,
+  runId: string,
+  sent: MigrationPublishApproved,
+  sentAt: Date | string | undefined,
+): Promise<GoAhead> {
+  const { approvedBy } = sent;
+  const target = migrationPublishTarget(sent);
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const run = await ctx.store.migrations.getRun(scope, runId);
+    if (!run) break;
+    const now = ctx.clock.now().toISOString();
+    try {
+      await ctx.store.migrations.saveRun(
+        scope,
+        {
+          ...run,
+          goAhead: {
+            approvedBy,
+            at: sentAt ? new Date(sentAt).toISOString() : now,
+            target,
+            deliveredAt: now,
+          },
+          version: run.version + 1,
+          updatedAt: now,
+        },
+        run.version,
+      );
+      break;
+    } catch (err) {
+      // The record is for readers: one that keeps losing its race doesn't hold up the publish.
+      if (!(err instanceof TransactionConflictError)) throw err;
+    }
+  }
+  return { approvedBy, target };
 }
 
 /** A pass over the run's links, a batch per step named `name`; why it stopped, if it failed. */
@@ -595,18 +714,24 @@ const inRound = (name: string, round: number) =>
 /**
  * Records that the driver ended without publishing (`stopped`, with why), so starting the run
  * again is refused rather than finding the finished instance. A terminal status is kept as it is.
+ * With `unless`, a run that gives something then isn't stopped, and answers it: the same
+ * compare-and-set decides, so what is recorded on the run meanwhile is never stopped over.
  */
-async function recordStop(
+async function recordStop<T extends object>(
   steps: WorkflowSteps,
   ctx: AppContext,
   scope: Scope,
   runId: string,
   why: string,
-): Promise<void> {
-  await steps.do('record stop', STEP, async () => {
+  unless?: (run: MigrationRun) => T | null,
+): Promise<T | null> {
+  // `true` is what it recorded before `unless`, and when it stopped the run.
+  const result = await steps.do('record stop', STEP, async (): Promise<T | true> => {
     for (let attempt = 1; attempt <= 3; attempt++) {
       const run = await ctx.store.migrations.getRun(scope, runId);
       if (!run || TERMINAL_RUN_STATUSES.has(run.status)) return true;
+      const instead = unless?.(run);
+      if (instead) return instead;
       try {
         await ctx.store.migrations.saveRun(
           scope,
@@ -626,6 +751,7 @@ async function recordStop(
     }
     return true;
   });
+  return result === true ? null : result;
 }
 
 /** Inventory (once), then fetch every page a batch per step, waiting out an unreadable site. */
@@ -652,7 +778,8 @@ async function inventoryAndFetch(
             if (err instanceof SiteUnavailableError) return { unavailable: err.message };
             throw err;
           }
-        }),
+          // What is recorded on the run meanwhile (its go-ahead, say) is no reason to fail.
+        }, 'throws'),
       ),
     );
     if (!inventoried.unavailable) break;
@@ -725,7 +852,7 @@ async function processTemplate(
           if (await tooLate()) return 'too-late';
           const template = await ctx.store.migrations.getTemplate(scope, runId, templateId);
           if (template?.status !== 'approved') return null;
-          if (!isActor(template.approvedBy)) {
+          if (!isMigrationActor(template.approvedBy)) {
             throw new InvalidStateError('The template has no recorded approval');
           }
           return { ...template.approvedBy, version: template.version };
@@ -746,7 +873,7 @@ async function processTemplate(
         await steps.do(named(`approval held ${templateId}`), STEP, () =>
           settle(async () => {
             const t = await ctx.store.migrations.getTemplate(scope, runId, templateId);
-            return t?.status === 'approved' && sameActor(t.approvedBy, approvedBy)
+            return t?.status === 'approved' && sameMigrationActor(t.approvedBy, approvedBy)
               ? t.version
               : null;
           }),
@@ -837,20 +964,6 @@ async function principalFor(
   }
   return principal;
 }
-
-const isActor = (v: unknown): v is MigrationActor => {
-  const a = v as Partial<Record<string, unknown>> | null | undefined;
-  return (
-    (a?.kind === 'key' && typeof a.keyId === 'string') ||
-    (a?.kind === 'member' && typeof a.memberId === 'string') ||
-    a?.kind === 'deployment'
-  );
-};
-
-const sameActor = (a: MigrationActor | null, b: MigrationActor): boolean =>
-  a?.kind === b.kind &&
-  (a.kind !== 'key' || (b.kind === 'key' && a.keyId === b.keyId)) &&
-  (a.kind !== 'member' || (b.kind === 'member' && a.memberId === b.memberId));
 
 /** Outcomes in a stable order (by template id), whatever order they resolved in. */
 const inOrder = (outcomes: TemplateOutcome[]): TemplateOutcome[] =>

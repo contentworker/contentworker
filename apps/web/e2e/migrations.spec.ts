@@ -52,7 +52,14 @@ interface FakePage {
  * the API made it, then this script's site. Creating and listing runs stay real.
  */
 async function stubRun(page: Page) {
-  const calls = { inventory: 0, fetch: 0, approve: 0, publish: 0 };
+  const calls = { inventory: 0, fetch: 0, approve: 0, publish: 0, start: 0, goAhead: 0 };
+  let driver: Record<string, unknown> = {
+    state: 'none',
+    startedBy: null,
+    startedAt: null,
+    startedByYou: false,
+    goAhead: { status: 'none' },
+  };
   let run: Record<string, unknown> | null = null;
   const pages: FakePage[] = [];
   let templates: Record<string, unknown>[] = [];
@@ -61,6 +68,7 @@ async function stubRun(page: Page) {
     for (const p of pages) byStage[p.stage] = (byStage[p.stage] ?? 0) + 1;
     return {
       run,
+      driver,
       pages: {
         total: pages.length,
         fetched: pages.filter((p) => p.html).length,
@@ -231,10 +239,10 @@ async function stubRun(page: Page) {
   let script = '';
   let digests = 0;
   await page.route(
-    /\/migrations\/runs\/[^/?]+\/(templates\/[^?]+|relink|redirects|publish)(\?.*)?$/,
+    /\/migrations\/runs\/[^/?]+\/(templates\/[^?]+|relink|redirects|publish|start|publish-approval)(\?.*)?$/,
     async (route) => {
       const url = new URL(route.request().url());
-      const [, , step] = /\/runs\/[^/]+\/(templates\/[^/]+\/?)?(\w*)$/.exec(url.pathname) ?? [];
+      const [, , step] = /\/runs\/[^/]+\/(templates\/[^/]+\/?)?([\w-]*)$/.exec(url.pathname) ?? [];
       const id = /templates\/([^/]+)/.exec(url.pathname)?.[1];
       const method = route.request().method();
       const body = (method === 'GET' ? {} : (route.request().postDataJSON() ?? {})) as {
@@ -342,6 +350,30 @@ async function stubRun(page: Page) {
             more: mine('validated').length > 0,
           });
         }
+        case 'start':
+          calls.start++;
+          driver = {
+            ...driver,
+            state: 'waiting',
+            startedBy: { kind: 'deployment' },
+            startedAt: new Date().toISOString(),
+            startedByYou: true,
+          };
+          return json(route, { started: true }, 202);
+        case 'publish-approval':
+          calls.goAhead++;
+          driver = {
+            ...driver,
+            goAhead: {
+              status: 'given',
+              approvedBy: { kind: 'deployment' },
+              approvedAt: new Date().toISOString(),
+              byYou: true,
+              delivered: true,
+              ...body,
+            },
+          };
+          return json(route, { accepted: true, signalled: true }, 202);
         case 'relink':
           return json(route, { checked: 20, relinked: 4, unresolvedLinks: 0, skipped: [] });
         case 'redirects':
@@ -511,6 +543,25 @@ test('a website migration: list, a new run, and its steps', async ({ page }, tes
   await page.getByRole('button', { name: 'Publish 20 entries' }).click();
   await expect(page.getByText('Published 20 entries.')).toBeVisible();
   expect(calls.publish).toBe(1);
+
+  // In the background: where it is and its go-ahead are the run's own, so a reload keeps them.
+  await expect(page.getByText('Not started')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Give the go-ahead to publish…' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Start', exact: true }).click();
+  await expect(page.getByText(/^Started\. It pauses/)).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Give the go-ahead to publish…' }).click();
+  expect(calls.goAhead).toBe(0);
+  await scan(page, testInfo);
+  await page.getByRole('button', { name: 'Give the go-ahead', exact: true }).click();
+  await expect(page.getByText(/^Go-ahead given\./)).toBeFocused();
+  await page.reload();
+  await expect(page.getByText(/^Given .* to publish its entries\./)).toBeVisible();
+  await expect(page.getByText('Waiting', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /go-ahead/ })).toHaveCount(0);
+  expect(calls).toMatchObject({ start: 1, goAhead: 1 });
+  await scan(page, testInfo);
 
   // Back on the list, the run is there with its pages by stage.
   await page

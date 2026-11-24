@@ -1,4 +1,4 @@
-import { MIGRATION_PAGE_STAGES } from '@contentworker/domain';
+import { MIGRATION_DRIVER_STATUSES, MIGRATION_PAGE_STAGES } from '@contentworker/domain';
 import { z } from 'zod';
 
 // --- site migrations -----------------------------------------------------------
@@ -128,8 +128,37 @@ export const migrationTemplate = z.object({
 
 export const migrationTemplateList = z.object({ items: z.array(migrationTemplate) });
 
+export const migrationDriver = z.object({
+  state: z
+    .enum(MIGRATION_DRIVER_STATUSES)
+    .describe(
+      'Its background run: `none` (it has none), `running`, `waiting` (for an approval, the ' +
+        'go-ahead, a site it can’t read or a retry), `paused`, `finished`, or `unknown` (it ' +
+        'couldn’t be asked now)',
+    ),
+  startedBy: actor.nullable().describe('Null when never started, or started before this was kept'),
+  startedAt: z.iso.datetime().nullable(),
+  startedByYou: z.boolean(),
+  goAhead: z.object({
+    status: z
+      .enum(['none', 'given', 'unknown'])
+      .describe('`unknown`: one may have been given before go-aheads were recorded'),
+    approvedBy: actor.optional(),
+    approvedAt: z.iso.datetime().optional(),
+    byYou: z.boolean().optional().describe('You gave it, so you can send the same one again'),
+    viaRelease: z.literal(true).optional().describe('Added to a release rather than published'),
+    releaseId: z.string().optional(),
+    releaseTitle: z.string().optional(),
+    delivered: z
+      .boolean()
+      .optional()
+      .describe('It certainly reached the background run; false when that isn’t known'),
+  }),
+});
+
 export const migrationRunView = z.object({
   run: migrationRun,
+  driver: migrationDriver,
   pages: pageCounts,
   templates: z.array(migrationTemplate).describe('Largest first'),
 });
@@ -280,4 +309,11 @@ export const migrationStartResult = z.object({
   started: z.boolean().describe('False when the run’s driver was running already'),
 });
 
-export const migrationPublishApproval = z.object({ accepted: z.literal(true) });
+export const migrationPublishApproval = z.object({
+  accepted: z.literal(true).describe('The go-ahead is recorded on the run'),
+  signalled: z.boolean().describe('Whether the run’s driver was told, now or before'),
+  reason: z
+    .literal('unreachable')
+    .optional()
+    .describe('Why it wasn’t: send the same go-ahead again to tell it'),
+});

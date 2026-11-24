@@ -1,14 +1,16 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
+  type MigrationDriver,
   type MigrationLoadResult,
   type MigrationPublishResult,
   type MigrationTemplateView,
   type MigrationTransformResult,
 } from '~/cms/lib/management';
+import { backgroundPublishNote, driverOf, followEvery } from '~/cms/lib/migrations';
 
 /*
  * A template's review page, and the run's last steps, against a fake of their endpoints: each
@@ -66,6 +68,32 @@ const MODEL = {
 let template: MigrationTemplateView;
 let loaded: number;
 let status: string;
+let driver: MigrationDriver | undefined;
+const NO_DRIVER: MigrationDriver = {
+  state: 'none',
+  startedBy: null,
+  startedAt: null,
+  startedByYou: false,
+  goAhead: { status: 'none' },
+};
+const WAITING: MigrationDriver = {
+  ...NO_DRIVER,
+  state: 'waiting',
+  startedBy: { kind: 'member', memberId: 'm-ana' },
+  startedAt: T0,
+};
+/** As given: to publish, by the person looking, and known to have arrived. */
+const given = (over: Record<string, unknown> = {}): MigrationDriver => ({
+  ...WAITING,
+  goAhead: {
+    status: 'given',
+    approvedBy: { kind: 'member', memberId: 'm-me' },
+    approvedAt: T0,
+    byYou: true,
+    delivered: true,
+    ...over,
+  },
+});
 const authored = (over: Partial<MigrationTemplateView> = {}): MigrationTemplateView => ({
   id: 't1',
   runId: 'run-1',
@@ -117,6 +145,7 @@ const client = {
     },
     pages: { total: 24, fetched: 24, failed: 0, byStage: { loaded, clustered: 24 - loaded } },
     templates: [template],
+    ...(driver ? { driver } : {}),
   })),
   listMigrationPages: vi.fn(async () => ({ items: [] })),
   getMigrationTemplate: vi.fn(async () => template),
@@ -146,6 +175,7 @@ const client = {
   publishMigrationPages: vi.fn(),
   startMigrationRun: vi.fn(),
   approveMigrationPublish: vi.fn(),
+  getTeam: vi.fn(),
 };
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
@@ -170,6 +200,7 @@ beforeEach(() => {
   template = authored();
   loaded = 0;
   status = 'clustered';
+  driver = NO_DRIVER;
   client.getSpaceAccess.mockResolvedValue({ scopes: ALL, subject: 'me' });
 });
 afterEach(() => {
@@ -185,6 +216,7 @@ afterEach(() => {
     'publishMigrationPages',
     'startMigrationRun',
     'approveMigrationPublish',
+    'getTeam',
   ] as const) {
     client[name].mockReset();
   }
@@ -1070,16 +1102,25 @@ describe('finishing a run', () => {
 
 describe('in the background', () => {
   const run = () => open('/migrations/run-1');
+  const background = async () =>
+    (await screen.findByText('State')).closest('dl')?.textContent ?? '';
 
-  it('starts the driver, and says when it was running already', async () => {
-    client.startMigrationRun
-      .mockResolvedValueOnce({ started: true })
-      .mockResolvedValueOnce({ started: false });
+  it('starts the driver, and then says it is there rather than offering to start it', async () => {
+    client.startMigrationRun.mockImplementation(async () => {
+      driver = { ...WAITING, state: 'running', startedByYou: true };
+      return { started: true };
+    });
     run();
+    expect(await screen.findByText('Not started')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /go-ahead/ })).toBeNull();
     await press('Start');
     expect(await screen.findByText(/^Started\. It pauses/)).toBeTruthy();
-    await press('Start');
-    expect(await screen.findByText('It was already running in the background.')).toBeTruthy();
+    expect(await screen.findByText('Running')).toBeTruthy();
+    expect(await background()).toMatch(/Started.* by you/);
+    expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Give the go-ahead to publish…' })).toBeTruthy();
+    // It left with its button: focus is on what happened.
+    await waitFor(() => expect(document.activeElement?.textContent).toMatch(/^Started\. It/));
   });
 
   it('says a finished driver and an install without one in plain words, with no Try again', async () => {
@@ -1096,49 +1137,212 @@ describe('in the background', () => {
     await press('Start');
     expect(await screen.findByText(/has already finished/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    // It didn't start, so its button is where focus stays.
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Start'));
     await press('Start');
     expect(await screen.findByText(/isn’t set up on this install/)).toBeTruthy();
   });
 
-  it('gives the go-ahead only once confirmed, and says a run never started', async () => {
-    client.approveMigrationPublish
-      .mockRejectedValueOnce(refusal(404, 'not_found', 'x'))
-      .mockResolvedValueOnce({ accepted: true });
+  it('asks again, rather than sending it, when a go-ahead didn’t answer', async () => {
+    driver = WAITING;
+    client.approveMigrationPublish.mockRejectedValueOnce(refusal(503, 'unavailable', 'x'));
     run();
+    await press('Give the go-ahead to publish…');
+    await press('Give the go-ahead');
+    await press('Try again');
+    expect(await screen.findByRole('alertdialog')).toBeTruthy();
+    expect(client.approveMigrationPublish).toHaveBeenCalledTimes(1);
+  });
+
+  it('says a paused run, and what a role lacks for what applies', async () => {
+    driver = { ...WAITING, state: 'paused' };
+    client.getSpaceAccess.mockResolvedValue({ scopes: ['migration:run'], subject: 'me' });
+    run();
+    expect(await screen.findByText('Paused')).toBeTruthy();
+    expect(await screen.findByText(/go-ahead to publish takes content:publish/)).toBeTruthy();
+    expect(screen.queryByText(/Starting it takes/)).toBeNull();
+  });
+
+  it('gives the go-ahead only once confirmed, then says who gave it for what, with none left to give', async () => {
+    driver = WAITING;
+    client.approveMigrationPublish.mockImplementation(async () => {
+      driver = given();
+      return { accepted: true, signalled: true };
+    });
+    run();
+    expect(await screen.findByText('Not given yet.')).toBeTruthy();
     await press('Give the go-ahead to publish…');
     expect(client.approveMigrationPublish).not.toHaveBeenCalled();
     expect((await screen.findByRole('alertdialog')).textContent).toMatch(/go public as you/);
     await press('Give the go-ahead');
-    expect(await screen.findByText(/Nothing is running this in the background/)).toBeTruthy();
-    await press('Give the go-ahead to publish…');
-    await press('Give the go-ahead');
     expect(await screen.findByText(/^Go-ahead given/)).toBeTruthy();
-    expect(client.approveMigrationPublish).toHaveBeenLastCalledWith('run-1', {});
+    expect(client.approveMigrationPublish).toHaveBeenCalledWith('run-1', {});
+    expect(await background()).toMatch(/Given .* by you, to publish its entries\./);
+    expect(screen.queryByRole('button', { name: /go-ahead/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
   });
 
-  it('takes one go-ahead: an unanswered one can only be sent again as it was', async () => {
-    client.approveMigrationPublish
-      .mockRejectedValueOnce(refusal(503, 'unavailable', 'x'))
-      .mockResolvedValueOnce({ accepted: true });
+  it('shows the same after a reload, naming people only to who may read the team', async () => {
+    driver = given({
+      approvedBy: { kind: 'member', memberId: 'm-ana' },
+      byYou: false,
+      viaRelease: true,
+      releaseId: 'rel-9',
+    });
     run();
-    await press('Give the go-ahead to publish…');
-    await press('Give the go-ahead');
-    expect(await screen.findByText(/Another can’t replace it/)).toBeTruthy();
-    await press('Send the go-ahead again…');
-    expect(await screen.findByRole('alertdialog')).toBeTruthy();
-    expect(screen.queryByRole('radio', { name: 'Through a release' })).toBeNull();
-    await press('Give the go-ahead');
+    expect(await screen.findByText('Waiting')).toBeTruthy();
+    expect(await background()).toMatch(/by a teammate, to add its entries to a release/);
+    expect(screen.getByRole('link', { name: 'Open the release' }).getAttribute('href')).toBe(
+      '/releases?release=rel-9',
+    );
+    expect(client.getTeam).not.toHaveBeenCalled();
+    cleanup();
+    client.getSpaceAccess.mockResolvedValue({ scopes: [...ALL, 'space:admin'], subject: 'me' });
+    client.getTeam.mockResolvedValue({
+      people: [{ id: 'm-ana', email: 'ana@example.com', name: 'Ana Ruiz' }],
+      keys: [],
+    });
+    run();
+    await waitFor(async () => expect(await background()).toMatch(/by Ana Ruiz, to add/));
+  });
+
+  it('sends its own again, as it was, when it isn’t known to have arrived', async () => {
+    driver = given({ delivered: false, viaRelease: true, releaseTitle: 'Launch' });
+    client.approveMigrationPublish
+      .mockResolvedValueOnce({ accepted: true, signalled: false, reason: 'unreachable' })
+      .mockImplementationOnce(async () => {
+        driver = given({ viaRelease: true, releaseTitle: 'Launch' });
+        return { accepted: true, signalled: true };
+      });
+    run();
+    expect(await screen.findByText(/isn’t known to have reached/)).toBeTruthy();
+    await press('Send the go-ahead again');
+    expect(await screen.findByText(/couldn’t be reached\. Send it again/)).toBeTruthy();
+    await press('Send the go-ahead again');
     expect(await screen.findByText(/^Go-ahead given/)).toBeTruthy();
+    expect(client.approveMigrationPublish.mock.calls).toEqual([
+      ['run-1', { viaRelease: true, releaseTitle: 'Launch' }],
+      ['run-1', { viaRelease: true, releaseTitle: 'Launch' }],
+    ]);
     expect(screen.queryByRole('button', { name: /go-ahead/ })).toBeNull();
   });
 
-  it('holds a stopped run, saying what can still be done', async () => {
-    status = 'stopped';
+  it('doesn’t offer to send someone else’s again', async () => {
+    driver = given({ delivered: false, byYou: false });
     run();
-    const start = (await screen.findByRole('button', { name: 'Start' })) as HTMLButtonElement;
-    expect(start.disabled).toBe(true);
-    expect(screen.getByText(/so it can’t be started or told anything again/)).toBeTruthy();
+    expect(await screen.findByText(/isn’t known to have reached/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /go-ahead/ })).toBeNull();
+  });
+
+  it('drops its question when someone else’s is found, and says a refused one in words', async () => {
+    driver = WAITING;
+    client.approveMigrationPublish.mockImplementation(async () => {
+      driver = given({ approvedBy: { kind: 'key', keyId: 'k1' }, byYou: false });
+      throw refusal(409, 'conflict', 'x', { details: { reason: 'go_ahead_taken' } });
+    });
+    run();
+    await press('Give the go-ahead to publish…');
+    await press('Give the go-ahead');
+    expect(await screen.findByText(/already given for this run, and it stands/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(await background()).toMatch(/by an API key or token/);
+    expect(screen.queryByRole('button', { name: /go-ahead/ })).toBeNull();
+  });
+
+  it('closes an open question once the run it asks about was given one', async () => {
+    driver = WAITING;
+    const { qc } = run();
+    await press('Give the go-ahead to publish…');
+    expect(await screen.findByRole('alertdialog')).toBeTruthy();
+    // Their place elsewhere is kept, and why it closed is said.
+    const filter = screen.getByRole('combobox', { name: 'Stage' });
+    filter.focus();
+    driver = given({ byYou: false });
+    await act(async () => {
+      await qc.invalidateQueries();
+    });
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(await screen.findByText(/A go-ahead was given meanwhile/)).toBeTruthy();
+    expect(document.activeElement).toBe(filter);
+    expect(client.approveMigrationPublish).not.toHaveBeenCalled();
+  });
+
+  it('says what it doesn’t know: a state it can’t read, a go-ahead from before they were kept', async () => {
+    driver = { ...NO_DRIVER, state: 'unknown', goAhead: { status: 'unknown' } };
+    run();
+    expect(await screen.findByText(/couldn’t be read now/)).toBeTruthy();
+    expect(screen.getByText(/One given before go-aheads were recorded stands/)).toBeTruthy();
+    // Not known to be running, nor not to be: both are offered, and the API says.
+    expect(await screen.findByRole('button', { name: 'Start' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Give the go-ahead to publish…' })).toBeTruthy();
+    cleanup();
+    // An api a release behind answers no driver at all.
+    driver = undefined;
+    run();
+    expect(await screen.findByText('Unknown')).toBeTruthy();
+    cleanup();
+    driver = { ...NO_DRIVER, state: 'waiting', goAhead: { status: 'unknown' } };
+    run();
+    expect(await screen.findByText(/wasn’t recorded/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
+  });
+
+  it('offers nothing on a run whose background run ended, saying what can still be done', async () => {
+    status = 'stopped';
+    driver = { ...WAITING, state: 'finished' };
+    run();
+    expect(await screen.findByText('Finished')).toBeTruthy();
+    expect(screen.getByText(/can’t be started or told anything again/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /go-ahead/ })).toBeNull();
     expect(screen.getByText('Its background run stopped')).toBeTruthy();
     expect(screen.getByText('no go-ahead came')).toBeTruthy();
+  });
+
+  it('tells a template’s background run only where there may be one', async () => {
+    template = authored({ status: 'approved', contentTypeId: 'post' });
+    driver = WAITING;
+    open();
+    expect(await screen.findByRole('button', { name: 'Tell its background run' })).toBeTruthy();
+    cleanup();
+    driver = NO_DRIVER;
+    open();
+    expect(await screen.findByRole('button', { name: 'Reopen for changes…' })).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Tell its background run' })).toBeNull(),
+    );
+  });
+});
+
+describe('publishing from here while a background run goes on', () => {
+  it('says what it will do with its go-ahead, or where to give it', () => {
+    expect(backgroundPublishNote(NO_DRIVER)).toBe('');
+    expect(backgroundPublishNote(WAITING)).toMatch(/give it the go-ahead below/);
+    expect(backgroundPublishNote({ ...WAITING, state: 'unknown' })).toMatch(/^If this run/);
+    expect(backgroundPublishNote(given())).toMatch(/given the go-ahead, to publish what it loads/);
+    expect(
+      backgroundPublishNote({ ...given({ viaRelease: true, delivered: false }), state: 'unknown' }),
+    ).toMatch(/not known to have arrived\), to add what it loads to a release/);
+  });
+
+  it('takes an ended run’s driver for finished where the api says nothing of it', () => {
+    const at = (s: string) => driverOf({ run: { status: s } } as never).state;
+    expect([at('failed'), at('stopped'), at('clustered')]).toEqual([
+      'finished',
+      'finished',
+      'unknown',
+    ]);
+  });
+});
+
+describe('following a run’s driver', () => {
+  it('reads a running one often, one that waits seldom, and nothing else again', () => {
+    const at = (d: MigrationDriver | undefined) => followEvery({ driver: d } as never);
+    expect(at({ ...WAITING, state: 'running' })).toBe(15_000);
+    expect(at(WAITING)).toBe(60_000);
+    expect(at(NO_DRIVER)).toBe(false);
+    expect(at({ ...WAITING, state: 'finished' })).toBe(false);
+    expect(at(undefined)).toBe(false);
+    expect(followEvery(undefined)).toBe(false);
   });
 });

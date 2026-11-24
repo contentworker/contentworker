@@ -1,4 +1,3 @@
-import type { MigrationRun } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router';
@@ -8,6 +7,7 @@ import {
   type MigrationFetchResult,
   type MigrationPageQuery,
   type MigrationPageView,
+  type MigrationRun,
   type MigrationRunView,
   type MigrationTemplateView,
 } from '~/cms/lib/management';

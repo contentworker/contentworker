@@ -1821,7 +1821,8 @@ authoring, load, relink, redirect and publish use-cases below are on both surfac
 `site-migration-driver.ts`: `startMigration` (starts the run's driver as the caller,
 `migration:run`), `approveMigrationTemplate` (`approveTemplate`, then `templateApproved` only once
 it has committed; `signalled` says whether a driver heard) and `approveMigrationPublish` (the
-go-ahead, `content:publish` and `content:write` through a release, naming the caller). Each reads
+go-ahead, `content:publish` and `content:write` through a release, naming the caller), and
+`migrationDriver` (where the driver is, read with the run). Each call that reaches the driver reads
 the run in the caller's scope before the runner, which ignores scope, is called, and start and the
 go-ahead refuse a run that is `failed` or `stopped` (`MIGRATION_RUN_ENDED`). `MigrationRunner.start`
 answers `started`, `running` or `finished` (an instance that completed, errored or was terminated:
@@ -1831,6 +1832,31 @@ signal to a finished instance throws `MigrationDriverFinishedError` (an `Invalid
 instance (the binding's `instance.not_found`) as `NotFoundError`; any other binding failure is
 rethrown. An approval whose driver wasn't told says why (`reason`: `no-driver`,
 `driver-finished`, `unreachable`).
+
+What a run records of its driver is two nullable columns of `migration_runs` (0053), both written at
+the run's compare-and-set and left out of a run's responses, which a run read answers as `driver`:
+
+- `driver` (`startedBy`, `startedAt`): written by `startMigration` once an instance was created, and
+  by the driver in its first step when that didn't land (`recordDriver`), only when its params say the
+  api that started it records go-aheads (`recorded`). An instance that began before, or was started by
+  an api from before, never gets one: that is how a run whose go-aheads aren't known is told apart.
+  Only an api rolled back after the start can still send one that isn't recorded.
+- `goAhead` (`approvedBy`, `at`, `target`, `deliveredAt`): the one go-ahead a run takes, written
+  before its event is sent. The same caller's for the same target is answered again, and sent again
+  to a driver that goes on (which drops one it has); any other is refused with `MigrationGoAheadTakenError` (409
+  `conflict`, `details.reason` `go_ahead_taken`, naming neither who nor what, since who may publish
+  may not be who may read the run). `deliveredAt` is set when the event was taken in or the driver
+  acted on it; for a driver with no record, which may have taken an earlier one, only the latter.
+  Nothing is recorded while Workflows can't be asked whether there is a driver to tell. A run that
+  holds one isn't started again, even once Workflows has forgotten its finished instance.
+
+`migrationDriver` adds the instance's state from `MigrationRunner.status` (`get` and `status`, two
+subrequests): `none`, `running`, `waiting`, `paused`, `finished` or `unknown`. It asks only for a read
+of one run, never for a list nor for a run that ended, gives up after two seconds and never throws. A
+recorded driver Workflows no longer knows is `finished`. `goAhead.status` is `unknown`, not `none`,
+for a driver with no record. `startedByYou` and `byYou` compare `MigrationActor`s, so everyone with
+deployment-wide access counts as one caller.
+
 `getMigrationTemplate` reads one template; its responses carry `reviewDigest` and, once it is
 approved, `pageVersions`: its pages to transform, and those loaded from an earlier version.
 
@@ -1927,8 +1953,14 @@ takes the 50 largest through (`MIGRATION_DRIVEN_TEMPLATES`); the rest end `not-d
 `loadTemplatePages`, `relinkMigratedPages`, `importMigrationRedirects` and `publishMigration` as
 the step's principal, with `actingAs(ctx, principal)` as their context. An approval event is a
 wake-up only: who approved a template is read from its `approvedBy`, and an event for a template the
-store doesn't hold as approved is nothing to do. The go-ahead to publish names its approver (`MigrationActor`: a key,
-a team member or the deployment), and one that names none fails the run. Each actor, and whoever
+store doesn't hold as approved is nothing to do. The go-ahead's event is a wake-up
+too: with `recorded`, the driver takes who and what from the run's `goAhead` (its `go-ahead` step),
+and an event for one the run doesn't hold stops the run. The event still carries all of it, which an
+engine from before go-aheads were recorded reads. An event without `recorded`, from an api of that
+time, is itself the go-ahead: the driver acts on it as sent and records it (over one given later and
+never taken), so an instance that began publishing under it goes on under it, and one that names
+nobody fails the run. A go-ahead recorded but never delivered is taken when the 14 days run out: the
+step that would record the stop (`record stop`) finds it at the same compare-and-set. Each actor, and whoever
 started the run, is resolved again before each step that acts for them; a run whose starter no
 longer acts in the space fails, and so does that starter's agent. A step's `DomainError` fails its template (or the run, which is then `failed`), and a lost
 compare-and-set is read again. `MigrationRunner` (`CloudflareMigrationRunner` over `MIGRATION_WF`)

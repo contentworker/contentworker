@@ -1,6 +1,10 @@
-import type { MigrationRun } from '@contentworker/domain';
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError, type MigrationFetchResult, type MigrationRunView } from '~/cms/lib/management';
+import {
+  ApiError,
+  type MigrationFetchResult,
+  type MigrationRun,
+  type MigrationRunView,
+} from '~/cms/lib/management';
 import {
   fetchUntilDone,
   globsFrom,

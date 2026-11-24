@@ -17,6 +17,8 @@ import {
   MIGRATION_PAGES_MAX,
   MIGRATION_RUNS_MAX,
   type MigrationLoadDeps,
+  type MigrationRunView,
+  migrationDriver,
   proposeTemplateModel,
   publishMigration,
   relinkMigratedPages,
@@ -38,13 +40,14 @@ import {
   SCOPES,
 } from '@contentworker/domain';
 import type { MigrationRunner } from '@contentworker/ports';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireAnyScope, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as migrationDocs from '../../docs/schemas/migrations';
 import {
   migrationApprovalResponse,
   migrationPageResponse,
+  migrationRunResponse,
   migrationRunViewResponse,
   migrationScriptResponse,
   migrationTemplateResponse,
@@ -134,6 +137,11 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
     }
     return deps.migrationRunner;
   };
+  const viewResponse = async (c: Context<AuthVars>, view: MigrationRunView) =>
+    migrationRunViewResponse(
+      view,
+      await migrationDriver(deps.migrationRunner, c.get('principal'), scopeOf(c), view.run),
+    );
   const TEMPLATE = `${RUNS}/:id/templates/:template`;
   const ref = (c: { req: { param(name: string): string } }) => ({
     runId: c.req.param('id'),
@@ -153,10 +161,12 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.migrationRun),
     async (c) =>
       c.json(
-        await createMigrationRun(
-          actingCtx(ctx, c),
-          scopeOf(c),
-          await parseBody(c, migrationRunBody),
+        migrationRunResponse(
+          await createMigrationRun(
+            actingCtx(ctx, c),
+            scopeOf(c),
+            await parseBody(c, migrationRunBody),
+          ),
         ),
         201,
       ),
@@ -171,18 +181,26 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
     readScopes,
     async (c) => {
       const limit = clampCount(c.req.query('limit'), MIGRATION_RUNS_MAX, { min: 1 });
-      return c.json(await listMigrationRuns(ctx, scopeOf(c), limit !== undefined ? { limit } : {}));
+      const { items } = await listMigrationRuns(
+        ctx,
+        scopeOf(c),
+        limit !== undefined ? { limit } : {},
+      );
+      return c.json({ items: items.map(migrationRunResponse) });
     },
   );
   app.get(
     `${RUNS}/:id`,
     doc(TAG, 'Get a migration run', {
       ok: migrationDocs.migrationRunView,
-      description: 'The run, its page counts by stage, and its templates.',
+      description:
+        'The run, its page counts by stage, its templates, and its background run (`driver`): ' +
+        'where it is, who started it, and the go-ahead to publish, if one was given. `state` is ' +
+        '`unknown` while Workflows can’t be asked; the read never fails for it.',
     }),
     readScopes,
     async (c) =>
-      c.json(migrationRunViewResponse(await getMigrationRun(ctx, scopeOf(c), c.req.param('id')))),
+      c.json(await viewResponse(c, await getMigrationRun(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
     `${RUNS}/:id/inventory`,
@@ -197,7 +215,8 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'wrote the run first.',
     }),
     requireScope(SCOPES.migrationRun),
-    async (c) => c.json(await inventorySite(ctx, site(), scopeOf(c), c.req.param('id'))),
+    async (c) =>
+      c.json(migrationRunResponse(await inventorySite(ctx, site(), scopeOf(c), c.req.param('id')))),
   );
   app.post(
     `${RUNS}/:id/fetch`,
@@ -235,7 +254,8 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, migrationClusterBody);
       return c.json(
-        migrationRunViewResponse(
+        await viewResponse(
+          c,
           await clusterPages(
             ctx,
             scopeOf(c),
@@ -604,19 +624,22 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 202,
       description:
         'Needs `content:publish`, and `content:write` through a release. The driver publishes ' +
-        'as you once its pages are loaded (or adds them to a release). 400 (`invalid_state`) for ' +
-        'a run that failed or stopped, or whose driver has finished; 404 when the run has no ' +
+        'as you once its pages are loaded (or adds them to a release). A run takes one, recorded ' +
+        'on it: the same one again from you is answered again (and tells a driver that goes on ' +
+        'again, as after `signalled: false`; one that arrived is answered even once the driver has ' +
+        'finished); any other is refused, 409 ' +
+        '(`conflict`, `details.reason` `go_ahead_taken`). 400 (`invalid_state`) for a run that failed or stopped, or whose driver has finished; 404 when the run has no ' +
         'driver (`…/start` it, or publish with `…/publish`).',
     }),
     requireScope(SCOPES.contentPublish),
     async (c) => {
       const body = await parseBody(c, migrationPublishApprovalBody);
       if (body.viaRelease) requireWrite(c.get('principal'), scopeOf(c).spaceId);
-      await approveMigrationPublish(ctx, runner(), c.get('principal'), scopeOf(c), {
+      const result = await approveMigrationPublish(ctx, runner(), c.get('principal'), scopeOf(c), {
         runId: c.req.param('id'),
         ...body,
       });
-      return c.json({ accepted: true as const }, 202);
+      return c.json({ accepted: true as const, ...result }, 202);
     },
   );
 

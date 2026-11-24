@@ -1,4 +1,4 @@
-import { holdsScope, type MigrationRun, SCOPES } from '@contentworker/domain';
+import { holdsScope, SCOPES } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Catalog, CatalogRow, CatalogTile } from '@contentworker/ui/catalog';
@@ -13,7 +13,7 @@ import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { ToneBadge } from '~/cms/components/status';
 import { useClient } from '~/cms/lib/client-context';
 import { plural } from '~/cms/lib/format';
-import { apiErrorMessage, isForbidden } from '~/cms/lib/management';
+import { apiErrorMessage, isForbidden, type MigrationRun } from '~/cms/lib/management';
 import { KIND_LABEL, RUN_STATUS } from '~/cms/lib/migrations';
 import { useInvalidate, useScopedQuery } from '~/cms/lib/queries';
 import { useSpaceScopes } from '~/cms/lib/space-access';

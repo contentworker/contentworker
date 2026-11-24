@@ -581,6 +581,28 @@ export interface MigrationPublishTarget {
   readonly releaseTitle?: string;
 }
 
+/** A run's background driver, and the go-ahead to publish given to it. */
+export interface MigrationDriver {
+  /** `unknown`: it couldn't be asked now. `waiting`: for an approval, the go-ahead or a retry. */
+  readonly state: 'none' | 'running' | 'waiting' | 'paused' | 'finished' | 'unknown';
+  /** Null when never started, or started before this was recorded. */
+  readonly startedBy: MigrationActor | null;
+  readonly startedAt: string | null;
+  readonly startedByYou: boolean;
+  /** `unknown`: one may have been given before go-aheads were recorded. */
+  readonly goAhead:
+    | { readonly status: 'none' | 'unknown' }
+    | (MigrationPublishTarget & {
+        readonly status: 'given';
+        readonly approvedBy: MigrationActor;
+        readonly approvedAt: string;
+        /** You gave it, so you can send the same one again. */
+        readonly byYou: boolean;
+        /** It certainly reached the driver; false when that isn't known. */
+        readonly delivered: boolean;
+      });
+}
+
 export interface MigrationPage {
   readonly id: string;
   readonly runId: string;
@@ -614,6 +636,8 @@ export interface MigrationPage {
 
 export interface MigrationRunView {
   readonly run: MigrationRun;
+  /** Absent from a server that doesn't report it yet. */
+  readonly driver?: MigrationDriver;
   readonly pages: {
     readonly total: number;
     readonly fetched: number;
@@ -3063,9 +3087,18 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** Runs the whole migration in the engine, acting for you. `started` is false when it was. */
       start: (run: string) =>
         post<{ started: boolean }>(`${envBase}/migrations/runs/${e(run)}/start`),
-      /** Needs `content:publish`: the started run's driver publishes once its pages are loaded. */
+      /**
+       * Needs `content:publish`: the started run's driver publishes once its pages are loaded. A run
+       * takes one go-ahead: sending yours again is safe (and needed after `signalled: false`), any
+       * other is a 409 whose `details.reason` is `go_ahead_taken`.
+       */
       approvePublish: (run: string, o: MigrationPublishTarget = {}) =>
-        post<{ accepted: true }>(`${envBase}/migrations/runs/${e(run)}/publish-approval`, o),
+        post<{
+          accepted: true;
+          /** Whether the run's driver was told. */
+          signalled: boolean;
+          reason?: 'unreachable';
+        }>(`${envBase}/migrations/runs/${e(run)}/publish-approval`, o),
     },
     /** Redirects: delivery data a front end applies (content:manage to change them). */
     redirects: {

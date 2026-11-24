@@ -158,7 +158,11 @@ person to approve each template (`migration_template_approve` tells it; with `si
 `reason` says why: `unreachable` means approve again, `no-driver` and `driver-finished` that the
 template's pages go in step by step), and at the end waits for `migration_publish`, the go-ahead to
 publish. That go-ahead is the person's: send it only when they give it, never because the run has
-reached that point. Follow the run with `migration_status`. A `not_found` from `migration_publish`
+reached that point. A run takes one: a `conflict` (`go_ahead_taken`) means another was given and
+stands, so tell the person rather than sending theirs again; `signalled: false` means it was recorded
+but not heard, so send the same one again. Follow the run with `migration_status`: `driver` says
+where its background run is, who started it, and whether the go-ahead was given (`unknown` is not
+no). A `not_found` from `migration_publish`
 means the run has no driver: ask the person whether to start it or publish with
 `migration_publish_entries`. A run whose status is `stopped` (nothing approved in time, or no
 go-ahead) can't be started again; its templates can still be taken through step by step.

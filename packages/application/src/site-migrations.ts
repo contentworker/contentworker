@@ -105,6 +105,8 @@ export async function createMigrationRun(
     error: null,
     releaseId: null,
     clusteringHeldAt: null,
+    driver: null,
+    goAhead: null,
     version: 1,
     createdAt: at,
     createdBy: ctx.actor ?? null,

@@ -103,6 +103,19 @@ export class MigrationClusteringHeldError extends InvalidStateError {
   }
 }
 
+/**
+ * The run's go-ahead to publish is taken: it was given once, by someone else or for another target,
+ * and stands. Says neither who nor what: a caller who may publish may not be one who reads runs.
+ */
+export class MigrationGoAheadTakenError extends ConflictError {
+  constructor() {
+    super(
+      'The go-ahead to publish this run was already given, and it stands: another can’t replace it',
+      { reason: 'go_ahead_taken' },
+    );
+  }
+}
+
 /** What an inventory found, and what it left out and why. */
 export interface MigrationInventory {
   /** Pages the source listed or the crawl reached, before filtering. */
@@ -146,6 +159,13 @@ export interface MigrationRun {
    * templates can be taken on step by step, or by another driver, as they are.
    */
   readonly clusteringHeldAt: string | null;
+  /**
+   * Who started its background driver, and when. Null while it was never started, and for a run
+   * started before this was recorded, whose driver (if it has one) and go-ahead aren't known here.
+   */
+  readonly driver: MigrationDriverRecord | null;
+  /** The go-ahead to publish given to its driver: written once, at the compare-and-set. */
+  readonly goAhead: MigrationGoAhead | null;
   /** Counts up from 1 with every write; the compare-and-set each write rides with. */
   readonly version: number;
   readonly createdAt: string;
@@ -266,6 +286,83 @@ export type MigrationActor =
   | { readonly kind: 'key'; readonly keyId: string }
   | { readonly kind: 'member'; readonly memberId: string }
   | { readonly kind: 'deployment' };
+
+export const isMigrationActor = (v: unknown): v is MigrationActor => {
+  const a = v as Partial<Record<string, unknown>> | null | undefined;
+  return (
+    (a?.kind === 'key' && typeof a.keyId === 'string') ||
+    (a?.kind === 'member' && typeof a.memberId === 'string') ||
+    a?.kind === 'deployment'
+  );
+};
+
+export const sameMigrationActor = (a: MigrationActor | null, b: MigrationActor): boolean =>
+  a?.kind === b.kind &&
+  (a.kind !== 'key' || (b.kind === 'key' && a.keyId === b.keyId)) &&
+  (a.kind !== 'member' || (b.kind === 'member' && a.memberId === b.memberId));
+
+/** The start of a run's background driver, as its run records it. */
+export interface MigrationDriverRecord {
+  readonly startedBy: MigrationActor;
+  readonly startedAt: string;
+}
+
+/**
+ * Where a run's background driver is: `none` (it has none), `running`, `waiting` (for an approval,
+ * the go-ahead, a site it can't read or a retry), `paused` (by an operator), `finished`, or
+ * `unknown` (it couldn't be asked now).
+ */
+export const MIGRATION_DRIVER_STATUSES = [
+  'none',
+  'running',
+  'waiting',
+  'paused',
+  'finished',
+  'unknown',
+] as const;
+export type MigrationDriverStatus = (typeof MIGRATION_DRIVER_STATUSES)[number];
+
+/** How a run's entries go out: published now, or (`viaRelease`) added to a release. */
+export interface MigrationPublishTarget {
+  readonly viaRelease?: boolean;
+  /** The open release to add to; absent, the run's own. */
+  readonly releaseId?: string;
+  readonly releaseTitle?: string;
+}
+
+/** A target with only what it says: no blank or false parts, the title trimmed. */
+export function migrationPublishTarget(input: {
+  readonly viaRelease?: boolean | undefined;
+  readonly releaseId?: string | undefined;
+  readonly releaseTitle?: string | undefined;
+}): MigrationPublishTarget {
+  const title = input.releaseTitle?.trim();
+  return {
+    ...(input.viaRelease ? { viaRelease: true } : {}),
+    ...(input.releaseId ? { releaseId: input.releaseId } : {}),
+    ...(title ? { releaseTitle: title } : {}),
+  };
+}
+
+export const sameMigrationTarget = (
+  a: MigrationPublishTarget,
+  b: MigrationPublishTarget,
+): boolean =>
+  !!a.viaRelease === !!b.viaRelease &&
+  a.releaseId === b.releaseId &&
+  a.releaseTitle === b.releaseTitle;
+
+/** The go-ahead to publish a run: who gave it, when, and for what. Never replaced by another. */
+export interface MigrationGoAhead {
+  readonly approvedBy: MigrationActor;
+  readonly at: string;
+  readonly target: MigrationPublishTarget;
+  /**
+   * When it certainly reached the driver (its event was taken in, or the driver acted on it); null
+   * while that isn't known, when whoever gave it can send it again.
+   */
+  readonly deliveredAt: string | null;
+}
 
 /** A try of a template's script on its sample pages, as the template keeps it. */
 export interface MigrationTrySummary {

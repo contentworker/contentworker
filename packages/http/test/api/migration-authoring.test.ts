@@ -1,4 +1,9 @@
-import { MigrationDriverFinishedError, NotFoundError, SCOPES } from '@contentworker/domain';
+import {
+  MigrationDriverFinishedError,
+  type MigrationDriverStatus,
+  NotFoundError,
+  SCOPES,
+} from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import type {
   MigrationDriverState,
@@ -127,6 +132,13 @@ class RecordingRunner implements MigrationRunner {
     // As the Cloudflare runner answers a run with no Workflow instance.
     if (!this.running.has(runId)) throw new NotFoundError('Migration driver', runId);
     this.calls.push({ kind: 'publishApproved', payload: event });
+  }
+  /** Asking where a driver is fails. */
+  unreachable = false;
+  async status(_scope: unknown, runId: string): Promise<MigrationDriverStatus> {
+    if (this.unreachable) throw new Error('internal error: Workflows is unavailable');
+    if (this.finished.has(runId)) return 'finished';
+    return this.running.has(runId) ? 'waiting' : 'none';
   }
 }
 
@@ -422,32 +434,102 @@ describe('the run’s driver', () => {
       scope: { spaceId: 's1', environmentId: 'main' },
       runId: c.run,
       startedBy: { kind: 'key', keyId: 'key-runner' },
+      recorded: true,
     });
 
-    expect((await send('POST', `/${c.run}/publish-approval`, {}, 'publisher')).status).toBe(202);
-    expect(
-      (await send('POST', `/${c.run}/publish-approval`, { viaRelease: true }, 'releaser')).status,
-    ).toBe(202);
-    expect(
-      runner.calls.filter((call) => call.kind === 'publishApproved').map((call) => call.payload),
-    ).toEqual([
-      { approvedBy: { kind: 'key', keyId: 'key-publisher' } },
-      { approvedBy: { kind: 'key', keyId: 'key-releaser' }, viaRelease: true },
-    ]);
     // The approver is who is signed in; a body can't name another.
-    expect(
-      (
-        await send(
-          'POST',
-          `/${c.run}/publish-approval`,
-          { approvedBy: { kind: 'deployment' } },
-          'publisher',
-        )
-      ).status,
-    ).toBe(202);
+    const given = await send(
+      'POST',
+      `/${c.run}/publish-approval`,
+      { approvedBy: { kind: 'deployment' } },
+      'publisher',
+    );
+    expect(given.status).toBe(202);
+    expect(await json(given)).toEqual({ accepted: true, signalled: true });
     expect(runner.calls.at(-1)?.payload).toEqual({
       approvedBy: { kind: 'key', keyId: 'key-publisher' },
+      recorded: true,
     });
+  });
+
+  it('takes one go-ahead: the same one again is answered again, any other is a 409', async () => {
+    const { send, runner } = makeApp();
+    const c = await clustered(send);
+    await send('POST', `/${c.run}/start`);
+    const approve = (body: unknown, token: string) =>
+      send('POST', `/${c.run}/publish-approval`, body, token);
+    expect((await approve({ viaRelease: true }, 'releaser')).status).toBe(202);
+    const again = await approve({ viaRelease: true }, 'releaser');
+    expect(again.status).toBe(202);
+    expect(await json(again)).toEqual({ accepted: true, signalled: true });
+    for (const [body, token] of [
+      [{}, 'releaser'],
+      [{}, 'publisher'],
+      [{ viaRelease: true, releaseTitle: 'Launch' }, 'releaser'],
+    ] as const) {
+      const refused = await approve(body, token);
+      expect(refused.status).toBe(409);
+      const { error } = await json<{ error: Record<string, unknown> }>(refused);
+      expect(error).toEqual({
+        code: 'conflict',
+        message: expect.stringMatching(/already given/),
+        details: { reason: 'go_ahead_taken' },
+      });
+    }
+    expect(runner.calls.filter((call) => call.kind === 'publishApproved')).toHaveLength(2);
+  });
+
+  it('says where the driver is, who started it and its go-ahead, to whoever reads the run', async () => {
+    const { send, runner } = makeApp();
+    const c = await clustered(send);
+    const view = async (token?: string) =>
+      (
+        await json<{ run: Record<string, unknown>; driver: Record<string, unknown> }>(
+          await send('GET', `/${c.run}`, undefined, token),
+        )
+      ).driver;
+    expect(await view()).toMatchObject({ state: 'none', goAhead: { status: 'none' } });
+    await send('POST', `/${c.run}/start`);
+    await send('POST', `/${c.run}/publish-approval`, {}, 'publisher');
+    expect(await view('manager')).toEqual({
+      state: 'waiting',
+      startedBy: { kind: 'key', keyId: 'key-runner' },
+      startedAt: expect.any(String),
+      startedByYou: false,
+      goAhead: {
+        status: 'given',
+        approvedBy: { kind: 'key', keyId: 'key-publisher' },
+        approvedAt: expect.any(String),
+        byYou: false,
+        delivered: true,
+      },
+    });
+    expect(await view('runner')).toMatchObject({ startedByYou: true });
+    // Who may publish isn't who may read it.
+    expect((await send('GET', `/${c.run}`, undefined, 'publisher')).status).toBe(403);
+    // A read never fails for Workflows, and a list never asks it.
+    runner.unreachable = true;
+    expect(await view()).toMatchObject({ state: 'unknown', goAhead: { status: 'given' } });
+    const list = await json<{ items: Record<string, unknown>[] }>(await send('GET', ''));
+    expect(list.items[0]).not.toHaveProperty('driver');
+    expect(list.items[0]).not.toHaveProperty('goAhead');
+  });
+
+  it('keeps a go-ahead whose driver couldn’t be told, to be sent again', async () => {
+    const { send, runner } = makeApp();
+    const c = await clustered(send);
+    await send('POST', `/${c.run}/start`);
+    runner.failSignals = 'broken';
+    const first = await send('POST', `/${c.run}/publish-approval`, {}, 'publisher');
+    expect(first.status).toBe(202);
+    expect(await json(first)).toEqual({
+      accepted: true,
+      signalled: false,
+      reason: 'unreachable',
+    });
+    delete runner.failSignals;
+    const again = await send('POST', `/${c.run}/publish-approval`, {}, 'publisher');
+    expect(await json(again)).toEqual({ accepted: true, signalled: true });
   });
 });
 

@@ -21,7 +21,6 @@ export function PublishPlan({
   driven = false,
   viaRelease: mayRelease,
   initial,
-  fixed = false,
   returnFocus,
   onCancel,
   onConfirm,
@@ -34,8 +33,6 @@ export function PublishPlan({
   viaRelease: boolean;
   /** What was answered before, when this asks again. */
   initial: MigrationPublishTarget;
-  /** Only `initial` can be answered: it may have been taken already. */
-  fixed?: boolean;
   returnFocus: () => HTMLElement | undefined;
   onCancel: () => void;
   onConfirm: (target: MigrationPublishTarget) => void;
@@ -79,7 +76,7 @@ export function PublishPlan({
       onCancel={onCancel}
       returnFocus={returnFocus}
       details={
-        mayRelease && !fixed ? (
+        mayRelease ? (
           <div className="space-y-3">
             <Segmented
               aria-label="How to publish"
