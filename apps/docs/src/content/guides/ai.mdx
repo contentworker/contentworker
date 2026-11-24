@@ -100,9 +100,11 @@ Agents run on their own, on publish or on a [schedule](/guides/releases-and-sche
 - **Curate** proposes improvements to text that's already there.
 - **Repurpose** derives variants for other channels, such as a social post or a newsletter blurb.
 
-The moderation agent's **hold** is a record for people to act on, not an automatic unpublish; a
-workflow can branch on the result (see [`ai.moderate`](/reference/nodes/#ai.moderate)) to route
-flagged entries to a person before they publish.
+When the moderation agent flags an entry on publish, it unpublishes it and opens a
+[moderation hold](/guides/approvals/#moderation-holds) in **Approvals**, where someone republishes
+it or keeps it unpublished. On a schedule or run by hand it only records the verdict in the run
+log. To stop flagged content before it is ever live, a workflow can branch on the result (see
+[`ai.moderate`](/reference/nodes/#ai.moderate)) and route flagged entries to a person first.
 
 Whether an agent's changes apply directly or wait as an
 [agent review](/guides/approvals/#agent-reviews) is a setting; reviewing first is the default

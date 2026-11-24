@@ -163,7 +163,7 @@ export async function seedDev(
     // collides with the entries used by workflows/comments/reviews demos.
     corpus.publishedArticleIds[20] ?? null,
   );
-  await seedAgents(run, corpus.articleIds);
+  await seedAgents(run, corpus.articleIds, corpus.publishedArticleIds);
   await seedGovernance(run, config);
 
   await createTag(ctx, scope, { name: MARKER_TAG });

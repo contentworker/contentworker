@@ -197,7 +197,39 @@ export interface PendingApprovalsCount {
   readonly workflowTasks: number;
   /** Agent proposals awaiting review. */
   readonly agentReviews: number;
+  /** Entries moderation took offline, waiting on a person to republish or keep them. */
+  readonly moderationHolds: number;
   readonly total: number;
+}
+
+/**
+ * An entry the moderation agent unpublished after a publish (`GET …/moderation-holds`). `open`
+ * waits on a person; `cleared` means moderation passed a later published version.
+ */
+export interface ModerationHold {
+  readonly id: string;
+  readonly entryId: string;
+  readonly contentTypeApiId: string;
+  /** The version moderation judged: what `republish` publishes again. */
+  readonly entryVersion: number;
+  /** The categories the classifier flagged (`hate`, `house_rules`, …). */
+  readonly flags: readonly string[];
+  readonly status: 'open' | 'republished' | 'kept' | 'cleared';
+  readonly createdAt: string;
+  readonly decidedAt?: string;
+  readonly decidedBy?: string;
+  readonly note?: string;
+  /** On a listed open hold: a newer version is live, so `republish` only closes it. */
+  readonly stale?: true;
+}
+
+/** What a decision on a hold answers. */
+export interface ModerationDecision {
+  readonly hold: ModerationHold;
+  /** The entry as the decision left it; null when it is gone. */
+  readonly entry: Entry | null;
+  /** True when this decision published the entry. */
+  readonly published: boolean;
 }
 
 /** How many entries a content type holds, by status; `total` is the live ones (not the trash). */
@@ -2635,6 +2667,21 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * read.
        */
       count: () => get<PendingApprovalsCount>(`${envBase}/approvals/count`),
+    },
+
+    moderationHolds: {
+      /** Holds newest first; `status: 'open'` lists those waiting on a decision. */
+      list: (query: { status?: ModerationHold['status']; entryId?: string } = {}) =>
+        items(get<{ items: ModerationHold[] }>(`${envBase}/moderation-holds`, query)),
+      /**
+       * Overrides moderation: publishes the held version again and closes the hold. A 409 when
+       * it was already decided, or the entry was edited after it was held. Needs publish.
+       */
+      republish: (id: string, opts: { readonly note?: string } = {}) =>
+        post<ModerationDecision>(`${envBase}/moderation-holds/${e(id)}/republish`, opts),
+      /** Closes the hold; the entry stays unpublished. A 409 when it was published again since. */
+      keep: (id: string, opts: { readonly note?: string } = {}) =>
+        post<ModerationDecision>(`${envBase}/moderation-holds/${e(id)}/keep`, opts),
     },
 
     contentTypes: {

@@ -1,4 +1,5 @@
 export * from './agents/agent-review';
+export * from './agents/moderation-hold';
 export * from './ai/ai-projects';
 export * from './ai/ai-settings';
 export * from './asset/asset';

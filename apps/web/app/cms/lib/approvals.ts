@@ -1,4 +1,5 @@
 import { useClient } from './client-context';
+import { humanize } from './format';
 import { useScopedQuery } from './queries';
 
 type PendingOpts = {
@@ -11,7 +12,7 @@ const PENDING_LIMIT = 200;
 
 /**
  * What waits on a person in this space, as the Approvals inbox lists it: workflow steps paused
- * for a decision, and agent proposals awaiting review.
+ * for a decision, agent proposals awaiting review, and entries moderation took offline.
  */
 export function usePendingWorkflowTasks(opts?: PendingOpts) {
   const { client } = useClient();
@@ -27,6 +28,15 @@ export function usePendingAgentReviews(opts?: PendingOpts) {
   return useScopedQuery(
     ['agent-reviews', 'pending'],
     () => client.listAgentReviews({ status: 'pending' }),
+    opts,
+  );
+}
+
+export function usePendingModerationHolds(opts?: PendingOpts) {
+  const { client } = useClient();
+  return useScopedQuery(
+    ['moderation-holds', 'open'],
+    () => client.listModerationHolds({ status: 'open' }),
     opts,
   );
 }
@@ -56,3 +66,7 @@ export function usePendingApprovalsCount(enabled = true): number | undefined {
 
 /** The count as the shell writes it: 99+ past two digits. */
 export const approvalsCountLabel = (n: number) => (n > 99 ? '99+' : String(n));
+
+/** What moderation flagged, as a reader says it: `house_rules` → "House rules". */
+export const moderationFlagsLabel = (flags: readonly string[]) =>
+  flags.length ? flags.map(humanize).join(', ') : 'Policy violation';

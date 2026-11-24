@@ -80,6 +80,10 @@ export interface AgentRunResult {
   readonly proposed?: EntryFields;
   /** Persisted review awaiting a human decision (when needs_review). */
   readonly reviewId?: string;
+  /** The categories moderation flagged (when held). */
+  readonly flags?: readonly string[];
+  /** The entry's `currentVersion` moderation read (moderate runs that loaded the entry). */
+  readonly judgedVersion?: number;
 }
 
 /**
@@ -136,10 +140,23 @@ export interface Activities {
     },
   ): Promise<void>;
   /**
-   * Retracts a flagged entry from the delivery read model. Moderation runs
-   * post-publish, so a held entry is briefly live; this is what takes it down.
+   * Retracts a flagged entry from the delivery read model and opens its moderation hold, in one
+   * unit (`holdEntryForModeration`). Moderation runs post-publish, so a held entry is briefly
+   * live; this is what takes it down. Answers what it did: a version a person republished over
+   * moderation stays live (`overridden`). A step recorded before it answered replays as undefined.
    */
-  retractEntry(scope: Scope, entryId: string, agent: WorkflowName): Promise<void>;
+  retractEntry(
+    scope: Scope,
+    entryId: string,
+    agent: WorkflowName,
+    flags?: readonly string[],
+    judgedVersion?: number,
+  ): Promise<'held' | 'overridden' | 'not_published' | 'gone' | undefined>;
+  /**
+   * Closes the entry's open moderation hold after a clean verdict on `judgedVersion`, when a newer
+   * version than the held one is live (`clearModerationHold`).
+   */
+  clearHold(scope: Scope, entryId: string, judgedVersion?: number): Promise<void>;
   /** Settles a watcher outcome: apply-once on approval, record, or stand down. */
   settleReview(
     scope: Scope,
@@ -156,6 +173,8 @@ export interface LoadedEntry {
   /** With the guidance their author wrote, so a prompt can describe each field. */
   readonly textFields: (GuidedField & { readonly hasValue: boolean })[];
   readonly fields: EntryFields;
+  /** The entry's `currentVersion`: the version these fields are. */
+  readonly version?: number;
   /** Concatenated current text (for moderation/context). */
   readonly text: string;
 }

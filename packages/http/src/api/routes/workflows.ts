@@ -58,6 +58,10 @@ const BASE = '/spaces/:space/environments/:env';
 const PENDING_APPROVALS_COUNT = z.object({
   workflowTasks: z.number().int().describe('Workflow steps paused for a person'),
   agentReviews: z.number().int().describe('Agent proposals awaiting review'),
+  moderationHolds: z
+    .number()
+    .int()
+    .describe('Entries moderation took offline, waiting on a person to republish or keep them'),
   total: z.number().int(),
 });
 
@@ -392,8 +396,8 @@ export function workflowRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Workflows', 'Count what waits in Approvals', {
       ok: PENDING_APPROVALS_COUNT,
       description:
-        'Pending workflow tasks and pending agent proposals, counted without listing them (no ' +
-        'cap). Items on content types the caller can’t read are left out, as the lists leave ' +
+        'Pending workflow tasks, pending agent proposals and open moderation holds, counted ' +
+        'without listing them (no cap). Items on content types the caller can’t read are left out, as the lists leave ' +
         'them out.',
     }),
     requireScope(SCOPES.previewRead),

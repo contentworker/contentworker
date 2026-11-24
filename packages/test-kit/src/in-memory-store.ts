@@ -35,6 +35,7 @@ import {
   isWebhookSendRequest,
   type MemberInvite,
   type Menu,
+  type ModerationHold,
   matchesTopic,
   menuTargets,
   type OAuthClient,
@@ -121,6 +122,7 @@ import type {
   MemberRepo,
   MenuRead,
   MenuRepo,
+  ModerationHoldRepo,
   OAuthClientRepo,
   OAuthGrantRecord,
   OAuthGrantRepo,
@@ -363,6 +365,7 @@ export class InMemoryContentStore implements ContentStore {
         this.releaseItemData,
         this.scheduledActionData,
         this.agentReviewData,
+        this.moderationHoldData,
         this.agentScheduleData,
         this.commentData,
         this.taskData,
@@ -2525,6 +2528,80 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  private readonly moderationHoldData = new JournaledMap<string, ModerationHold>();
+  /** Open `withTransaction` calls: a hold's lost compare-and-set inside one aborts it, as on D1. */
+  private txDepth = 0;
+
+  /** A lost compare-and-set: false outside a unit, the unit's abort inside one (D1 at commit). */
+  private holdLost(): false {
+    if (this.txDepth > 0) throw new TransactionConflictError();
+    return false;
+  }
+
+  /** The scope's holds, keyed `<scope>::<id>`. */
+  private holdsIn(scope: Scope): ModerationHold[] {
+    const prefix = `${scopeKey(scope)}::`;
+    return [...this.moderationHoldData.entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([, v]) => v);
+  }
+
+  readonly moderationHolds: ModerationHoldRepo = {
+    create: async (scope, hold) => {
+      // As the D1 index: at most one open hold per entry.
+      if (this.holdsIn(scope).some((h) => h.entryId === hold.entryId && h.status === 'open')) {
+        return this.holdLost();
+      }
+      this.moderationHoldData.set(`${scopeKey(scope)}::${hold.id}`, { ...hold });
+      return true;
+    },
+    get: async (scope, id) => this.moderationHoldData.get(`${scopeKey(scope)}::${id}`) ?? null,
+    list: async (scope, query = {}) =>
+      this.holdsIn(scope)
+        .filter((h) => !query.status || h.status === query.status)
+        .filter((h) => !query.entryId || h.entryId === query.entryId)
+        .sort((a, b) =>
+          a.createdAt === b.createdAt
+            ? b.id.localeCompare(a.id)
+            : a.createdAt < b.createdAt
+              ? 1
+              : -1,
+        )
+        .slice(0, Math.min(Math.max(query.limit ?? 100, 1), 200))
+        .map((h) => {
+          const live = this.entryData.get(`${scopeKey(scope)}::${h.entryId}`)?.publishedVersion;
+          return h.status === 'open' && live != null && live > h.entryVersion
+            ? { ...h, stale: true as const }
+            : h;
+        }),
+    countOpen: async (scope) =>
+      countByType(
+        this.holdsIn(scope)
+          .filter((h) => h.status === 'open')
+          .map((h) => h.contentTypeApiId),
+      ),
+    refresh: async (scope, id, to) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const hold = this.moderationHoldData.get(key);
+      if (hold?.status !== 'open') return this.holdLost();
+      this.moderationHoldData.set(key, { ...hold, ...to, flags: [...to.flags] });
+      return true;
+    },
+    decide: async (scope, id, decision) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const hold = this.moderationHoldData.get(key);
+      if (hold?.status !== 'open') return this.holdLost();
+      this.moderationHoldData.set(key, {
+        ...hold,
+        status: decision.status,
+        decidedAt: decision.decidedAt,
+        decidedBy: decision.decidedBy,
+        ...(decision.note ? { note: decision.note } : {}),
+      });
+      return true;
+    },
+  };
+
   private readonly agentScheduleData = new Map<string, { scope: Scope; schedule: AgentSchedule }>();
 
   readonly agentSchedules: AgentScheduleRepo = {
@@ -3731,6 +3808,7 @@ export class InMemoryContentStore implements ContentStore {
       this.workflowNodeRunData,
       this.workflowTimelineData,
       this.workflowTaskData,
+      this.moderationHoldData,
       this.redirectData,
       this.redirectRevisionData,
       this.menuData,
@@ -3753,6 +3831,7 @@ export class InMemoryContentStore implements ContentStore {
     const outboxSnapshot = [...this.outboxData];
     // Purge progress marks hold Dates, so they are copied here rather than JSON round-tripped.
     const purgeSnapshot = [...this.purgeData].map(([k, v]) => [k, { ...v }] as const);
+    this.txDepth += 1;
     try {
       const result = await fn({
         spaces: this.spaces,
@@ -3777,6 +3856,7 @@ export class InMemoryContentStore implements ContentStore {
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,
+        moderationHolds: this.moderationHolds,
         workflowGraphs: this.workflowGraphs,
         outbox: this.outbox,
         promotions: this.promotions,
@@ -3795,6 +3875,8 @@ export class InMemoryContentStore implements ContentStore {
       this.purgeData.clear();
       for (const [k, v] of purgeSnapshot) this.purgeData.set(k, v);
       throw err;
+    } finally {
+      this.txDepth -= 1;
     }
   }
 

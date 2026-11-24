@@ -203,12 +203,38 @@ describe('@contentworker/sdk-management client', () => {
   it('counts what waits in Approvals', async () => {
     const fetchImpl = fakeFetch((url) => {
       calls.push({ url });
-      return { workflowTasks: 2, agentReviews: 1, total: 3 };
+      return { workflowTasks: 2, agentReviews: 1, moderationHolds: 1, total: 4 };
     });
     const client = createManagementClient({ ...base, fetch: fetchImpl });
 
-    expect(await client.approvals.count()).toEqual({ workflowTasks: 2, agentReviews: 1, total: 3 });
+    expect(await client.approvals.count()).toEqual({
+      workflowTasks: 2,
+      agentReviews: 1,
+      moderationHolds: 1,
+      total: 4,
+    });
     expect(calls[0]?.url).toBe('https://cms.test/spaces/s1/environments/main/approvals/count');
+  });
+
+  it('lists moderation holds and decides them', async () => {
+    const hold = { id: 'h 1', entryId: 'e1', status: 'open', flags: ['hate'] };
+    const fetchImpl = fakeFetch((url, init) => {
+      calls.push({ url, init });
+      return url.includes('/moderation-holds?')
+        ? { items: [hold] }
+        : { hold: { ...hold, status: 'kept' }, entry: null, published: false };
+    });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+    const M = 'https://cms.test/spaces/s1/environments/main/moderation-holds';
+
+    expect(await client.moderationHolds.list({ status: 'open' })).toEqual([hold]);
+    expect(calls[0]?.url).toBe(`${M}?status=open`);
+    await client.moderationHolds.republish('h 1', { note: 'Satire' });
+    expect(calls[1]?.url).toBe(`${M}/h%201/republish`);
+    expect(calls[1]?.init?.method).toBe('POST');
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ note: 'Satire' });
+    expect((await client.moderationHolds.keep('h 1')).hold.status).toBe('kept');
+    expect(calls[2]?.url).toBe(`${M}/h%201/keep`);
   });
 
   it('passes query params for version diffs and drops undefined ones', async () => {

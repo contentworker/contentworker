@@ -58,6 +58,7 @@ import { registerImportTools } from './tools/imports';
 import { registerInviteTools } from './tools/invites';
 import { registerMenuTools } from './tools/menus';
 import { registerMigrationTools } from './tools/migrations';
+import { registerModerationTools } from './tools/moderation';
 import { registerOAuthConnectionTools } from './tools/oauth-connections';
 import { registerPluginTools } from './tools/plugins';
 import { registerPromotionTools } from './tools/promotions';
@@ -146,6 +147,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerSavedViewTools,
   registerTaxonomyTools,
   registerAgentTools,
+  registerModerationTools,
   registerAuditLogTools,
   registerAssetTools,
   registerAssetCollectionTools,

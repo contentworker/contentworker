@@ -12,8 +12,12 @@ const ZERO = { inputTokens: 0, outputTokens: 0 };
  * instance and ack.
  */
 function fakeActivities(over: Partial<Activities> = {}) {
-  const recorded: { workflow: string; entryId: string; status: string }[] = [];
+  const recorded: { workflow: string; entryId: string; status: string; decisions?: string[] }[] =
+    [];
   const retracted: string[] = [];
+  const flagged: (readonly string[] | undefined)[] = [];
+  const cleared: string[] = [];
+  const judged: (number | undefined)[] = [];
   const base: Activities = {
     loadEntry: async () => ({
       contentTypeApiId: 'article',
@@ -35,14 +39,26 @@ function fakeActivities(over: Partial<Activities> = {}) {
     armReview: async () => 'armed',
     settleReview: async () => {},
     recordRun: async (_s, run) => {
-      recorded.push({ workflow: run.workflow, entryId: run.entryId, status: run.status });
+      recorded.push({
+        workflow: run.workflow,
+        entryId: run.entryId,
+        status: run.status,
+        decisions: run.decisions,
+      });
     },
-    retractEntry: async (_s, entryId) => {
+    retractEntry: async (_s, entryId, _agent, flags, judgedVersion) => {
       retracted.push(entryId);
+      flagged.push(flags);
+      judged.push(judgedVersion);
+      return 'held' as const;
+    },
+    clearHold: async (_s, entryId, judgedVersion) => {
+      cleared.push(entryId);
+      judged.push(judgedVersion);
     },
     ...over,
   } as Activities;
-  return { act: base, recorded, retracted };
+  return { act: base, recorded, retracted, flagged, cleared, judged };
 }
 
 describe('publishAgentsWorkflow', () => {
@@ -131,8 +147,8 @@ describe('publishAgentsWorkflow', () => {
     expect(retracted).toEqual(['e1']);
   });
 
-  it('does not retract when nothing is held', async () => {
-    const { act, retracted } = fakeActivities();
+  it('does not retract when nothing is held, and closes an open hold instead', async () => {
+    const { act, retracted, cleared } = fakeActivities();
     await publishAgentsWorkflow(act, {
       scope,
       entryIds: ['e1'],
@@ -140,6 +156,69 @@ describe('publishAgentsWorkflow', () => {
       moderate: true,
     });
     expect(retracted).toEqual([]);
+    expect(cleared).toEqual(['e1']);
+  });
+
+  it('hands the flagged categories to the hold', async () => {
+    const { act, flagged, cleared } = fakeActivities({
+      classify: async () => ({ flagged: true, categories: ['hate', 'spam'], usage: ZERO }),
+    });
+    await publishAgentsWorkflow(act, { scope, entryIds: ['e1'], enrich: false, moderate: true });
+    expect(flagged).toEqual([['hate', 'spam']]);
+    expect(cleared).toEqual([]);
+  });
+
+  it('hands the version the classifier read to the hold, and to the clean verdict', async () => {
+    const entry = {
+      contentTypeApiId: 'article',
+      displayField: 'title',
+      defaultLocale: 'en-US',
+      textFields: [],
+      fields: {},
+      version: 7,
+      text: 'T',
+    };
+    const flaggedPass = fakeActivities({
+      loadEntry: async () => entry,
+      classify: async () => ({ flagged: true, categories: ['spam'], usage: ZERO }),
+    });
+    await publishAgentsWorkflow(flaggedPass.act, {
+      scope,
+      entryIds: ['e1'],
+      enrich: false,
+      moderate: true,
+    });
+    expect(flaggedPass.judged).toEqual([7]);
+    const cleanPass = fakeActivities({ loadEntry: async () => entry });
+    await publishAgentsWorkflow(cleanPass.act, {
+      scope,
+      entryIds: ['e1'],
+      enrich: false,
+      moderate: true,
+    });
+    expect(cleanPass.judged).toEqual([7]);
+  });
+
+  it('records no retraction when the live version was republished over moderation', async () => {
+    const { act, recorded } = fakeActivities({
+      classify: async () => ({ flagged: true, categories: ['spam'], usage: ZERO }),
+      retractEntry: async () => 'overridden' as const,
+    });
+    await publishAgentsWorkflow(act, { scope, entryIds: ['e1'], enrich: false, moderate: true });
+    // The verdict, then the note that a person's override left it live.
+    expect(recorded.filter((r) => r.status === 'held').map((r) => r.decisions)).toEqual([
+      ['flagged: spam'],
+      ['left published: a person republished this version over moderation'],
+    ]);
+  });
+
+  it('records nothing more when the entry was already out of delivery', async () => {
+    const { act, recorded } = fakeActivities({
+      classify: async () => ({ flagged: true, categories: ['spam'], usage: ZERO }),
+      retractEntry: async () => 'not_published' as const,
+    });
+    await publishAgentsWorkflow(act, { scope, entryIds: ['e1'], enrich: false, moderate: true });
+    expect(recorded.filter((r) => r.status === 'held')).toHaveLength(1);
   });
 
   it('arms the HITL watcher when a run needs review', async () => {
