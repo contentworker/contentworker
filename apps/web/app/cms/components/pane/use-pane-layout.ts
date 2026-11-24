@@ -12,16 +12,16 @@ export const PANE_MIN_PX = 336;
 /**
  * How the pane stands beside the form. `split`: side by side, behind the divider. `stack`: under
  * the form, as on a phone or an iPad. `rail`: a strip of the pane's views on the form's right edge,
- * each opening the pane over the form; only beside the assistant's column, where the row is too
- * narrow to split and stacking would push the entry's history below the fold just while Coworker
- * proposes changes to it.
+ * each opening the pane over the form; on any desktop-width screen whose row is too narrow to split
+ * (the sidebar expanded at 1024-1280, or the assistant's column open), where stacking would push the
+ * entry's status and history below the fold. Phones and portrait tablets still stack.
  */
 export type PaneMode = 'split' | 'rail' | 'stack';
 
-export function paneMode(width: number, beside: { readonly assistantColumn: boolean }): PaneMode {
+export function paneMode(width: number, beside: { readonly railable: boolean }): PaneMode {
   if (width >= MAIN_MIN_PX + PANE_MIN_PX) return 'split';
   // Unmeasured (the server, the first render) stacks, as it always has.
-  return width > 0 && beside.assistantColumn ? 'rail' : 'stack';
+  return width > 0 && beside.railable ? 'rail' : 'stack';
 }
 
 const SHARE_KEY = 'cw.entry-pane.share';
@@ -68,7 +68,7 @@ export interface PaneLayout {
  * it ends. The server can't measure, so it draws the stacked layout and the split arrives before
  * the first paint after hydration.
  */
-export function usePaneLayout(beside: { readonly assistantColumn: boolean }): PaneLayout {
+export function usePaneLayout(beside: { readonly railable: boolean }): PaneLayout {
   const [el, ref] = useState<HTMLElement | null>(null);
   const [width, setWidth] = useState(0);
   useLayoutEffect(() => {

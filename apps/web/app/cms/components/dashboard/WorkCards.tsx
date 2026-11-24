@@ -204,8 +204,8 @@ export function UpcomingCard(props: {
         <div className="space-y-2">
           <h3 className="font-medium text-muted-foreground text-xs">Overdue</h3>
           <p className="text-muted-foreground text-xs">
-            Past their time and not run yet. Publish them by hand, or ask your administrator to
-            check the scheduler.
+            Past their time and not run yet. Publish them by hand; if this keeps happening, the
+            scheduler isn’t running.
           </p>
           <Rows
             slice={{ ...scheduled, data: split.overdue }}

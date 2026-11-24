@@ -664,12 +664,11 @@ export function EntryEditor() {
         : null,
     [selectedType, entryId, conn.space, conn.environment, draft],
   );
-  // Beside the assistant's column the row is narrower than the screen: too narrow to split, the
-  // pane folds to a rail rather than stacking under the form, so the entry's history stays a press
-  // away while Coworker proposes changes to it.
+  // On a desktop-width screen a row too narrow to split (the sidebar expanded, or the assistant's
+  // column open) folds the pane to a rail rather than stacking it under the form, so the entry's
+  // status and history stay a press away. Phones and portrait tablets stack as before.
   const wide = useMedia(WIDE);
-  const assistantColumn = useAssistantIfAny()?.open === true && wide;
-  const pane = usePaneLayout({ assistantColumn });
+  const pane = usePaneLayout({ railable: wide });
   const rail = pane.mode === 'rail';
   const [chosenView, setPaneView] = usePaneView();
   // Activity is the audit log for this entry, so it takes what the log takes (space:admin): anyone

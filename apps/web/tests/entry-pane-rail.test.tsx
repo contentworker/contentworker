@@ -25,23 +25,23 @@ afterEach(() => {
 const BOTH = MAIN_MIN_PX + PANE_MIN_PX;
 
 describe('paneMode', () => {
-  it('splits wherever the row holds both, with the assistant open or not', () => {
-    expect(paneMode(BOTH, { assistantColumn: false })).toBe('split');
-    expect(paneMode(BOTH, { assistantColumn: true })).toBe('split');
+  it('splits wherever the row holds both, at any width', () => {
+    expect(paneMode(BOTH, { railable: false })).toBe('split');
+    expect(paneMode(BOTH, { railable: true })).toBe('split');
   });
 
-  it('folds to the rail beside the assistant’s column, where it would otherwise stack', () => {
-    expect(paneMode(BOTH - 1, { assistantColumn: true })).toBe('rail');
-    expect(paneMode(524, { assistantColumn: true })).toBe('rail');
+  it('folds to the rail on a desktop-width screen whose row is too narrow to split', () => {
+    expect(paneMode(BOTH - 1, { railable: true })).toBe('rail');
+    expect(paneMode(524, { railable: true })).toBe('rail');
   });
 
-  it('stacks as it always has without the column (phones, tablets, a narrow row)', () => {
-    expect(paneMode(BOTH - 1, { assistantColumn: false })).toBe('stack');
-    expect(paneMode(358, { assistantColumn: false })).toBe('stack');
+  it('stacks below desktop width (phones, portrait tablets)', () => {
+    expect(paneMode(BOTH - 1, { railable: false })).toBe('stack');
+    expect(paneMode(358, { railable: false })).toBe('stack');
   });
 
   it('stacks before the row is measured, so the server draws what it always drew', () => {
-    expect(paneMode(0, { assistantColumn: true })).toBe('stack');
+    expect(paneMode(0, { railable: true })).toBe('stack');
   });
 });
 
@@ -53,8 +53,8 @@ const LABELS: Record<PaneView, string> = {
 };
 
 /** The editor's row in miniature: the form, the rail when folded, and the pane. */
-function Row({ assistantColumn, entry }: { assistantColumn: boolean; entry: string }) {
-  const pane = usePaneLayout({ assistantColumn });
+function Row({ railable, entry }: { railable: boolean; entry: string }) {
+  const pane = usePaneLayout({ railable });
   const rail = pane.mode === 'rail';
   const [view, setView] = useState<PaneView>('details');
   const peek = usePanePeek({ rail, entry, view, onView: setView });
@@ -112,7 +112,7 @@ const pane = () => document.getElementById('entry-pane') as HTMLElement;
 describe('the side pane beside the assistant', () => {
   it('stands as a rail of its views, the pane closed, instead of under the form', () => {
     rowWidth(576);
-    render(<Row assistantColumn entry="e1" />);
+    render(<Row railable entry="e1" />);
     const rail = screen.getByRole('toolbar', { name: 'Side pane' });
     expect(rail.getAttribute('aria-orientation')).toBe('vertical');
     expect(screen.getAllByRole('button', { name: /Details|Preview|Activity/ })).toHaveLength(3);
@@ -121,7 +121,7 @@ describe('the side pane beside the assistant', () => {
 
   it('keeps the old stacked pane without the assistant’s column', () => {
     rowWidth(576);
-    const { container } = render(<Row assistantColumn={false} entry="e1" />);
+    const { container } = render(<Row railable={false} entry="e1" />);
     expect(container.querySelector('[data-mode]')?.getAttribute('data-mode')).toBe('stack');
     expect(screen.queryByRole('toolbar')).toBeNull();
     expect(pane().hidden).toBe(false);
@@ -129,7 +129,7 @@ describe('the side pane beside the assistant', () => {
 
   it('splits, with no rail, where the row holds both', () => {
     rowWidth(BOTH + 200);
-    const { container } = render(<Row assistantColumn entry="e1" />);
+    const { container } = render(<Row railable entry="e1" />);
     expect(container.querySelector('[data-mode]')?.getAttribute('data-mode')).toBe('split');
     expect(screen.queryByRole('toolbar')).toBeNull();
     expect(pane().hidden).toBe(false);
@@ -137,7 +137,7 @@ describe('the side pane beside the assistant', () => {
 
   it('opens the pane at the view pressed, and closes it when that view is pressed again', () => {
     rowWidth(576);
-    render(<Row assistantColumn entry="e1" />);
+    render(<Row railable entry="e1" />);
     const details = screen.getByRole('button', { name: 'Details' });
     expect(details.getAttribute('aria-pressed')).toBe('false');
     expect(details.getAttribute('aria-controls')).toBe('entry-pane');
@@ -153,7 +153,7 @@ describe('the side pane beside the assistant', () => {
 
   it('switches view rather than closing when another view is pressed while open', () => {
     rowWidth(576);
-    render(<Row assistantColumn entry="e1" />);
+    render(<Row railable entry="e1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
     expect(screen.getByText('Showing activity')).toBeTruthy();
@@ -165,7 +165,7 @@ describe('the side pane beside the assistant', () => {
 
   it('closes on Escape from inside the pane and hands focus back to the view’s button', () => {
     rowWidth(576);
-    render(<Row assistantColumn entry="e1" />);
+    render(<Row railable entry="e1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     const restore = screen.getByRole('button', { name: 'Restore v1' });
     restore.focus();
@@ -176,7 +176,7 @@ describe('the side pane beside the assistant', () => {
 
   it('leaves Escape to a menu the pane portalled out of itself', () => {
     rowWidth(576);
-    render(<Row assistantColumn entry="e1" />);
+    render(<Row railable entry="e1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     fireEvent.keyDown(screen.getByRole('button', { name: 'Menu item' }), { key: 'Escape' });
     expect(pane().hidden).toBe(false);
@@ -184,7 +184,7 @@ describe('the side pane beside the assistant', () => {
 
   it('steps aside when the form it covers is pressed', () => {
     rowWidth(576);
-    render(<Row assistantColumn entry="e1" />);
+    render(<Row railable entry="e1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     fireEvent.pointerDown(screen.getByRole('textbox', { name: 'Title' }));
     expect(pane().hidden).toBe(true);
@@ -192,16 +192,16 @@ describe('the side pane beside the assistant', () => {
 
   it('starts closed on another entry', () => {
     rowWidth(576);
-    const { rerender } = render(<Row assistantColumn entry="e1" />);
+    const { rerender } = render(<Row railable entry="e1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(pane().hidden).toBe(false);
-    rerender(<Row assistantColumn entry="e2" />);
+    rerender(<Row railable entry="e2" />);
     expect(pane().hidden).toBe(true);
   });
 
   it('is one tab stop, the arrows moving between the views', () => {
     rowWidth(576);
-    render(<Row assistantColumn entry="e1" />);
+    render(<Row railable entry="e1" />);
     const [details, preview, activity] = ['Details', 'Preview', 'Activity'].map((name) =>
       screen.getByRole('button', { name }),
     ) as [HTMLElement, HTMLElement, HTMLElement];
