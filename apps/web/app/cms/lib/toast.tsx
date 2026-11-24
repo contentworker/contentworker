@@ -1,4 +1,5 @@
 import { cn } from '@contentworker/ui/lib/utils';
+import { X } from 'lucide-react';
 import {
   createContext,
   useCallback,
@@ -165,11 +166,11 @@ export function ToastProvider(props: { children: React.ReactNode }) {
             )}
             <button
               type="button"
-              className="hit-area flex size-6 items-center justify-center rounded-full text-lg leading-none text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="hit-area flex size-6 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
               aria-label="Dismiss"
               onClick={() => dismiss(t.id)}
             >
-              ×
+              <X className="size-4" aria-hidden="true" />
             </button>
           </output>
         ))}

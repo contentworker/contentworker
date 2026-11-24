@@ -103,7 +103,7 @@ export function renderPush(push: BlockCatalogPush): string {
   for (const u of push.inUse) {
     const named = u.entries.slice(0, 5).join(', ');
     const more = u.entries.length > 5 ? ` and ${u.entries.length - 5} more` : '';
-    lines.push(`  ✗ ${u.contentTypeApiId}.${u.at} is still used by ${named}${more}`);
+    lines.push(`  error: ${u.contentTypeApiId}.${u.at} is still used by ${named}${more}`);
   }
   // Older servers answer without it.
   for (const s of push.staleOverrides ?? []) {

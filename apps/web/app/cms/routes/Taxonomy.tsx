@@ -316,7 +316,6 @@ function ConceptsTab() {
                       style={{ paddingLeft: `${depth * 1.5 + 0.5}rem` }}
                     >
                       <span className="min-w-0 flex-1 text-sm">
-                        {depth > 0 && <span className="text-muted-foreground">↳ </span>}
                         {concept.prefLabel}{' '}
                         <span className="font-mono text-muted-foreground text-xs">
                           {concept.slug}
