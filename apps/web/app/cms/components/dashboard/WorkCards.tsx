@@ -1,9 +1,16 @@
-import type { AgentReview, Release, ScheduledAction, WorkflowTask } from '@contentworker/domain';
+import type {
+  AgentReview,
+  ModerationHold,
+  Release,
+  ScheduledAction,
+  WorkflowTask,
+} from '@contentworker/domain';
 import { Card, CardContent, CardHeader, CardTitle } from '@contentworker/ui/card';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
+import { moderationFlagsLabel } from '../../lib/approvals';
 import { humanize, toMs } from '../../lib/format';
 import { type EntryRef, entryPath, shortDateTime } from './entry-titles';
 
@@ -204,8 +211,8 @@ export function UpcomingCard(props: {
         <div className="space-y-2">
           <h3 className="font-medium text-muted-foreground text-xs">Overdue</h3>
           <p className="text-muted-foreground text-xs">
-            Past their time and not run yet. Publish them by hand, or ask your administrator to
-            check the scheduler.
+            Past their time and not run yet. Publish them by hand; if this keeps happening, the
+            scheduler isn’t running.
           </p>
           <Rows
             slice={{ ...scheduled, data: split.overdue }}
@@ -253,25 +260,29 @@ export function UpcomingCard(props: {
 
 /**
  * What waits on a person, from the same lists Approvals shows: workflow steps paused for a
- * decision, and agent proposals. The count is the shell's own (`approvals/count`), so the card,
- * the inbox and the nav badge give one number.
+ * decision, agent proposals, and entries moderation took offline. The count is the shell's own
+ * (`approvals/count`), so the card, the inbox and the nav badge give one number.
  */
 export function DecisionsCard(props: {
   tasks: Loadable<readonly WorkflowTask[]>;
   reviews: Loadable<readonly AgentReview[]>;
+  holds: Loadable<readonly ModerationHold[]>;
   /** The server's uncapped count; undefined until it answers, or for a role without the scope. */
   total: number | undefined;
   entryById: (id: string) => EntryRef | undefined;
   now: number;
 }) {
-  const { tasks, reviews } = props;
-  const listed = tasks.data && reviews.data ? tasks.data.length + reviews.data.length : undefined;
+  const { tasks, reviews, holds } = props;
+  const listed =
+    tasks.data && reviews.data && holds.data
+      ? tasks.data.length + reviews.data.length + holds.data.length
+      : undefined;
   const total = props.total ?? listed;
   return (
     <WorkCard
       title="Waiting on a decision"
       count={total}
-      description="Workflow steps and agent proposals that need someone to approve or reject them, oldest first."
+      description="Workflow steps, agent proposals and moderation holds that need someone to decide them, oldest first."
       footer={
         total ? (
           <Link to="/approvals" className="text-link text-sm underline-offset-2 hover:underline">
@@ -336,6 +347,32 @@ export function DecisionsCard(props: {
                 title={entry?.title ?? 'Entry no longer available'}
                 meta={entry ? `${entry.typeName} · ${meta}` : meta}
                 trailing={<StatusBadge status="needs_review" />}
+              />
+            );
+          }}
+        />
+      </div>
+      <div className="space-y-2 border-border border-t pt-3">
+        <h3 className="font-medium text-muted-foreground text-xs">Held by moderation</h3>
+        <Rows
+          slice={{
+            ...holds,
+            data:
+              holds.data && [...holds.data].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+          }}
+          limit={5}
+          empty="No entry is held by moderation."
+          error="Couldn’t load moderation holds."
+          render={(h) => {
+            const entry = props.entryById(h.entryId);
+            const meta = `${moderationFlagsLabel(h.flags)} · ${shortDateTime(h.createdAt)}`;
+            return (
+              <Row
+                key={h.id}
+                to={entry ? entryPath(entry) : '/approvals'}
+                title={entry?.title ?? 'Entry no longer available'}
+                meta={entry ? `${entry.typeName} · ${meta}` : meta}
+                trailing={<ToneBadge tone="ai" label="Held" />}
               />
             );
           }}

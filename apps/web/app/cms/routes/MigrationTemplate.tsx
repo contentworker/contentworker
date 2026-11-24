@@ -411,7 +411,7 @@ function Review({
           }}
         />
       </Section>
-      <Section title="Transform and load">
+      <Section title="Transform and load" flush>
         <TemplatePages
           template={t}
           rights={rights}

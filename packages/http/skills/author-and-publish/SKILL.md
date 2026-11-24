@@ -109,6 +109,10 @@ whoever started them, so a run can do only what that caller could.
   lists them, then `workflow_task_decide`.
   With separation of duties the run's starter can't decide, and an API token can't decide at all;
   hand those to a person rather than retrying.
+- An entry moderation took offline after publishing: `moderation_hold_list` with `status: "open"`
+  names it and what was flagged. Only a person signed in to the admin can republish it (no tool
+  does, and no token may): tell the user. `moderation_hold_keep` closes the hold and leaves it
+  offline; confirm with the user first.
 - A run waiting for a business event: `workflow_event_deliver` with the event name.
 - Stop a run: `workflow_run_cancel` undoes its finished steps. Confirm with the user first.
 - Build or change a workflow: `workflow_copilot` proposes a graph (it never saves),

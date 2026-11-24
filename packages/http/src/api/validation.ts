@@ -1475,3 +1475,8 @@ export const blockLocksSetBody = z.object({
     .max(BLOCK_LOCK_LIMITS.locks)
     .describe('Every lock the entry is to hold; one left out is unlocked'),
 });
+
+/** A decision on a moderation hold: why, optionally, kept with the hold and in the agent ledger. */
+export const moderationDecisionBody = z.object({
+  note: z.string().trim().max(2000).optional(),
+});

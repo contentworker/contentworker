@@ -726,7 +726,7 @@ existing vocabulary: ingest never creates a tag.
 
 ## MCP server
 
-The api worker serves MCP at `/mcp`, with 310 tools and published agent skills. Transport, auth,
+The api worker serves MCP at `/mcp`, with 312 tools and published agent skills. Transport, auth,
 connecting a client, the tool catalog and skills are in [MCP server](./mcp.md). The assistant in the
 admin calls the same tools in-process (see [Coworker](#coworker-the-admins-assistant)).
 
@@ -815,7 +815,7 @@ agents run on `InProcessAgentRuntime` (non-durable).
 
 The crucial seam is `Activities` — the side-effecting operations (`loadEntry`, `generateFields`,
 `applyFields`, `classify`, `record`, `createReview`, `armReview`, `recordRun`, `retractEntry`,
-`settleReview`). Workflow functions are **pure orchestration** over
+`clearHold`, `settleReview`). Workflow functions are **pure orchestration** over
 `Activities`, so the _same_ workflow code runs:
 
 - **`InProcessAgentRuntime`** — directly in the calling isolate (dev, tests, and every
@@ -846,8 +846,18 @@ Fills empty text/symbol fields (excluding the display field) on a freshly-publis
    a question left unanswered counts as flagged. Without one, it asks the `fast` generative model
    for a strict `{ flagged, categories }` schema, where only an explicit `flagged: false` passes
    and anything else holds the entry as `unclassified`.
-3. If flagged → `record` a hold → `held`; else → `completed`. A failed call throws, so the
-   workflow step retries; content is never waved through.
+3. If flagged → `record` a hold → `held` (with the flagged categories as `flags`); else →
+   `completed`. A failed call throws, so the workflow step retries; content is never waved
+   through.
+
+In the on-publish pass (`publishAgentsWorkflow`, or `runPublishAgents` inline), a `held` verdict
+calls `retractEntry`, which is `holdEntryForModeration` (`moderation-holds.ts`): one unit of work
+unpublishes the entry (its `entry.unpublished` outbox row with it) and opens a **moderation hold**
+(`moderation_holds`, at most one open per entry; a second flag refreshes it to the version judged).
+It answers `held`, `not_published` (already offline: a retried step lands here), `gone`, or
+`overridden` when the live version is one a person republished over moderation, which it leaves
+live. A `completed` verdict calls `clearHold`, closing an open hold as `cleared`: a later version
+passed. See [Moderation holds](#moderation-holds).
 
 ### curate
 
@@ -887,7 +897,43 @@ enrichment to human review. Every run is recorded in the agent ledger.
 Moderation is also available on demand — `POST .../entries/:id/moderate` (Management API) and
 the `entry_moderate` MCP tool both call the same `moderateEntry` use-case, which runs the
 workflow in-process and returns `{ flagged, status, decisions, usage }`. A flagged result is a
-recorded hold, not a state change: callers (or a webhook consumer) decide whether to unpublish.
+recorded verdict, not a state change: callers (or a webhook consumer) decide whether to unpublish.
+Scheduled moderation runs record the same way; only the on-publish pass unpublishes and holds.
+
+## Moderation holds
+
+A hold (`ModerationHold`, `packages/domain/src/agents/moderation-hold.ts`) is an entry the
+on-publish moderation pass took offline: its id, type, the `entryVersion` that was live (or the
+version the classifier read, when a publish landed while it ran), the `flags`, and a status of
+`open`, `republished`, `kept` or `cleared`. Approvals lists the open ones and
+`countPendingApprovals` counts them (`moderationHolds`), filtered to the types a role may read; a
+decider's `note` is listed only to callers holding `content:write`. A clean verdict clears an open
+hold only when a version newer than the held one is live and the verdict read at least that
+version, so a slow clean pass over an older version leaves it open.
+
+- `republishHeldEntry` publishes the held version again and closes the hold as `republished`, in
+  one unit (the hold's compare-and-set, the publish and its outbox row). Only a person signed in to
+  the admin may (`isSignedInPerson`): every token, whatever its scopes, gets 403 `person_required`
+  (`PersonRequiredError`), enforced in the use-case. It is a `409` when the hold was decided, or
+  when the entry's `currentVersion` is not `entryVersion` (publish the new version from the entry);
+  an entry already live at the held version only closes its hold. A stale hold (a version newer
+  than `entryVersion` is live; the list marks it `stale: true`, from a join on the entry) is closed
+  as `cleared` with the person recorded and nothing published or unpublished (`closed by …:
+  version N is already live`); Approvals shows it as one Close. Publish gates apply, and a refusal
+  never names fields the decider's role can't read.
+- `keepHeldEntryUnpublished` closes it as `kept`, and is a `409` when the entry is live again
+  (naming the newer version when it is one): Keep never takes live content down.
+- A lost race at commit (`TransactionConflictError`: another decision) answers `409`; inside a
+  unit the hold's compare-and-set is always queued, so the losing unit's publish or unpublish never
+  commits. The publish and unpublish themselves are not compare-and-set against the entry's version
+  (the store has no such guard), so an edit committing between a decision's read and its commit is
+  not caught there. Each decision is recorded in the agent ledger (`republished by … over
+  moderation (flagged: …)`, `kept unpublished by …`, naming the key or OAuth client it came
+  through, with the reason when given) and, as a request, in the audit log.
+- HTTP: `GET …/moderation-holds?status=open` (`preview:read`), `POST …/moderation-holds/:id/republish`
+  and `POST …/moderation-holds/:id/keep` (`content:publish`, and publish on the type for a role),
+  each with an optional `{ note }`. MCP: `moderation_hold_list` and `moderation_hold_keep`;
+  Republish has no tool, a deliberate exception to both surfaces (see [MCP](./mcp.md#tools)).
 
 ## Human-in-the-loop reviews
 
@@ -899,7 +945,7 @@ the entry it targets. Reviewers list and decide them on both surfaces:
   `POST …/agent-reviews/:id/reject` (`preview:read` to list, `content:write` to decide).
   A key whose role grants only some content types sees only the reviews of entries it may read,
   with denied fields masked out of `proposed`. `GET …/approvals/count` counts what waits
-  (pending reviews and workflow tasks) without listing it.
+  (pending reviews, workflow tasks and open moderation holds) without listing it.
 - MCP: `agent_review_list`, `agent_review_approve`, `agent_review_reject`, `approvals_count`.
 
 Approval applies the proposed values as a new draft version through the normal update

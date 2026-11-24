@@ -855,14 +855,25 @@ describe('finishing a run', () => {
     run();
     await press('Publish…');
     await press('Publish 2 entries');
-    expect(
-      await screen.findByText(/^Published 2 entries\. Any more were loaded since/),
-    ).toBeTruthy();
+    expect(await screen.findByText(/^Published 2 entries\. More were loaded since/)).toBeTruthy();
     expect(client.publishMigrationPages).toHaveBeenCalledTimes(2);
     client.getMigrationRun.mockRejectedValueOnce(refusal(500, 'x', 'x'));
     await press('Publish…');
     expect(await screen.findByText(/nothing was asked/)).toBeTruthy();
     expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('claims no newcomers when the last batch was full and nothing is left', async () => {
+    loaded = 2;
+    client.publishMigrationPages.mockImplementationOnce(async () => {
+      loaded = 0;
+      return published({ published: 2, next: 'a' });
+    });
+    run();
+    await press('Publish…');
+    await press('Publish 2 entries');
+    expect(await screen.findByText('Published 2 entries.')).toBeTruthy();
+    expect(screen.queryByText(/loaded since/)).toBeNull();
   });
 
   it('asks again with the release a failed add chose', async () => {

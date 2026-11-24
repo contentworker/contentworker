@@ -337,7 +337,8 @@ async function consumeAssetEvents(
  * Sized against the per-instance STEP ceiling (~1024 on Workflows). Worst case
  * per entry is ~13 steps: enrich (loadEntry, generateFields, record,
  * createReview) + moderate (loadEntry, classify, record) + one recordRun per
- * workflow + the watcher start + the retract path (retractEntry, recordRun).
+ * workflow + the watcher start + the retract path (retractEntry, recordRun), or
+ * on a clean verdict the one clearHold step in its place.
  * 25 × 13 ≈ 325 leaves room for a future activity without silently pushing an
  * instance over the limit — and still cuts instance count 25×, so 100k
  * published entries cost ~4k instances instead of 100k+.

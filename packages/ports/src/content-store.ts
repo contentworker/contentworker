@@ -43,6 +43,7 @@ import type {
   LocalizedValue,
   MemberInvite,
   Menu,
+  ModerationHold,
   OAuthClient,
   OAuthGrantKind,
   OAuthGrantStatus,
@@ -146,6 +147,7 @@ export interface ContentStore {
   readonly scheduledActions: ScheduledActionRepo;
   readonly agentSchedules: AgentScheduleRepo;
   readonly agentReviews: AgentReviewRepo;
+  readonly moderationHolds: ModerationHoldRepo;
   readonly comments: CommentRepo;
   readonly tasks: TaskRepo;
   readonly workflows: WorkflowRepo;
@@ -1550,6 +1552,8 @@ export interface ContentStoreTx {
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;
   readonly workflowTasks: WorkflowTaskRepo;
+  /** A hold opens with the unpublish that takes its entry offline, and closes with the republish. */
+  readonly moderationHolds: ModerationHoldRepo;
   /** Read-only: a publish inside the unit checks the workflows gating it. */
   readonly workflowGraphs: Pick<WorkflowGraphRepo, 'listPublishGates'>;
   readonly outbox: OutboxRepo;
@@ -1674,6 +1678,52 @@ export interface AgentReviewRepo {
   /** Compensation: rolls the apply marker back when the apply itself threw,
    *  so the proposal stays re-drivable instead of falsely recorded applied. */
   clearApplied(scope: Scope, id: string): Promise<void>;
+}
+
+/** Entries the moderation agent took offline, and what a person decided about each. */
+export interface ModerationHoldRepo {
+  /**
+   * Opens a hold. False when the entry already has an open one (at most one per entry). Inside a
+   * unit of work the insert is always queued, and an open hold (committed before, or by another
+   * writer first) aborts the unit at commit (`TransactionConflictError`); the answer is then only
+   * what committed state said.
+   */
+  create(scope: Scope, hold: ModerationHold): Promise<boolean>;
+  get(scope: Scope, id: string): Promise<ModerationHold | null>;
+  /**
+   * Newest first; `status` and `entryId` narrow. At most `limit` (default 100, cap 200). An open
+   * hold whose entry is live at a newer version than `entryVersion` comes back `stale: true`.
+   */
+  list(
+    scope: Scope,
+    query?: { status?: ModerationHold['status']; entryId?: string; limit?: number },
+  ): Promise<ModerationHold[]>;
+  /** Open holds, counted per content type (uncapped, unlike `list`). */
+  countOpen(scope: Scope): Promise<PendingCount[]>;
+  /**
+   * Points an open hold at the version a later flag judged. False when it is no longer open; in a
+   * unit of work one that isn't open at commit aborts the unit (`TransactionConflictError`).
+   */
+  refresh(
+    scope: Scope,
+    id: string,
+    to: { entryVersion: number; flags: readonly string[]; contentTypeApiId: string },
+  ): Promise<boolean>;
+  /**
+   * Compare-and-set open → decided. False when it was no longer open (someone decided first); in
+   * a unit of work the update is always queued, and a hold not open at commit aborts the unit
+   * (`TransactionConflictError`), with every write it rides with.
+   */
+  decide(
+    scope: Scope,
+    id: string,
+    decision: {
+      status: 'republished' | 'kept' | 'cleared';
+      decidedAt: string;
+      decidedBy: string;
+      note?: string;
+    },
+  ): Promise<boolean>;
 }
 
 export interface AgentScheduleRepo {

@@ -28,7 +28,10 @@ export interface ConsumeDeps extends DispatchDeps {
  * queue for retry/dead-letter. Delivery is at-least-once — relayOutbox claims
  * rows (a lease claim) so duplicates are rare, but consumers must tolerate
  * redelivery: webhook receivers dedupe on the event id, and agent runs are
- * recorded proposals, never direct state changes.
+ * recorded proposals, with one exception: a moderation hold unpublishes the
+ * entry. That change is idempotent (a redelivery finds it already offline and
+ * opens no second hold), and the hold retries a lost race itself, so a
+ * transient conflict there never redelivers the event and re-runs the models.
  */
 export async function consumeEvent(
   ctx: AppContext,

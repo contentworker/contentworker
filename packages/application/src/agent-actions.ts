@@ -6,7 +6,7 @@ import {
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
-import type { AIProvider, ModelTier } from '@contentworker/ports';
+import { type AIProvider, type ModelTier, TransactionConflictError } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
 import { conforms } from './ai-json';
@@ -15,7 +15,11 @@ import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { aiCapability, requireAiCapability } from './ai-settings';
 import { type EntryAiOptions, readEntryForAi } from './content-ai';
 import type { AppContext } from './context';
-import { unpublishEntry } from './publishing';
+import {
+  clearModerationHold,
+  holdEntryForModeration,
+  type ModerationHoldOutcome,
+} from './moderation-holds';
 import { createTask } from './tasks';
 
 /**
@@ -70,6 +74,10 @@ export interface AgentRunOutcome {
   readonly usage: { inputTokens: number; outputTokens: number };
   /** Persisted review awaiting a human decision (when needs_review). */
   readonly reviewId?: string;
+  /** The categories moderation flagged (when held). */
+  readonly flags?: readonly string[];
+  /** The entry's `currentVersion` moderation read, when it ran. */
+  readonly judgedVersion?: number;
 }
 
 export type FindingSeverity = 'info' | 'warning' | 'error';
@@ -300,7 +308,23 @@ export interface PublishAgentRunSummary {
   readonly status: AgentRunOutcome['status'];
   readonly decisions: readonly string[];
   readonly usage: { inputTokens: number; outputTokens: number };
+  readonly flags?: readonly string[];
+  readonly judgedVersion?: number;
 }
+
+/** Attempts at the hold after a held verdict, when a concurrent write wins its commit. */
+const HOLD_ATTEMPTS = 3;
+
+/**
+ * The ledger line after a held verdict, by what the hold did; none when the entry was already out
+ * of delivery or gone. Shared with the durable pass (`@contentworker/agent-runtime`).
+ */
+export const HOLD_NOTES: Readonly<Record<ModerationHoldOutcome, string | null>> = {
+  held: 'retracted from delivery pending review',
+  overridden: 'left published: a person republished this version over moderation',
+  not_published: null,
+  gone: null,
+};
 
 /**
  * Runs the configured agents against a newly published entry and records each
@@ -338,25 +362,44 @@ export async function runPublishAgents(
       decisions: r.decisions,
       usage: r.usage,
     });
-    runs.push({ workflow, status: r.status, decisions: r.decisions, usage: r.usage });
+    runs.push({
+      workflow,
+      status: r.status,
+      decisions: r.decisions,
+      usage: r.usage,
+      ...(r.flags ? { flags: r.flags } : {}),
+      ...(r.judgedVersion !== undefined ? { judgedVersion: r.judgedVersion } : {}),
+    });
   }
 
-  // Moderation runs post-publish (agents dispatch off entry.published), so a
-  // flagged entry is briefly live. Retract it from the delivery read model as
-  // soon as the classifier holds it, instead of only recording an advisory note,
-  // so unsafe content does not stay published. (A synchronous pre-publish gate
-  // remains a follow-up.)
-  if (runs.some((r) => r.workflow === 'moderate' && r.status === 'held')) {
-    await unpublishEntry(ctx, scope, entryId).catch(() => {
-      /* already unpublished or gone — nothing to retract */
-    });
-    await recordAgentRun(ctx, scope, {
-      workflow: 'moderate',
-      entryId,
-      status: 'held',
-      decisions: ['retracted from delivery pending review'],
-      usage: { inputTokens: 0, outputTokens: 0 },
-    });
+  // Moderation runs post-publish (agents dispatch off entry.published), so a flagged entry is
+  // briefly live. Take it out of delivery as soon as the classifier holds it and open a hold in
+  // Approvals for a person to decide; a clean verdict on a later version closes an open one.
+  const moderated = runs.find((r) => r.workflow === 'moderate');
+  if (moderated?.status === 'held') {
+    // Only the hold is retried on a lost race: an error escaping here would redeliver the event
+    // and run (and bill) enrich and moderation again, recording each run twice.
+    const hold = { flags: moderated.flags ?? [], judgedVersion: moderated.judgedVersion };
+    let outcome: ModerationHoldOutcome | undefined;
+    for (let attempt = 1; outcome === undefined; attempt++) {
+      try {
+        outcome = await holdEntryForModeration(ctx, scope, entryId, hold);
+      } catch (err) {
+        if (!(err instanceof TransactionConflictError) || attempt >= HOLD_ATTEMPTS) throw err;
+      }
+    }
+    const note = HOLD_NOTES[outcome];
+    if (note) {
+      await recordAgentRun(ctx, scope, {
+        workflow: 'moderate',
+        entryId,
+        status: 'held',
+        decisions: [note],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      });
+    }
+  } else if (moderated?.status === 'completed') {
+    await clearModerationHold(ctx, scope, entryId, moderated.judgedVersion);
   }
   return runs;
 }

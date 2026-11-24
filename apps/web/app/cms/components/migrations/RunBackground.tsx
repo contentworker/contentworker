@@ -113,7 +113,7 @@ export function RunBackground({
     : [];
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-3">
       <p className="max-w-measure text-muted-foreground text-sm">
         Start drives the whole run for you in the background, as you, and pauses for each template’s
         approval and for the go-ahead to publish.

@@ -227,7 +227,7 @@ export function RunSteps({
   const describe = (step: StepId) => `${id}-${step}-why`;
 
   return (
-    <div className="space-y-3 p-4 pt-0">
+    <div className="flex flex-col gap-3 p-3">
       {notice ? (
         <StepNotice
           tone={notice.kind === 'unavailable' ? 'calm' : 'bad'}
@@ -403,7 +403,7 @@ export function RunSteps({
         ref={status}
         tabIndex={-1}
         role="status"
-        className="min-h-4 text-muted-foreground text-xs outline-none"
+        className="min-h-4 px-1 text-muted-foreground text-xs outline-none empty:sr-only"
       >
         {looping
           ? `Fetching… ${count(done)} of ${count(pages.total)} pages${
@@ -412,7 +412,7 @@ export function RunSteps({
           : said}
       </p>
       {canRun === false ? (
-        <p className="text-muted-foreground text-xs">
+        <p className="px-1 text-muted-foreground text-xs">
           Running a step takes migration:run. You can follow the run here.
         </p>
       ) : null}

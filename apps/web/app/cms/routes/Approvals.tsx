@@ -1,20 +1,23 @@
-import type { AgentReview, ContentType, WorkflowTask } from '@contentworker/domain';
+import type { AgentReview, ContentType, ModerationHold, WorkflowTask } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { Textarea } from '@contentworker/ui/textarea';
-import { Check, Stamp, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Check, EyeOff, Send, Stamp, X } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { type EntryRef, entryPath } from '~/cms/components/dashboard/entry-titles';
 import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
 import { type FieldChange, FieldChanges } from '~/cms/components/EntryDiff';
+import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { EmptyState, PageHeader, Section } from '~/cms/components/page';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
 import { Mark } from '~/components/mark';
 import {
   APPROVALS_COUNT_KEY,
+  moderationFlagsLabel,
   usePendingAgentReviews,
+  usePendingModerationHolds,
   usePendingWorkflowTasks,
 } from '../lib/approvals';
 import { useClient, useLocalRun } from '../lib/client-context';
@@ -24,22 +27,25 @@ import { useContentTypesQuery, useInvalidate } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
 /**
- * The Approvals inbox: what is waiting on a person in this space, oldest first. Two kinds:
- * workflow steps paused for a human decision (an approval or review node), and agent proposals
- * (an enrich, curate or repurpose run that ended `needs_review`). Each can be decided here; an
- * event wait is listed so it isn't forgotten, but only the event itself can move it on. A
- * proposal is shown as a diff of the entry's current values against the proposed ones, so
- * nothing is applied unseen.
+ * The Approvals inbox: what is waiting on a person in this space, oldest first. Three kinds:
+ * workflow steps paused for a human decision (an approval or review node), agent proposals (an
+ * enrich, curate or repurpose run that ended `needs_review`), and entries the moderation agent
+ * took offline (a hold). Each can be decided here; an event wait is listed so it isn't forgotten,
+ * but only the event itself can move it on. A proposal is shown as a diff of the entry's current
+ * values against the proposed ones, so nothing is applied unseen.
  */
 export function Approvals() {
   const tasks = usePendingWorkflowTasks();
   const reviews = usePendingAgentReviews();
+  const holds = usePendingModerationHolds();
   // The shell's count is its own query: whenever these lists refresh, it does too, so the
   // badge never disagrees with the inbox it opens.
   const invalidateCount = useInvalidate();
   useEffect(() => {
-    if (tasks.dataUpdatedAt || reviews.dataUpdatedAt) void invalidateCount(APPROVALS_COUNT_KEY);
-  }, [tasks.dataUpdatedAt, reviews.dataUpdatedAt, invalidateCount]);
+    if (tasks.dataUpdatedAt || reviews.dataUpdatedAt || holds.dataUpdatedAt) {
+      void invalidateCount(APPROVALS_COUNT_KEY);
+    }
+  }, [tasks.dataUpdatedAt, reviews.dataUpdatedAt, holds.dataUpdatedAt, invalidateCount]);
   const types = useContentTypesQuery().data;
   const taskItems = useMemo(
     () =>
@@ -53,19 +59,25 @@ export function Approvals() {
       [...(reviews.data ?? [])].sort((a, b) => (toMs(a.createdAt) ?? 0) - (toMs(b.createdAt) ?? 0)),
     [reviews.data],
   );
+  const holdItems = useMemo(
+    () =>
+      [...(holds.data ?? [])].sort((a, b) => (toMs(a.createdAt) ?? 0) - (toMs(b.createdAt) ?? 0)),
+    [holds.data],
+  );
   // Every entry on the page is named by its title, from one batched lookup rather than a request
   // per row. Reviews name only the entry, so its record also supplies the type and current values.
   const entryIds = useMemo(
-    () => [...taskItems.map((t) => t.entryId), ...reviewItems.map((r) => r.entryId)],
-    [taskItems, reviewItems],
+    () => [
+      ...taskItems.map((t) => t.entryId),
+      ...reviewItems.map((r) => r.entryId),
+      ...holdItems.map((h) => h.entryId),
+    ],
+    [taskItems, reviewItems, holdItems],
   );
   const lookup = useEntriesById(entryIds);
-  const total = taskItems.length + reviewItems.length;
-  const loading = tasks.isPending || reviews.isPending;
+  const total = taskItems.length + reviewItems.length + holdItems.length;
+  const loading = tasks.isPending || reviews.isPending || holds.isPending;
 
-  // What is waiting comes first: a settled, empty section follows the other, so on a phone the
-  // first decision opens on the first screen.
-  const stepsSettledEmpty = !tasks.isPending && taskItems.length === 0;
   const steps = (
     <Section
       title="Workflow steps"
@@ -98,12 +110,7 @@ export function Approvals() {
       description={
         <>
           Needs review: an agent proposed changes to the entry, and nothing is applied until someone
-          approves them. Moderation holds aren’t listed here: a held entry was unpublished, and its
-          run is in{' '}
-          <Link to="/settings/ai" className="text-link underline underline-offset-2">
-            Settings → AI
-          </Link>
-          .
+          approves them.
         </>
       }
       flush
@@ -134,6 +141,41 @@ export function Approvals() {
     </Section>
   );
 
+  const held = (
+    <Section
+      title="Held by moderation"
+      description="Unpublished: the moderation agent flagged the entry after it went live and took it offline. It stays offline until someone republishes it or keeps it unpublished."
+      flush
+    >
+      {holds.isPending ? (
+        <RowsSkeleton label="Loading moderation holds" />
+      ) : holdItems.length ? (
+        <ul className="divide-y">
+          {holdItems.map((h) => (
+            <HoldRow
+              key={h.id}
+              hold={h}
+              entry={lookup.refs.get(h.entryId)}
+              typeName={types?.find((t) => t.apiId === h.contentTypeApiId)?.name}
+              resolving={lookup.resolving(h.entryId)}
+            />
+          ))}
+        </ul>
+      ) : (
+        <p className="px-5 py-4 text-muted-foreground text-sm">No entry is held by moderation.</p>
+      )}
+    </Section>
+  );
+
+  // What is waiting comes first: a settled, empty section follows the ones with items (in their
+  // own order), so on a phone the first decision opens on the first screen.
+  const sections = [
+    { key: 'steps', node: steps, empty: !tasks.isPending && taskItems.length === 0 },
+    { key: 'proposals', node: proposals, empty: !reviews.isPending && reviewItems.length === 0 },
+    { key: 'held', node: held, empty: !holds.isPending && holdItems.length === 0 },
+  ];
+  const ordered = [...sections.filter((x) => !x.empty), ...sections.filter((x) => x.empty)];
+
   return (
     <div>
       <PageHeader
@@ -141,28 +183,20 @@ export function Approvals() {
         subtitle={
           !loading && total
             ? `${plural(total, 'item')} waiting on a decision, oldest first.`
-            : 'Workflow steps and agent proposals waiting on a decision, oldest first.'
+            : 'Workflow steps, agent proposals and moderation holds waiting on a decision, oldest first.'
         }
       />
       {!loading && total === 0 ? (
         <EmptyState
           icon={Stamp}
           title="Nothing is waiting on you"
-          description="When a workflow pauses for an approval, or an agent proposes changes to an entry, it shows up here."
+          description="When a workflow pauses for an approval, an agent proposes changes to an entry, or moderation takes an entry offline, it shows up here."
         />
       ) : (
         <div className="grid gap-6">
-          {stepsSettledEmpty ? (
-            <>
-              {proposals}
-              {steps}
-            </>
-          ) : (
-            <>
-              {steps}
-              {proposals}
-            </>
-          )}
+          {ordered.map((x) => (
+            <Fragment key={x.key}>{x.node}</Fragment>
+          ))}
         </div>
       )}
     </div>
@@ -440,6 +474,120 @@ function ReviewRow({
           <X aria-hidden="true" /> Reject
         </Button>
       </div>
+    </li>
+  );
+}
+
+function HoldRow({
+  hold,
+  entry,
+  typeName,
+  resolving,
+}: {
+  hold: ModerationHold;
+  entry: EntryRef | undefined;
+  /** The held type's name, for when the entry itself can't be named. */
+  typeName: string | undefined;
+  resolving: boolean;
+}) {
+  const { client } = useClient();
+  const invalidate = useInvalidate();
+  const toast = useToast();
+  const { busy, run } = useLocalRun();
+  // The reason typed into Republish's confirm, and only for it: backing out drops it, and Keep
+  // unpublished never sends it.
+  const [note, setNote] = useState('');
+  const name = entry?.title;
+  const quoted = name ? `“${name}”` : 'the entry';
+
+  const decide = (republish: boolean) =>
+    run(async () => {
+      const why = note.trim() || undefined;
+      await (republish
+        ? client.republishModerationHold(hold.id, why)
+        : client.keepModerationHold(hold.id));
+      setNote('');
+      toast.success(republish ? `Republished ${quoted}` : `Kept ${quoted} unpublished`);
+      await invalidate(['moderation-holds'], ['entry'], ['entries'], APPROVALS_COUNT_KEY);
+    });
+
+  // A stale hold closes through Republish's own path, which publishes nothing once a newer version
+  // is live.
+  const close = () =>
+    run(async () => {
+      await client.republishModerationHold(hold.id);
+      toast.success(`Closed the hold on ${quoted}`);
+      await invalidate(['moderation-holds'], ['entry'], ['entries'], APPROVALS_COUNT_KEY);
+    });
+
+  return (
+    <li
+      className="grid gap-3 px-5 py-4"
+      aria-label={name ? `Held: ${name}` : 'Entry held by moderation'}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <div className="min-w-0">
+          <h3 className="font-medium text-sm">
+            {entry ? (
+              <Link to={entryPath(entry)} className="underline-offset-2 hover:underline">
+                {entry.title}
+              </Link>
+            ) : (
+              <EntryName entry={undefined} resolving={resolving} />
+            )}
+          </h3>
+          <p className="text-muted-foreground text-xs">
+            {entry?.typeName ?? typeName ?? humanize(hold.contentTypeApiId)} · held by the
+            moderation agent <Ago at={hold.createdAt} />
+          </p>
+        </div>
+        <ToneBadge tone="ai" label="Held" />
+      </div>
+      <p className="max-w-measure text-sm">
+        <span className="text-muted-foreground">Flagged for </span>
+        {moderationFlagsLabel(hold.flags)}
+      </p>
+      {hold.stale ? (
+        <>
+          {/* A newer version went live since: nothing to put back or keep down, only to close. */}
+          <p className="text-muted-foreground text-sm">A newer version is live</p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => void close()}>
+              <Check aria-hidden="true" /> Close
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {/* Republishing overrides the agent, so it asks first; keeping it offline doesn't. */}
+          <ConfirmButton
+            message={`Republish ${quoted}?`}
+            note="It goes back to delivery as moderation held it, over the agent’s flag. Your name is kept with the decision."
+            details={
+              <Textarea
+                aria-label={`Why republish ${quoted}`}
+                placeholder="Why (optional, kept with the decision)"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+            }
+            confirmLabel="Republish"
+            tone="default"
+            busy={busy}
+            onConfirm={() => void decide(true)}
+            onCancel={() => setNote('')}
+          >
+            {(ask) => (
+              <Button size="sm" disabled={busy || resolving} onClick={ask}>
+                <Send aria-hidden="true" /> Republish
+              </Button>
+            )}
+          </ConfirmButton>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void decide(false)}>
+            <EyeOff aria-hidden="true" /> Keep unpublished
+          </Button>
+        </div>
+      )}
     </li>
   );
 }

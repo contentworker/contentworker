@@ -1,7 +1,7 @@
-// The Approvals inbox: pending workflow steps and agent proposals, decided in place, through the
-// real Management client against a mocked same-origin fetch.
+// The Approvals inbox: pending workflow steps, agent proposals and moderation holds, decided in
+// place, through the real Management client against a mocked same-origin fetch.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import { usePendingApprovalsCount } from '~/cms/lib/approvals';
@@ -66,6 +66,17 @@ const orphan = {
   createdAt: new Date(Date.now() - 200_000).toISOString(),
 };
 
+// An entry the moderation agent took offline.
+const hold = {
+  id: 'hold-1',
+  entryId: 'entry-3',
+  contentTypeApiId: 'post',
+  entryVersion: 2,
+  flags: ['hate', 'house_rules'],
+  status: 'open',
+  createdAt: new Date(Date.now() - 100_000).toISOString(),
+};
+
 const post = {
   apiId: 'post',
   name: 'Blog post',
@@ -107,12 +118,26 @@ const entries = [
     version: 1,
     fields: { title: { 'en-US': 'Winter menu' }, summary: { 'en-US': 'Old summary' } },
   },
+  {
+    id: 'entry-3',
+    contentType: 'post',
+    status: 'draft',
+    version: 2,
+    fields: { title: { 'en-US': 'Harbour opening' } },
+  },
 ];
 
 function setup(
-  opts: { hangLookupAfterApprove?: boolean; beside?: React.ReactNode; noTasks?: boolean } = {},
+  opts: {
+    hangLookupAfterApprove?: boolean;
+    beside?: React.ReactNode;
+    noTasks?: boolean;
+    noHolds?: boolean;
+    stale?: boolean;
+  } = {},
 ) {
   let approved = false;
+  let decidedHold = false;
   const calls: { method: string; url: string; body?: unknown }[] = [];
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -121,11 +146,19 @@ function setup(
     const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
     if (url === '/spaces') return json({ items: [{ id: 'space-1', name: 'Space 1' }] });
     if (url === `${BASE}/approvals/count`)
-      return json({ workflowTasks: 1, agentReviews: 2, total: 3 });
+      return json({ workflowTasks: 1, agentReviews: 2, moderationHolds: 1, total: 4 });
     if (url.startsWith(`${BASE}/workflow-tasks?`))
       return json({ items: opts.noTasks ? [] : [task] });
     if (url.startsWith(`${BASE}/agent-reviews?`))
       return json({ items: approved ? [orphan] : [review, orphan] });
+    if (url.startsWith(`${BASE}/moderation-holds?`))
+      return json({
+        items: opts.noHolds || decidedHold ? [] : [opts.stale ? { ...hold, stale: true } : hold],
+      });
+    if (url.startsWith(`${BASE}/moderation-holds/`)) {
+      decidedHold = true;
+      return json({ hold: { ...hold, status: 'kept' }, published: false });
+    }
     if (url === `${BASE}/content-types`) return json({ items: [post, article] });
     // Every row's entry in one request: the preview list filtered by `sys.id[in]`.
     if (url.startsWith('/preview/space-1/main/entries?')) {
@@ -177,18 +210,16 @@ describe('Approvals', () => {
     const counts = () => calls.filter((c) => c.url === `${BASE}/approvals/count`).length;
     // Once for the badge itself, once more after the lists arrived.
     await waitFor(() => expect(counts()).toBeGreaterThanOrEqual(2));
-    expect(screen.getByTestId('badge').textContent).toBe('3');
+    expect(screen.getByTestId('badge').textContent).toBe('4');
   });
 
-  it('says in a line what each list’s state means, and where moderation holds are', async () => {
+  it('says in a line what each list’s state means', async () => {
     setup();
     await screen.findByRole('listitem', { name: 'Legal sign-off' });
     expect(screen.getByText(/^Pending: the workflow is paused here/)).toBeTruthy();
     expect(screen.getByText(/Needs review: an agent proposed changes/)).toBeTruthy();
-    expect(screen.getByText(/Moderation holds aren’t listed here/)).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Settings → AI' }).getAttribute('href')).toBe(
-      '/settings/ai',
-    );
+    expect(screen.getByText(/^Unpublished: the moderation agent flagged the entry/)).toBeTruthy();
+    expect(screen.queryByText(/Moderation holds aren’t listed here/)).toBeNull();
   });
 
   it('names every entry by its title, from one batched lookup', async () => {
@@ -201,13 +232,14 @@ describe('Approvals', () => {
     const lookups = calls.filter((c) => c.url.startsWith('/preview/space-1/main/entries?'));
     expect(lookups).toHaveLength(1);
     expect(new URL(lookups[0]!.url, 'http://x').searchParams.get('sys.id[in]')).toBe(
-      'entry-1,entry-2,entry-gone',
+      'entry-1,entry-2,entry-3,entry-gone',
     );
     // Up to the API's cap of 200, so the shell's count reads 99+ past it, not the default 50.
     expect(calls.some((c) => c.url === `${BASE}/workflow-tasks?status=pending&limit=200`)).toBe(
       true,
     );
     expect(calls.some((c) => c.url === `${BASE}/agent-reviews?status=pending`)).toBe(true);
+    expect(calls.some((c) => c.url === `${BASE}/moderation-holds?status=open`)).toBe(true);
     // No id is ever shown as a name.
     await proposalFor('Proposal for Winter menu');
     expect(screen.queryByText(/entry-\d|entry-gone/)).toBeNull();
@@ -309,6 +341,100 @@ describe('Approvals', () => {
   });
 });
 
+describe('Held by moderation', () => {
+  const heldRow = () => screen.findByRole('listitem', { name: 'Held: Harbour opening' });
+
+  it('names the entry, its type, what was flagged and when, under a Held stamp', async () => {
+    setup();
+    const row = await heldRow();
+    expect(within(row).getByRole('link', { name: 'Harbour opening' }).getAttribute('href')).toBe(
+      '/content/post/entry-3',
+    );
+    expect(within(row).getByText(/Blog post · held by the moderation agent/)).toBeTruthy();
+    expect(within(row).getByText('Hate, House rules')).toBeTruthy();
+    expect(within(row).getByText('Held')).toBeTruthy();
+  });
+
+  it('asks before republishing, and sends the reason with the decision', async () => {
+    const calls = setup();
+    const row = await heldRow();
+    const republish = within(row).getByRole('button', { name: 'Republish' });
+    await waitFor(() => expect((republish as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(republish);
+    const confirm = within(row).getByRole('alertdialog', { name: 'Republish “Harbour opening”?' });
+    // Nothing is sent until the confirm is answered; the safe choice has focus.
+    expect(calls.some((c) => c.url.includes('/moderation-holds/hold-1/'))).toBe(false);
+    expect(document.activeElement?.textContent).toBe('Cancel');
+    fireEvent.change(within(confirm).getByRole('textbox', { name: /Why republish/ }), {
+      target: { value: 'Quoted in a report' },
+    });
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Republish' }));
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        method: 'POST',
+        url: `${BASE}/moderation-holds/hold-1/republish`,
+        body: { note: 'Quoted in a report' },
+      }),
+    );
+  });
+
+  it('drops a reason typed into a confirm backed out of, and never sends it with Keep', async () => {
+    const calls = setup();
+    const row = await heldRow();
+    const republish = within(row).getByRole('button', { name: 'Republish' });
+    await waitFor(() => expect((republish as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(republish);
+    const reason = () => within(row).getByRole('textbox', { name: /Why republish/ });
+    fireEvent.change(reason(), { target: { value: 'Meant for Republish only' } });
+    fireEvent.click(within(row).getByRole('button', { name: 'Cancel' }));
+    // Asked again, the confirm starts empty.
+    fireEvent.click(within(row).getByRole('button', { name: 'Republish' }));
+    expect((reason() as HTMLTextAreaElement).value).toBe('');
+    fireEvent.change(reason(), { target: { value: 'Typed, then Keep pressed' } });
+    fireEvent.click(within(row).getByRole('button', { name: 'Keep unpublished' }));
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        method: 'POST',
+        url: `${BASE}/moderation-holds/hold-1/keep`,
+        body: {},
+      }),
+    );
+  });
+
+  it('keeps an entry unpublished in one press, and the row leaves', async () => {
+    const calls = setup();
+    const row = await heldRow();
+    fireEvent.click(within(row).getByRole('button', { name: 'Keep unpublished' }));
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        method: 'POST',
+        url: `${BASE}/moderation-holds/hold-1/keep`,
+        body: {},
+      }),
+    );
+    await screen.findByText('No entry is held by moderation.');
+  });
+});
+
+describe('A stale moderation hold', () => {
+  it('says a newer version is live and offers only Close, which closes through Republish', async () => {
+    const calls = setup({ stale: true });
+    const row = await screen.findByRole('listitem', { name: 'Held: Harbour opening' });
+    expect(within(row).getByText('A newer version is live')).toBeTruthy();
+    expect(within(row).queryByRole('button', { name: 'Republish' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: 'Keep unpublished' })).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: 'Close' }));
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        method: 'POST',
+        url: `${BASE}/moderation-holds/hold-1/republish`,
+        body: {},
+      }),
+    );
+    await screen.findByText('No entry is held by moderation.');
+  });
+});
+
 describe('Approvals order', () => {
   const headings = () =>
     screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent?.trim());
@@ -320,11 +446,20 @@ describe('Approvals order', () => {
     expect(order.indexOf('Agent proposals')).toBeLessThan(order.indexOf('Workflow steps'));
   });
 
-  it('keeps workflow steps first while one is waiting', async () => {
+  it('keeps workflow steps first while one is waiting, and holds after proposals', async () => {
     setup();
     // The waiting step's entry, named once the lists and the lookup have loaded.
     await screen.findAllByText('Spring launch');
-    const order = headings();
-    expect(order.indexOf('Workflow steps')).toBeLessThan(order.indexOf('Agent proposals'));
+    expect(headings()).toEqual(['Workflow steps', 'Agent proposals', 'Held by moderation']);
+  });
+
+  it('puts an empty moderation list last, and a waiting hold before empty steps', async () => {
+    setup({ noHolds: true });
+    await screen.findByText('No entry is held by moderation.');
+    expect(headings().at(-1)).toBe('Held by moderation');
+    cleanup();
+    setup({ noTasks: true });
+    await screen.findByRole('listitem', { name: 'Held: Harbour opening' });
+    expect(headings()).toEqual(['Agent proposals', 'Held by moderation', 'Workflow steps']);
   });
 });

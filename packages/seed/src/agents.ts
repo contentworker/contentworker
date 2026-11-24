@@ -1,21 +1,35 @@
 import {
   createAgentReview,
   createAgentSchedule,
+  holdEntryForModeration,
   listAgentReviews,
   listAgentRuns,
   listAgentSchedules,
+  listModerationHolds,
+  recordAgentRun,
 } from '@contentworker/application';
 import { logger } from '@contentworker/telemetry';
 import { backdated, localized, pick, prose, WORDS } from './helpers';
 import type { SeedRun } from './types';
 
+/** What the two seeded moderation holds were flagged for, in the classifier's category ids. */
+const HELD_FLAGS: readonly (readonly string[])[] = [
+  ['harassment'],
+  ['house_rules', 'other_unsafe'],
+];
+
 /**
  * Agent observability data: 30 days of deterministic runs (usage/cost charts),
- * pending human-in-the-loop reviews, and recurring schedules. Runs are written
- * through the store repo (there is deliberately no public "create run" API);
- * reviews and schedules go through their use-cases.
+ * pending human-in-the-loop reviews, two entries held by moderation, and recurring
+ * schedules. Runs are written through the store repo (there is deliberately no
+ * public "create run" API); reviews, holds and schedules go through their use-cases.
  */
-export async function seedAgents(run: SeedRun, articleIds: readonly string[]): Promise<void> {
+export async function seedAgents(
+  run: SeedRun,
+  articleIds: readonly string[],
+  /** Published articles; two deep in the set are taken offline by moderation. */
+  publishedArticleIds: readonly string[] = [],
+): Promise<void> {
   const { ctx, scope, locale } = run;
 
   if ((await listAgentRuns(ctx, scope, { limit: 1 })).length === 0) {
@@ -32,6 +46,35 @@ export async function seedAgents(run: SeedRun, articleIds: readonly string[]): P
         notes: [note],
       });
     }
+  }
+
+  // Two articles moderation took offline, as the on-publish pass leaves them: unpublished, an open
+  // hold each in Approvals, and the run in the ledger. Deep in the published set, clear of the
+  // scheduled unpublish (index 20) and the entries the review and workflow demos use.
+  const held = [publishedArticleIds[30], publishedArticleIds[31]].filter(
+    (id): id is string => id !== undefined,
+  );
+  if (held.length && (await listModerationHolds(ctx, scope, { limit: 1 })).length === 0) {
+    for (const [i, entryId] of held.entries()) {
+      const flags = HELD_FLAGS[i] ?? [];
+      await recordAgentRun(ctx, scope, {
+        workflow: 'moderate',
+        entryId,
+        status: 'held',
+        decisions: [`flagged: ${flags.join(', ')}`],
+        usage: { inputTokens: 380, outputTokens: 12 },
+      });
+      if ((await holdEntryForModeration(ctx, scope, entryId, { flags })) === 'held') {
+        await recordAgentRun(ctx, scope, {
+          workflow: 'moderate',
+          entryId,
+          status: 'held',
+          decisions: ['retracted from delivery pending review'],
+          usage: { inputTokens: 0, outputTokens: 0 },
+        });
+      }
+    }
+    logger.info({ holds: held.length }, 'seed: held sample entries for moderation');
   }
 
   if ((await listAgentSchedules(ctx, scope)).length === 0) {

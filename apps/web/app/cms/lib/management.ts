@@ -62,6 +62,7 @@ import type {
   MigrationSourceInput,
   MigrationTemplate,
   MigrationTrySummary,
+  ModerationHold,
   Promotion,
   PromotionStatus,
   Redirect,
@@ -1729,6 +1730,13 @@ export function apiIssues(err: unknown): { field: string; message: string }[] {
       ? [{ field: issue.field, message: issue.message }]
       : [],
   );
+}
+
+/** What a decision on a moderation hold answers (`…/moderation-holds/:id/{republish,keep}`). */
+export interface ModerationDecision {
+  readonly hold: ModerationHold;
+  /** True when the decision published the entry. */
+  readonly published: boolean;
 }
 
 /**
@@ -3984,9 +3992,37 @@ export function createManagementClient(
     countPendingApprovals(): Promise<{
       workflowTasks: number;
       agentReviews: number;
+      moderationHolds: number;
       total: number;
     }> {
       return req('GET', `${mgmt}/approvals/count`);
+    },
+    // --- moderation holds (entries the moderation agent took offline) ------
+    /** Holds newest first; `status: 'open'` is what Approvals lists. */
+    async listModerationHolds(
+      filter: { status?: ModerationHold['status']; entryId?: string } = {},
+    ): Promise<ModerationHold[]> {
+      const r = await req<{ items: ModerationHold[] }>(
+        'GET',
+        `${mgmt}/moderation-holds${queryString(filter)}`,
+      );
+      return r.items;
+    },
+    /** Overrides moderation: publishes the held version again and closes the hold. */
+    republishModerationHold(id: string, note?: string): Promise<ModerationDecision> {
+      return req(
+        'POST',
+        `${mgmt}/moderation-holds/${encodeURIComponent(id)}/republish`,
+        note ? { note } : {},
+      );
+    },
+    /** Closes the hold; the entry stays unpublished. */
+    keepModerationHold(id: string, note?: string): Promise<ModerationDecision> {
+      return req(
+        'POST',
+        `${mgmt}/moderation-holds/${encodeURIComponent(id)}/keep`,
+        note ? { note } : {},
+      );
     },
     // --- agent reviews (human-in-the-loop decisions on agent proposals) ----
     /** Agent proposals, oldest first as the API returns them; `status` narrows. */

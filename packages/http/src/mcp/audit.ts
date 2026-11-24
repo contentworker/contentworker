@@ -54,6 +54,7 @@ const TOOL_TARGET_TYPES: readonly (readonly [RegExp, string])[] = [
   [/_content_type(_preview)?$/, 'content_type'],
   [/^agent_schedule_/, 'agent_schedule'],
   [/^agent_review_/, 'agent_review'],
+  [/^moderation_hold_/, 'moderation_hold'],
   [/^ai_action_/, 'ai_action'],
   [/^ai_settings_/, 'ai_settings'],
   [/^ai_projects?_/, 'ai_project'],

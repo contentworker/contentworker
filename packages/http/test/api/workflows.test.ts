@@ -383,7 +383,10 @@ describe('workflow routes', () => {
       });
 
     const all = await call('GET', '/approvals/count', undefined, cpa);
-    expect(all).toEqual({ status: 200, body: { workflowTasks: 2, agentReviews: 2, total: 4 } });
+    expect(all).toEqual({
+      status: 200,
+      body: { workflowTasks: 2, agentReviews: 2, moderationHolds: 0, total: 4 },
+    });
 
     const role = await app.request('/spaces/s1/roles', {
       method: 'POST',
@@ -405,6 +408,7 @@ describe('workflow routes', () => {
     expect((await call('GET', '/approvals/count', undefined, reader)).body).toEqual({
       workflowTasks: 1,
       agentReviews: 1,
+      moderationHolds: 0,
       total: 2,
     });
     // The list it would open agrees: only the post's proposal.

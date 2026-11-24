@@ -343,6 +343,20 @@ export function isDelegatedBearer(principal: Principal): boolean {
   );
 }
 
+/**
+ * A person signed in to the admin, acting for themselves: a `user` principal that came from the
+ * signed session, not from any bearer (an OAuth, personal or setup token, an API key, the admin
+ * token). For decisions that must be a person's own, with no program in between.
+ */
+export function isSignedInPerson(principal: Principal): boolean {
+  return (
+    principal.kind === 'user' &&
+    principal.issuance === undefined &&
+    principal.clientId === undefined &&
+    principal.keyId === undefined
+  );
+}
+
 export class UnauthorizedError extends DomainError {
   constructor(message = 'Invalid or missing credentials') {
     super('unauthorized', message);
@@ -370,6 +384,19 @@ export class DelegatedKeyMintError extends DomainError {
       "An OAuth or personal access token can't mint an API key or widen one; sign in to the " +
         'admin, or use an operator key',
     );
+  }
+}
+
+/**
+ * Something only a person signed in to the admin may do (`isSignedInPerson`) was asked by a
+ * token: an API key, the admin token, or an OAuth or personal access token. A 403, like a missing
+ * scope; `details.reason` tells a client which refusal this is.
+ */
+export class PersonRequiredError extends DomainError {
+  constructor(action: string) {
+    super('forbidden', `Only a person signed in to the admin can ${action}; a token can't`, {
+      reason: 'person_required',
+    });
   }
 }
 

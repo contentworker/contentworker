@@ -86,6 +86,7 @@ function stepActivities(step: WorkflowStep, real: Activities, prefix = ''): Acti
     settleReview: wrap('settleReview', real.settleReview.bind(real)),
     recordRun: wrap('recordRun', real.recordRun.bind(real)),
     retractEntry: wrap('retractEntry', real.retractEntry.bind(real)),
+    clearHold: wrap('clearHold', real.clearHold.bind(real)),
   };
 }
 

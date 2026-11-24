@@ -40,6 +40,8 @@ const unpublished = [
 const offList = [
   entry('0190a000-0000-7000-8000-0000000000a1', 'Spring menu', 'draft'),
   { ...entry('0190a000-0000-7000-8000-0000000000a2', '', 'draft'), fields: {} },
+  // Taken offline by moderation.
+  entry('0190a000-0000-7000-8000-0000000000a3', 'Harbour notice', 'draft'),
 ];
 const DELETED = '0190a000-0000-7000-8000-0000000000ff';
 
@@ -89,7 +91,20 @@ const runs: AgentRun[] = Array.from({ length: 23 }, (_, i) => ({
 }));
 
 /** The server's uncapped count: what the shell's badge shows. */
-const COUNT = { workflowTasks: 1, agentReviews: 4, total: 5 };
+const COUNT = { workflowTasks: 1, agentReviews: 4, moderationHolds: 1, total: 6 };
+
+// An entry the moderation agent took offline, with what it flagged.
+const holds = [
+  {
+    id: 'hold-1',
+    entryId: offList[2]!.id,
+    contentTypeApiId: 'article',
+    entryVersion: 1,
+    flags: ['house_rules'],
+    status: 'open',
+    createdAt: iso(-DAY),
+  },
+];
 
 type ListArgs = [string | undefined, { filters?: { field: string; value?: unknown }[] }?];
 
@@ -103,6 +118,7 @@ const client = {
   }),
   listWorkflowTasks: vi.fn(async () => tasks),
   listAgentReviews: vi.fn(async () => reviews),
+  listModerationHolds: vi.fn(async () => holds),
   countPendingApprovals: vi.fn(async () => COUNT),
   listScheduledActions: vi.fn(async () => [
     {
@@ -271,9 +287,10 @@ describe('Dashboard', () => {
     const waiting = card('Waiting on a decision');
     await within(waiting).findByRole('link', { name: 'Spring menu' });
     // The server's count, the one the badge shows; never the 23 old runs.
-    expect(within(waiting).getByText('5')).toBeTruthy();
+    expect(within(waiting).getByText('6')).toBeTruthy();
     expect(within(waiting).queryByText('23')).toBeNull();
-    expect(within(waiting).queryByText('Held')).toBeNull();
+    // One Held stamp: the open hold's, never the ledger's old held runs.
+    expect(within(waiting).getAllByText('Held')).toHaveLength(1);
     expect(client.countPendingApprovals).toHaveBeenCalled();
     // Steps first, overdue in words; then proposals, oldest first.
     expect(within(waiting).getByRole('link', { name: 'Legal sign-off' }).getAttribute('href')).toBe(
@@ -282,6 +299,21 @@ describe('Dashboard', () => {
     expect(within(waiting).getByText('Overdue')).toBeTruthy();
     expect(within(waiting).getAllByText('Needs review').length).toBe(4);
     expect(within(waiting).getByRole('link', { name: 'Review in Approvals' })).toBeTruthy();
+  });
+
+  it('lists moderation holds after proposals, by entry and what was flagged', async () => {
+    renderDashboard();
+    const waiting = card('Waiting on a decision');
+    const group = (await within(waiting).findByRole('heading', { name: 'Held by moderation' }))
+      .parentElement as HTMLElement;
+    const link = await within(group).findByRole('link', { name: 'Harbour notice' });
+    expect(link.getAttribute('href')).toBe(`/content/article/${offList[2]!.id}`);
+    expect(within(group).getByText(/^Article · House rules · /)).toBeTruthy();
+    expect(within(group).getByText('Held')).toBeTruthy();
+    const headings = within(waiting)
+      .getAllByRole('heading', { level: 3 })
+      .map((h) => h.textContent);
+    expect(headings).toEqual(['Workflow steps', 'Agent proposals', 'Held by moderation']);
   });
 
   it('names and links every agent proposal by its entry, never by an id', async () => {

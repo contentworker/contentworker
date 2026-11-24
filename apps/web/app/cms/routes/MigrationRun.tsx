@@ -231,7 +231,7 @@ export function MigrationRunPage() {
         />
       </Section>
       {templates.length > 0 ? (
-        <Section title="Finish the run">
+        <Section title="Finish the run" flush>
           <RunFinish key={run.id} view={view.data} rights={rights} refresh={refresh} />
         </Section>
       ) : null}
@@ -300,19 +300,19 @@ function RunSkeleton() {
         </dl>
       </Section>
       <Section title="Steps" flush>
-        <div aria-hidden="true" className="space-y-3 p-4 pt-0">
+        <div aria-hidden="true" className="space-y-3 p-4">
           {['60%', '52%', '48%'].map((w) => (
             <SkeletonText key={w} width={w} />
           ))}
         </div>
       </Section>
       <Section title="Templates" flush>
-        <div aria-hidden="true" className="p-4 pt-0">
+        <div aria-hidden="true" className="p-4">
           <SkeletonText width="40%" />
         </div>
       </Section>
       <Section title="Pages" flush>
-        <div aria-hidden="true" className="p-4 pt-0">
+        <div aria-hidden="true" className="p-4">
           <SkeletonText width="55%" />
         </div>
       </Section>

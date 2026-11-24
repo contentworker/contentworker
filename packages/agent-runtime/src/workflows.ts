@@ -1,3 +1,4 @@
+import { HOLD_NOTES } from '@contentworker/application';
 import type {
   Activities,
   AgentRunResult,
@@ -329,6 +330,7 @@ export async function moderateWorkflow(
       usage: ZERO,
     };
   }
+  const judged = loaded.version !== undefined ? { judgedVersion: loaded.version } : {};
   const denied = input.deniedFields ?? [];
   const text = denied.length
     ? Object.entries(loaded.fields)
@@ -346,6 +348,8 @@ export async function moderateWorkflow(
       status: 'held',
       decisions: [`flagged: ${categories.join(', ') || 'policy violation'}`],
       usage,
+      flags: categories,
+      ...judged,
     };
   }
   return {
@@ -354,6 +358,7 @@ export async function moderateWorkflow(
     status: 'completed',
     decisions: ['clean'],
     usage,
+    ...judged,
   };
 }
 
@@ -474,19 +479,33 @@ async function runEntryPass(
       perEntry.push(run);
     }
 
-    // A held entry is already live (agents run off entry.published), so take it
-    // out of delivery rather than only noting the hold.
-    if (perEntry.some((r) => r.workflow === 'moderate' && r.status === 'held')) {
+    // A held entry is already live (agents run off entry.published), so take it out of delivery
+    // and open its hold in Approvals, rather than only noting the verdict. A clean verdict on a
+    // later version closes an open hold: what it was held for is no longer live.
+    const moderated = perEntry.find((r) => r.workflow === 'moderate');
+    if (moderated?.status === 'held') {
       // Record the retraction only AFTER it succeeds: the ledger must not
       // claim flagged content was pulled from delivery when it wasn't.
-      await act.retractEntry(input.scope, entryId, 'moderate');
-      await act.recordRun(input.scope, {
-        workflow: 'moderate',
-        entryId,
-        status: 'held',
-        decisions: ['retracted from delivery pending review'],
-        usage: ZERO,
-      });
+      const outcome =
+        (await act.retractEntry(
+          input.scope,
+          entryId,
+          'moderate',
+          moderated.flags ?? [],
+          moderated.judgedVersion,
+        )) ?? 'held';
+      const note = HOLD_NOTES[outcome];
+      if (note) {
+        await act.recordRun(input.scope, {
+          workflow: 'moderate',
+          entryId,
+          status: 'held',
+          decisions: [note],
+          usage: ZERO,
+        });
+      }
+    } else if (moderated?.status === 'completed') {
+      await act.clearHold(input.scope, entryId, moderated.judgedVersion);
     }
     return perEntry;
   }

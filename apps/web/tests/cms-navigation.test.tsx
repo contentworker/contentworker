@@ -15,7 +15,12 @@ const client = {
   getSpaceConfig: vi.fn(async () => ({ locales: ['en-US'], defaultLocale: 'en-US' })),
   listEnvironments: vi.fn(async () => []),
   listSpaces: vi.fn(async () => [{ id: 'acme', name: 'Acme' }]),
-  countPendingApprovals: vi.fn(async () => ({ workflowTasks: 2, agentReviews: 1, total: 3 })),
+  countPendingApprovals: vi.fn(async () => ({
+    workflowTasks: 2,
+    agentReviews: 1,
+    moderationHolds: 0,
+    total: 3,
+  })),
   getSpaceAccess: vi.fn(async () => ({ scopes: ['space:admin'], subject: 'me' })),
 };
 const conn = { space: 'acme', environment: 'staging', locale: 'en-US' };

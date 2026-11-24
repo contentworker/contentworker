@@ -156,7 +156,7 @@ export function TemplatePages({
     });
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-3 p-3">
       <Catalog aria-label="Take its pages in" className="p-0">
         <CatalogRow
           media={<CatalogTile aria-hidden="true">1</CatalogTile>}
@@ -239,13 +239,13 @@ export function TemplatePages({
       <FailureList title="Files not brought in" failures={load.assetFailures} />
       <FailureList title="Pages left for the next load" failures={load.deferred} />
       {rights && !(rights.run && rights.load) ? (
-        <p className="text-muted-foreground text-xs">
+        <p className="px-1 text-muted-foreground text-xs">
           {rights.run
             ? 'Loading takes migration:run, content:write and assets:write.'
             : 'Transforming takes migration:run. Loading takes migration:run, content:write and assets:write.'}
         </p>
       ) : null}
-      <p className="max-w-measure text-muted-foreground text-xs">
+      <p className="max-w-measure px-1 text-muted-foreground text-xs">
         An approved template’s script can’t be changed, so a needs-fix page can’t be transformed
         again. Load can still take the ones that only scored low; one with an error is left to bring
         in by hand.

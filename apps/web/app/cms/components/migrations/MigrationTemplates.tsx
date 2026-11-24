@@ -29,13 +29,19 @@ export function MigrationTemplates({
     );
   }
   return (
-    <Catalog aria-label="Templates" className="pt-0">
-      {templates.map((t) => (
+    <Catalog aria-label="Templates">
+      {inOrder(templates).map((t) => (
         <TemplateRow key={t.id} template={t} onShowPages={onShowPages} />
       ))}
     </Catalog>
   );
 }
+
+/** Largest first; those the same size in the order of their names. */
+const inOrder = (templates: readonly MigrationTemplateView[]) =>
+  [...templates].sort(
+    (a, b) => b.pageCount - a.pageCount || a.label.localeCompare(b.label, 'en', { numeric: true }),
+  );
 
 function TemplateRow({
   template: t,

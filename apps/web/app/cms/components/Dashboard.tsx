@@ -16,6 +16,7 @@ import { Empty, PageHeader, Section } from '~/cms/components/page';
 import {
   usePendingAgentReviews,
   usePendingApprovalsCount,
+  usePendingModerationHolds,
   usePendingWorkflowTasks,
 } from '../lib/approvals';
 import { useClient } from '../lib/client-context';
@@ -42,6 +43,7 @@ export function Dashboard() {
   // The inbox's own lists and the shell's own count, so the card agrees with both.
   const tasksQuery = usePendingWorkflowTasks({ silent: true });
   const reviewsQuery = usePendingAgentReviews({ silent: true });
+  const holdsQuery = usePendingModerationHolds({ silent: true });
   const pendingTotal = usePendingApprovalsCount();
 
   // Silent: each card shows its own inline failure instead of a toast storm
@@ -95,9 +97,10 @@ export function Dashboard() {
     () => [
       ...(tasksQuery.data ?? []).map((t) => t.entryId),
       ...(reviewsQuery.data ?? []).map((r) => r.entryId),
+      ...(holdsQuery.data ?? []).map((h) => h.entryId),
       ...(scheduled ?? []).filter((a) => a.entityType === 'Entry').map((a) => a.entityId),
     ],
-    [tasksQuery.data, reviewsQuery.data, scheduled],
+    [tasksQuery.data, reviewsQuery.data, holdsQuery.data, scheduled],
   );
   const named = useEntriesById(namedIds);
   const entryById = (id: string) => named.refs.get(id) ?? refs.get(id);
@@ -163,6 +166,11 @@ export function Dashboard() {
             data: reviewsQuery.data,
             isLoading: reviewsQuery.isLoading || named.isLoading,
             isError: reviewsQuery.isError,
+          }}
+          holds={{
+            data: holdsQuery.data,
+            isLoading: holdsQuery.isLoading || named.isLoading,
+            isError: holdsQuery.isError,
           }}
           total={pendingTotal}
           entryById={entryById}

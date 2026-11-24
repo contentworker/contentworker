@@ -108,7 +108,7 @@ export function Migrations() {
         <Section title="All runs" flush>
           <div aria-busy="true">
             <LoadingStatus>Loading migrations…</LoadingStatus>
-            <ul aria-hidden="true" className="space-y-2 p-4">
+            <ul aria-hidden="true" className="space-y-2 p-3">
               {SKELETON_WIDTHS.slice(0, rememberedCount(COUNT_KEY, 3, 8)).map((w, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: placeholder rows, never reordered
                 <li key={i} className="flex items-center gap-3 rounded-xl bg-muted/50 p-3">
@@ -153,7 +153,7 @@ export function Migrations() {
             </span>
           }
         >
-          <Catalog aria-label="All runs" className="pt-0">
+          <Catalog aria-label="All runs">
             {list.map((run) => (
               <RunRow key={run.id} run={run} />
             ))}

@@ -23,7 +23,7 @@ export function RunnerStatus({ runner }: { runner: StepRunner }) {
         ref={runner.status}
         tabIndex={-1}
         role="status"
-        className="min-h-4 text-muted-foreground text-xs outline-none wrap-anywhere"
+        className="min-h-4 px-1 text-muted-foreground text-xs outline-none wrap-anywhere empty:sr-only"
       >
         {runner.said}
       </p>

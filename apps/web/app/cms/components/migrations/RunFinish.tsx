@@ -166,7 +166,7 @@ export function RunFinish({
             next: (r) => {
               if (r.releaseId) into = { viaRelease: true, releaseId: r.releaseId };
               left -= r.published + r.added + r.failed.length;
-              // Pages loaded since the question weren't in it.
+              // A full last batch always answers a cursor: whether more wait is counted below.
               over = left <= 0 && r.next !== undefined;
               return { more: r.next !== undefined && left > 0, after: r.next };
             },
@@ -177,8 +177,12 @@ export function RunFinish({
           },
         );
         await invalidate(['entries'], ['entry'], ['releases'], ['release']);
-        const line = over
-          ? `${publishLine(outcome.totals, target)} Any more were loaded since: publish again for those.`
+        // Of the pages asked about, only the published ones left "loaded": any beyond came since.
+        const now = over ? await refresh().catch(() => undefined) : undefined;
+        const newcomers =
+          (now?.pages.byStage.loaded ?? 0) > Math.max(0, most - outcome.totals.published);
+        const line = newcomers
+          ? `${publishLine(outcome.totals, target)} More were loaded since: publish again for those.`
           : publishLine(outcome.totals, target);
         return {
           line:
@@ -204,7 +208,7 @@ export function RunFinish({
   const skipped = redirects?.skipped;
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-3 p-3">
       <Catalog aria-label="Finish the run" className="p-0">
         <CatalogRow
           media={<CatalogTile aria-hidden="true">1</CatalogTile>}

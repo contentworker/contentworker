@@ -1,38 +1,41 @@
 ---
 title: Approvals and reviews
-description: Who may approve what, separation of duties, escalation, and reviewing what AI agents propose before it is applied.
+description: Who may approve what, separation of duties, escalation, reviewing what AI agents propose before it is applied, and deciding entries moderation took offline.
 ---
 
 You will decide what is waiting on you in the **Approvals** inbox, and set who may decide, whether
 people can approve their own work, and when an approval escalates. ContentWorker has two kinds of
-review, and both come down to a person with the right permission saying yes or no:
+review, and each comes down to a person with the right permission deciding:
 
 - an **approval** in a [workflow](/guides/workflows/): a step that waits for a decision on an
   entry before the workflow continues;
 - an **agent review**: an AI proposal (new field values, tags, a translation) waiting to be applied
-  or discarded.
+  or discarded;
+- a **moderation hold**: an entry the moderation agent took offline after it was published,
+  waiting for someone to republish it or keep it unpublished.
 
 ## Before you start
 
 - Deciding an approval needs the scope the approval names, `workflow:approve` unless the node says
   otherwise, plus read access to the entry's content type.
-- Listing tasks and agent reviews needs `preview:read`; deciding an agent review needs
-  `content:write`.
+- Listing tasks, agent reviews and moderation holds needs `preview:read`; deciding an agent review
+  needs `content:write`; deciding a moderation hold needs `content:publish`, and publish on the
+  entry's content type. Republishing a held entry also needs a person signed in to the admin.
 - Setting the space-wide separation-of-duties default needs `space:admin`.
 
 ## Approvals
 
 ### Decide what is waiting
 
-Open **Approvals**. It lists, oldest first, the **Workflow steps** paused for a decision and the
-**Agent proposals** waiting for review; an event wait is listed too, but only the event moves it
-on. Open an entry from a row to see what you are deciding, add an optional note, and approve or
+Open **Approvals**. It lists, oldest first, the **Workflow steps** paused for a decision, the
+**Agent proposals** waiting for review, and the entries **Held by moderation**; an event wait is
+listed too, but only the event moves it on. Open an entry from a row to see what you are deciding, add an optional note, and approve or
 reject. A count beside **Approvals** in the sidebar and on the phone's tab bar says how many items
 wait, refreshed every minute; like the lists, it leaves out content types you can't read.
 
 | Do this        | API                                                     | MCP                  |
 | -------------- | ------------------------------------------------------- | -------------------- |
-| Count what waits | `GET …/approvals/count` (`workflowTasks`, `agentReviews`, `total`) | `approvals_count` |
+| Count what waits | `GET …/approvals/count` (`workflowTasks`, `agentReviews`, `moderationHolds`, `total`) | `approvals_count` |
 | List tasks     | `GET …/workflow-tasks?status=pending`                   | `workflow_task_list` |
 | Decide a task  | `POST …/workflow-tasks/{id}/decide` (`decision`: `approved` or `rejected`, `note`) | `workflow_task_decide` |
 
@@ -90,9 +93,46 @@ Nothing touches the entry until someone decides.
 An approved proposal lands as a draft, so a reviewer who may write but not publish can accept it,
 and someone who may publish decides when it goes live.
 
+## Moderation holds
+
+The moderation agent runs after an entry is published. When it flags the entry, it unpublishes it
+at once and opens a **hold**: the entry, the version that was live, the categories it flagged
+(`hate`, `harassment`, `house_rules` and so on), and when. The entry stays out of delivery until
+someone decides.
+
+- **Republish** overrides moderation: the held version goes back to delivery, and who decided,
+  with an optional reason, is kept on the hold and in the agent run log. The moderation pass that
+  publish starts leaves that version live. Only a person signed in to the admin can republish: an
+  API key, the admin token, and an OAuth or personal access token are refused with a `403`
+  (`person_required`) whatever their scopes, so an agent can't override moderation, and there is
+  no MCP tool for it. It is refused with a `409` when the entry's current version isn't the held
+  one (it was edited after the publish moderation flagged), since what would go out is not what
+  was live: publish the new version from the entry instead, and moderation reads it again. A
+  [workflow](/guides/workflows/) that gates publishing still applies.
+- **Keep unpublished** agrees with moderation and closes the hold; the entry stays a draft to fix
+  and publish from the editor. It is refused when someone has published the entry again since.
+
+When a newer version of the entry has gone live since (published from the editor while
+moderation was off), the hold is **stale**: the list marks it `stale: true` and Approvals shows "A
+newer version is live" with a single **Close**. Closing is Republish's own path, still for a
+person signed in: it closes the hold as `cleared`, with who closed it, and publishes or
+unpublishes nothing. Keep unpublished is refused with a `409` there, since it never takes live
+content down: unpublish it from the entry if it should come down.
+
+Either decision is made once: a second one, by anyone, is a `409`. A hold also closes on its own
+(`cleared`) when a newer version of the entry is published and moderation passes it. The reason a
+decider gave is shown only to callers that may write content (`content:write`); a preview key
+lists the holds without it.
+
+| Do this       | API                                          | MCP tool                    | Scope             |
+| ------------- | -------------------------------------------- | --------------------------- | ----------------- |
+| List open     | `GET …/moderation-holds?status=open`         | `moderation_hold_list`      | `preview:read`    |
+| Republish     | `POST …/moderation-holds/{id}/republish` (`note`) | none: a person, in the admin | `content:publish` |
+| Keep offline  | `POST …/moderation-holds/{id}/keep` (`note`) | `moderation_hold_keep`      | `content:publish` |
+
 ## Next steps
 
 - [Workflows](/guides/workflows/): build the graph an approval sits in.
-- [AI features](/guides/ai/#agents): what agents propose, and the holds the moderation agent records.
+- [AI features](/guides/ai/#agents): what agents propose, and when the moderation agent runs.
 - [Team and roles](/guides/team-and-roles/): who holds `workflow:approve`.
 - [Permission scopes](/reference/scopes/): every scope an approval can require.

@@ -1,14 +1,17 @@
 import type { AppContext } from '@contentworker/application';
 import {
   assetObjectKey,
+  countPendingApprovals,
   createAsset,
   deleteTag,
+  getEntry,
   getPreviewEntry,
   listAgentReviews,
   listAgentRuns,
   listAssets,
   listAuditLog,
   listContentTypes,
+  listModerationHolds,
   listPreviewEntries,
   listReleases,
   listScheduledActions,
@@ -100,6 +103,34 @@ describe('seedDev', { timeout: 60_000 }, () => {
         for (const note of review.notes) expect(proposed).not.toContain(note);
       }
     }
+  });
+
+  it('holds two published articles for moderation, offline and waiting in Approvals', async () => {
+    const ctx = makeContext();
+    await seedDev(ctx, config, { blob: new FakeBlobStore() });
+    const holds = await listModerationHolds(ctx, scope, { status: 'open' });
+    expect(holds.map((h) => h.flags)).toEqual(
+      expect.arrayContaining([['harassment'], ['house_rules', 'other_unsafe']]),
+    );
+    expect(holds).toHaveLength(2);
+    for (const hold of holds) {
+      const { entry } = await getEntry(ctx, scope, hold.entryId);
+      expect(entry.publishedVersion).toBeNull();
+      expect(hold).toMatchObject({
+        contentTypeApiId: 'article',
+        entryVersion: entry.currentVersion,
+      });
+    }
+    expect((await countPendingApprovals(ctx, scope)).moderationHolds).toBe(2);
+    // The same two, run after run: the seed is deterministic.
+    const again = makeContext();
+    await seedDev(again, config, { blob: new FakeBlobStore() });
+    const ids = async (c: AppContext) =>
+      (await listModerationHolds(c, scope, { status: 'open' })).map((h) => h.entryId).sort();
+    expect(await ids(again)).toEqual(await ids(ctx));
+    // A second run over the same space holds nothing more.
+    await seedDev(ctx, config, { blob: new FakeBlobStore() });
+    expect(await listModerationHolds(ctx, scope)).toHaveLength(2);
   });
 
   it('seeds content types that show the nav in every state', async () => {
