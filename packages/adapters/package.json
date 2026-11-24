@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Cloudflare implementations of the ports: Workers AI, Vectorize, R2, KV cache and asset gate, Queues, Images, Stream, Email, Worker Loader plugins, HTTP effects (webhooks/functions), the site-migration source (sitemap and crawl), structured import parsers, the space export reader. One subpath per adapter so each Worker bundles only what it binds.",
+  "description": "Cloudflare implementations of the ports: Workers AI, Vectorize, R2, KV cache and asset gate, Queues, Images, Stream, Email, Worker Loader plugins and import scripts, HTTP effects (webhooks/functions), the site-migration source (sitemap and crawl), structured import parsers, the space export reader. One subpath per adapter so each Worker bundles only what it binds.",
   "exports": {
     "./ai-workers": "./src/ai-workers/index.ts",
     "./asset-gate-kv": "./src/asset-gate-kv/index.ts",
@@ -12,6 +12,7 @@
     "./email-cf": "./src/email-cf/index.ts",
     "./http-effects": "./src/http-effects/index.ts",
     "./images-cf": "./src/images-cf/index.ts",
+    "./import-script-sandbox": "./src/import-script-sandbox/index.ts",
     "./import-space-export": "./src/import-space-export/index.ts",
     "./import-structured": "./src/import-structured/index.ts",
     "./plugins-cf-loader": "./src/plugins-cf-loader/index.ts",
@@ -28,6 +29,7 @@
   },
   "dependencies": {
     "@contentworker/domain": "workspace:*",
+    "@contentworker/import-script-runtime": "workspace:*",
     "@contentworker/ports": "workspace:*",
     "fast-png": "catalog:",
     "thumbhash": "catalog:"
@@ -37,6 +39,8 @@
     "@contentworker/test-kit": "workspace:*",
     "@contentworker/typescript-config": "workspace:*",
     "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "miniflare": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },

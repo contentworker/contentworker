@@ -29,9 +29,9 @@ export interface EdgeEnv {
   readonly DOCUMENT_PARSER_ENABLED?: string;
   readonly DOCUMENT_FOLDER_SCHEDULE?: import('@contentworker/application').DocumentFolderSchedule;
   /**
-   * Worker Loader binding. Present only where sandboxed plugins are enabled;
-   * absent means installed plugins are never executed, which is the safe
-   * default rather than a fallback to running them unsandboxed.
+   * Worker Loader binding, for code the install runs in its own isolates: plugins, and site
+   * migration import scripts. Absent means neither ever executes, which is the safe default
+   * rather than a fallback to running them unsandboxed.
    */
   readonly PLUGIN_LOADER?: WorkerLoaderBinding;
   // ---- Cloudflare bindings -------------------------------------------------

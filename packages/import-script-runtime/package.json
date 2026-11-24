@@ -1,0 +1,35 @@
+{
+  "name": "@contentworker/import-script-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "What a site-migration import script runs against: the parsed page (ParsedPage, over linkedom) and the runner that calls the script, captures its logs and bounds its output. Bundled into one module for the Worker Loader sandbox (./bundle) and imported as-is by the in-process test fake.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./bundle": {
+      "types": "./src/bundle.generated.ts",
+      "default": "./src/bundle.generated.ts"
+    }
+  },
+  "scripts": {
+    "generate": "node scripts/bundle.ts",
+    "postinstall": "node scripts/bundle.ts",
+    "test": "vitest run",
+    "check-types": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "linkedom": "catalog:"
+  },
+  "devDependencies": {
+    "@contentworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

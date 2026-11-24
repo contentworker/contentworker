@@ -17,6 +17,7 @@ import { createKvCache } from '@contentworker/adapters/cache-kv';
 import { createCfEmailSender } from '@contentworker/adapters/email-cf';
 import { createRemoteFetcher, createWebhookSender } from '@contentworker/adapters/http-effects';
 import { createCfImageProbe, createCfImageTransformer } from '@contentworker/adapters/images-cf';
+import { createWorkerLoaderImportScriptSandbox } from '@contentworker/adapters/import-script-sandbox';
 import { createSpaceExportReader } from '@contentworker/adapters/import-space-export';
 import { createWorkerLoaderRuntime } from '@contentworker/adapters/plugins-cf-loader';
 import { createAssetIngestQueue, createCfQueueProducer } from '@contentworker/adapters/queue-cf';
@@ -66,6 +67,7 @@ import type {
   EventBus,
   GenerateRequest,
   IdGenerator,
+  ImportScriptSandbox,
   MediaPathSigner,
   PasswordHasher,
   Queue as QueuePort,
@@ -154,6 +156,11 @@ export interface EdgeWired {
   readonly siteSource: SiteSource;
   /** Reads the JSON space export format, for MCP's space export tools. A pure parser. */
   readonly spaceExportReader: SpaceExportReader;
+  /**
+   * Runs site-migration import scripts in their own isolates (Worker Loader, no network, no
+   * bindings); absent without PLUGIN_LOADER. Never run in the host isolate instead.
+   */
+  readonly importScriptSandbox?: ImportScriptSandbox;
   /** True when backed by D1 vs the in-memory demo store. */
   readonly persistent: boolean;
   /**
@@ -322,6 +329,15 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     remoteFetcher: createRemoteFetcher(),
     siteSource: createSiteSource(createRemoteFetcher()),
     spaceExportReader: createSpaceExportReader(),
+    // The plugins' Worker Loader binding: a binding carries no authority of its own (each load
+    // states its isolation), and the sandbox's isolate ids are namespaced apart from plugins'.
+    ...(env.PLUGIN_LOADER
+      ? {
+          importScriptSandbox: createWorkerLoaderImportScriptSandbox(env.PLUGIN_LOADER, {
+            onError: (message, detail) => console.error(message, { detail: String(detail) }),
+          }),
+        }
+      : {}),
     workflowNodes: {
       ai,
       decisions,
