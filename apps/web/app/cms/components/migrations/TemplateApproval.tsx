@@ -185,16 +185,18 @@ export function TemplateApproval({
           role="status"
           className="max-w-measure text-sm outline-none wrap-anywhere"
         >
-          {answer ? approvalLine(answer) : 'Approved.'}{' '}
-          {t.contentTypeId ? (
+          {answer ? approvalLine(answer) : 'Approved.'}
+        </p>
+        {t.contentTypeId ? (
+          <p className="text-sm">
             <Link
               to={`/content/${encodeURIComponent(t.contentTypeId)}`}
               className="hit-area text-link hover:underline"
             >
               Open its content type
             </Link>
-          ) : null}
-        </p>
+          </p>
+        ) : null}
         {asking === 'reopen' ? (
           <InlineConfirm
             message={<>Reopen “{t.label}” for changes?</>}
