@@ -292,7 +292,7 @@ describe('the canvas under the config', () => {
     if (!main) throw new Error('no main slot');
     expect(main.offers.map((v) => v.apiId)).toEqual(['hero', 'section']);
     expect(main.max).toBe(4);
-    expect(slotFill(main)).toBe('Main · 3 of 4');
+    expect(slotFill(main)).toBe('Main · 3/4 used');
     // A field already named for its blocks says the count bare, never "Blocks · 3 blocks".
     expect(slotFill({ ...main, name: 'Blocks', max: undefined })).toBe('Blocks · 3');
     expect(main.blocks.map((b) => b.key)).toEqual(['h1', 's1', 'a1']);
@@ -313,7 +313,7 @@ describe('the canvas under the config', () => {
     const items = findSlot(slots, 'body[s1].items');
     if (!items) throw new Error('no items slot');
     expect(items.locked).toBe(true);
-    expect(slotFill(items)).toBe('Items · 1 of 1–2 · locked');
+    expect(slotFill(items)).toBe('Items · 1/1–2 used · locked');
     expect(dockGroups(items, catalog)).toEqual([]);
     const card = findBlock(slots, 'c1');
     if (!card) throw new Error('no card');

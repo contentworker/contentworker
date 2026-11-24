@@ -1281,7 +1281,8 @@ describe('a model’s block patch', () => {
       approval: { id: 'call_1' },
     }) as never;
   const remove = { op: 'remove', field: 'body', key: 'k-cta' };
-  const confirm = () => screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
+  const confirm = () =>
+    screen.getByRole('button', { name: /^Confirm( and save draft)?$/ }) as HTMLButtonElement;
   const notNow = () => screen.getByRole('button', { name: 'Not now' }) as HTMLButtonElement;
   const stepsText = async () =>
     within(await screen.findByRole('list', { name: 'Steps' }))
@@ -1331,7 +1332,7 @@ describe('a model’s block patch', () => {
     ]);
     // The call that runs on Confirm is the one checked.
     expect(client.checkBlockPatch).toHaveBeenCalledWith('e1', { expectedVersion: 3, ops });
-    expect(screen.getByText('1 change in the draft:')).toBeTruthy();
+    expect(screen.getByText('In the draft:')).toBeTruthy();
     expect(confirm().disabled).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
     const changes = screen.getByRole('list', { name: 'Changes' });
@@ -1593,7 +1594,7 @@ describe('a model’s block patch', () => {
     const changes = screen.getByRole('list', { name: 'Changes' });
     expect(within(changes).getByText('Hero “Spring launch” › Heading')).toBeTruthy();
     // With the review open the summary is no longer a lead-in to a list.
-    expect(screen.getByText('2 changes in the draft.')).toBeTruthy();
+    expect(screen.getByText('In the draft.')).toBeTruthy();
   });
 
   it('names a rule broken in a new block by its type, the api having minted its key', async () => {

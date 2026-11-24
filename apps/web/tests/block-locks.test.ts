@@ -106,7 +106,7 @@ describe('the canvas under a lock', () => {
     // Inside it, the slot holds as a locked one does.
     expect(c1 && (canRemove(c1) || canDuplicate(c1))).toBe(false);
     expect(c1?.slot.sealedBy?.index).toBe(0);
-    expect(slotFill(findSlot(tree, 'body[s1].items')!)).toBe('Items · 1 of 1–2 · locked');
+    expect(slotFill(findSlot(tree, 'body[s1].items')!)).toBe('Items · 1/1–2 used · locked');
     // The blocks around it still move, but not past it into a run.
     const h1 = findBlock(tree, 'h1');
     expect(h1 && canRemove(h1)).toBe(true);

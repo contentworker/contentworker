@@ -743,7 +743,9 @@ export function ActionCard({
               className="flex-col items-stretch gap-2 rounded-b-2xl border-t bg-wait/10 pb-(--card-spacing) dark:bg-wait/5"
             >
               <p className="text-muted-foreground text-xs leading-snug">
-                Nothing changes until you confirm, here or wherever else you’re signed in.
+                {proposal?.kind === 'blocks'
+                  ? 'Nothing changes until you confirm, here or wherever else you’re signed in. Confirming saves it to the draft; it isn’t published.'
+                  : 'Nothing changes until you confirm, here or wherever else you’re signed in.'}
               </p>
               {offFill ? (
                 <ReviewHold
@@ -796,7 +798,7 @@ export function ActionCard({
                   aria-describedby={held && confirmOff && !sent ? reasonId : undefined}
                   onClick={() => answer(true)}
                 >
-                  Confirm
+                  {proposal?.kind === 'blocks' ? 'Confirm and save draft' : 'Confirm'}
                 </Button>
               </ConfirmationActions>
             </CardFooter>

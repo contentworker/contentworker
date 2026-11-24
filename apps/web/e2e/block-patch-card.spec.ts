@@ -29,7 +29,7 @@ test('Coworker’s block move says where the block lands and the order it leaves
   await expect(card.getByText('Coworker suggests this')).toBeVisible();
   const steps = card.getByRole('list', { name: 'Steps' });
   await expect(steps).toHaveText(`Moves Hero “${title}” to the end of Blocks`);
-  await expect(card.getByRole('button', { name: 'Confirm' })).toBeEnabled();
+  await expect(card.getByRole('button', { name: 'Confirm and save draft' })).toBeEnabled();
 
   await card.getByRole('button', { name: 'Review changes' }).click();
   const changes = card.getByRole('list', { name: 'Changes' });
