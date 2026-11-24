@@ -128,7 +128,10 @@ export function RunSteps({
     step: StepId,
     act: () => Promise<string>,
     next: readonly ButtonId[] | null,
+    /** Where focus goes when the step failed, if not there. */
+    failed = next,
   ) => {
+    let to = next;
     setRunning(step);
     setNotice(null);
     setSaid('');
@@ -136,11 +139,12 @@ export function RunSteps({
       const line = await retryingConflicts(act);
       setSaid(line);
     } catch (err) {
+      to = failed;
       setNotice(failure(step, err));
     } finally {
       const after = await reread();
       setRunning(null);
-      if (next) setFocusNext({ to: next, when: after });
+      if (to) setFocusNext({ to, when: after });
     }
   };
 
@@ -175,6 +179,7 @@ export function RunSteps({
         // The templates take focus (onClustered); a clustering that failed keeps it on its button.
       },
       null,
+      ['cluster'],
     );
 
   const fetchAll = async () => {

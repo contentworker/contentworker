@@ -138,6 +138,15 @@ describe('a run’s steps', () => {
       available: false,
       reason: 'A background run has taken the templates on, so the grouping is kept.',
     });
+    // A page still waiting would join no template: fetching it isn't the primary.
+    const waiting = runSteps(
+      view(
+        { status: 'clustered', clusteringHeldAt: '2026-11-24T10:00:00.000Z' },
+        { total: 5, fetched: 3 },
+      ),
+    );
+    expect(waiting.fetch.available).toBe(true);
+    expect(waiting.next).toBeNull();
     // One that stopped or failed says that instead.
     const at = { clusteringHeldAt: '2026-11-24T10:00:00.000Z' };
     expect(runSteps(view({ status: 'stopped', ...at })).cluster.reason).toMatch(/stopped/);
