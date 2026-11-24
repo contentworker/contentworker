@@ -1731,7 +1731,8 @@ it as a `MigrationArtifact` (`{ key, sha256, bytes }`).
 - `MigrationRun`: a `source` (`MigrationSource`: `kind` `sitemap` or `crawl`, a `url`, `include`
   and `exclude` path globs where `*` stays within a segment and `**` crosses segments, and
   `maxPages`, default `MIGRATION_DEFAULT_MAX_PAGES` (500), at most `MIGRATION_MAX_PAGES` (10,000)),
-  a `status` (`created` → `inventoried` → `clustered`, or `failed`), the score `threshold` (default
+  a `status` (`created` → `inventoried` → `clustered`, then `stopped` when its background driver
+  ended without publishing, or `failed`), the score `threshold` (default
   `MIGRATION_DEFAULT_THRESHOLD`, 0.8), the last `inventory` (`MigrationInventory`: pages found,
   added, and skipped by robots.txt, globs, origin, limit or an unusable URL, with warnings) and a
   `version` that every write's compare-and-set uses. Every template write rides with that
@@ -1818,8 +1819,15 @@ authoring, load, relink, redirect and publish use-cases below are on both surfac
 `migration:run`), `approveMigrationTemplate` (`approveTemplate`, then `templateApproved` only once
 it has committed; `signalled` says whether a driver heard) and `approveMigrationPublish` (the
 go-ahead, `content:publish` and `content:write` through a release, naming the caller). Each reads
-the run in the caller's scope before the runner, which ignores scope, is called;
-`CloudflareMigrationRunner` reports a run with no Workflow instance as `NotFoundError`.
+the run in the caller's scope before the runner, which ignores scope, is called, and start and the
+go-ahead refuse a run that is `failed` or `stopped` (`MIGRATION_RUN_ENDED`). `MigrationRunner.start`
+answers `started`, `running` or `finished` (an instance that completed, errored or was terminated:
+Workflows keeps its id until retention passes, so it can't be started again in its place), and a
+signal to a finished instance throws `MigrationDriverFinishedError` (an `InvalidStateError`).
+`CloudflareMigrationRunner` reads `instance.status()` for that, and reports a run with no Workflow
+instance (the binding's `instance.not_found`) as `NotFoundError`; any other binding failure is
+rethrown. An approval whose driver wasn't told says why (`reason`: `no-driver`,
+`driver-finished`, `unreachable`).
 `getMigrationTemplate` reads one template; its responses carry `reviewDigest`.
 
 - `inventorySite` adds the pages a sitemap lists, or a crawl's start page, skipping URLs the run
@@ -1876,7 +1884,10 @@ that can't be read is waited out, ten minutes at a time, twelve times) → `fetc
 per step → `clusterPages` → one template agent per template not approved → for each template,
 `waitForEvent` on `template-approved-<templateId>` (14 days; Workflows event types take only
 letters, digits, `-` and `_`) → its transforms a batch per step, then its load and redirects → one
-relink pass → `waitForEvent` on `publish-approved` → publish. Approved templates are processed one
+relink pass → `waitForEvent` on `publish-approved` → publish. A driver that ends without
+publishing (no template approved and loaded in time, or no go-ahead) records the run as `stopped`
+with why, so it isn't started again; its templates can still be authored and its pages taken on
+by hand. Approved templates are processed one
 at a time. Every loop takes the use-case's largest batch, so a run of `MIGRATION_MAX_PAGES` takes
 under 1,500 steps, inside Workflows' 10,000 per instance on Workers Paid (1,024 on Workers Free,
 which fits runs of a few thousand pages; `step.sleep` doesn't count). An approval sent before the
@@ -1953,8 +1964,9 @@ read, up to three times in all, then the `TransactionConflictError` surfaces.
 - `publishMigration` (`content:publish`, and `publish` on each entry's type) publishes a batch of
   loaded entries with `bulkEntryAction` and moves their pages to `published`. An entry already
   published at its current version moves without a second publish. With `viaRelease`
-  (`content:write` too) it adds every loaded entry to one release instead: `releaseId`, or the
-  run's own. The run records that release (`MigrationRun.releaseId`) in the same unit that creates
+  (`content:write` too) it adds the batch's loaded entries to one release instead, paged by
+  `after`/`next` as publishing is: `releaseId`, or the run's own. A release named without
+  `viaRelease` is refused (`assertReleaseTarget`). The run records that release (`MigrationRun.releaseId`) in the same unit that creates
   it, and reuses it while it is open. The pages stay `loaded` until the release ships and a
   publish pass finds their entries live.
 

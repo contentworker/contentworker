@@ -909,6 +909,27 @@ describe('publishing a migration', () => {
     expect(await store.releases.list(scope)).toHaveLength(2);
   });
 
+  it('adds to a release a batch at a time, every batch into the run’s one release', async () => {
+    const { run, template } = await seed(SITE);
+    await loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id });
+    const batches: { added: number; releaseId?: string; next?: string }[] = [];
+    let after: string | undefined;
+    do {
+      const batch = await publishMigration(ctx, admin, scope, {
+        runId: run.id,
+        viaRelease: true,
+        batchSize: 2,
+        ...(after ? { after } : {}),
+      });
+      batches.push(batch);
+      after = batch.next;
+    } while (after);
+    expect(batches.map((b) => b.added)).toEqual([2, 1]);
+    expect(new Set(batches.map((b) => b.releaseId)).size).toBe(1);
+    expect(await store.releases.list(scope)).toHaveLength(1);
+    expect(await store.releases.listItems(scope, batches[0]?.releaseId as string)).toHaveLength(3);
+  });
+
   it('needs content:write to go through a release, as making one does', async () => {
     const { run, template } = await seed(SITE);
     await loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id });

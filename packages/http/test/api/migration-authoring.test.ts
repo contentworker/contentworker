@@ -1,6 +1,7 @@
-import { NotFoundError, SCOPES } from '@contentworker/domain';
+import { MigrationDriverFinishedError, NotFoundError, SCOPES } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import type {
+  MigrationDriverState,
   MigrationPublishApproved,
   MigrationRunner,
   MigrationRunParams,
@@ -93,11 +94,20 @@ class RecordingRunner implements MigrationRunner {
   constructor(
     private readonly read: (runId: string, templateId: string) => Promise<string | undefined>,
   ) {}
-  async start(params: MigrationRunParams): Promise<boolean> {
+  readonly finished = new Set<string>();
+  /** Every signal fails this way: no instance, or the binding failing. */
+  failSignals?: 'missing' | 'broken';
+  async start(params: MigrationRunParams): Promise<MigrationDriverState> {
     this.calls.push({ kind: 'start', payload: params });
-    if (this.running.has(params.runId)) return false;
+    if (this.finished.has(params.runId)) return 'finished';
+    if (this.running.has(params.runId)) return 'running';
     this.running.add(params.runId);
-    return true;
+    return 'started';
+  }
+  private refuse(runId: string): void {
+    if (this.failSignals === 'missing') throw new NotFoundError('Migration driver', runId);
+    if (this.failSignals === 'broken') throw new Error('internal error: Workflows is unavailable');
+    if (this.finished.has(runId)) throw new MigrationDriverFinishedError(runId);
   }
   async templateApproved(
     _scope: unknown,
@@ -105,6 +115,7 @@ class RecordingRunner implements MigrationRunner {
     templateId: string,
     event: MigrationTemplateApproved,
   ): Promise<void> {
+    this.refuse(runId);
     this.calls.push({
       kind: 'templateApproved',
       status: await this.read(runId, templateId),
@@ -112,6 +123,7 @@ class RecordingRunner implements MigrationRunner {
     });
   }
   async publishApproved(_scope: unknown, runId: string, event: MigrationPublishApproved) {
+    this.refuse(runId);
     // As the Cloudflare runner answers a run with no Workflow instance.
     if (!this.running.has(runId)) throw new NotFoundError('Migration driver', runId);
     this.calls.push({ kind: 'publishApproved', payload: event });
@@ -341,7 +353,11 @@ describe('authoring a migration template over HTTP', () => {
     const { send } = makeApp({ runner: false });
     const c = await authored(send);
     const res = await send('POST', `${c.t}/approve`, { reviewed: c.digest }, 'manager');
-    expect(await json(res)).toMatchObject({ template: { status: 'approved' }, signalled: false });
+    expect(await json(res)).toMatchObject({
+      template: { status: 'approved' },
+      signalled: false,
+      reason: 'no-driver',
+    });
     expect((await send('POST', `/${c.run}/start`)).status).toBe(501);
     expect((await send('POST', `/${c.run}/publish-approval`, {}, 'publisher')).status).toBe(501);
   });
@@ -432,6 +448,44 @@ describe('the run’s driver', () => {
     expect(runner.calls.at(-1)?.payload).toEqual({
       approvedBy: { kind: 'key', keyId: 'key-publisher' },
     });
+  });
+});
+
+describe('a driver that has finished', () => {
+  it('refuses start and the go-ahead, and approval says so', async () => {
+    const { send, runner } = makeApp();
+    const c = await authored(send);
+    runner.finished.add(c.run);
+    const start = await send('POST', `/${c.run}/start`);
+    expect(start.status).toBe(400);
+    expect((await json<{ error: { code: string } }>(start)).error.code).toBe('invalid_state');
+    expect((await send('POST', `/${c.run}/publish-approval`, {}, 'publisher')).status).toBe(400);
+    const approved = await send('POST', `${c.t}/approve`, { reviewed: c.digest }, 'manager');
+    expect(await json(approved)).toMatchObject({
+      template: { status: 'approved' },
+      signalled: false,
+      reason: 'driver-finished',
+    });
+  });
+
+  it('answers a transient driver failure on approval as unreachable, the approval standing', async () => {
+    const { send, runner } = makeApp();
+    const c = await authored(send);
+    runner.failSignals = 'broken';
+    const approved = await send('POST', `${c.t}/approve`, { reviewed: c.digest }, 'manager');
+    expect(approved.status).toBe(200);
+    expect(await json(approved)).toMatchObject({ signalled: false, reason: 'unreachable' });
+    expect((await json<Template>(await send('GET', c.t))).status).toBe('approved');
+  });
+
+  it('refuses a release named without viaRelease, on the publish and the go-ahead', async () => {
+    const { send } = makeApp();
+    const c = await clustered(send);
+    await send('POST', `/${c.run}/start`);
+    for (const body of [{ releaseId: 'r1' }, { releaseTitle: 'Launch' }]) {
+      expect((await send('POST', `/${c.run}/publish`, body, 'releaser')).status).toBe(422);
+      expect((await send('POST', `/${c.run}/publish-approval`, body, 'releaser')).status).toBe(422);
+    }
   });
 });
 

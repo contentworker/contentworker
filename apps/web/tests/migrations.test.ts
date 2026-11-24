@@ -75,6 +75,15 @@ describe('a run’s steps', () => {
     expect(pendingPages({ total: 30, fetched: 10, failed: 2, byStage: {} })).toBe(18);
   });
 
+  it('keeps a stopped run’s list and grouping, as the API does', () => {
+    const steps = runSteps(view({ status: 'stopped' }, { total: 5, fetched: 5, failed: 0 }));
+    expect(steps.inventory.available).toBe(false);
+    expect(steps.cluster).toEqual({
+      available: false,
+      reason: 'Its background run stopped, so the grouping is kept.',
+    });
+  });
+
   it('waits on clustering once every page is read, and keeps the list once clustered', () => {
     expect(
       runSteps(view({ status: 'inventoried' }, { total: 5, fetched: 4, failed: 1 })).next,

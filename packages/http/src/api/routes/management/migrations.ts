@@ -393,10 +393,10 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: migrationDocs.migrationApproval,
       description:
         'Needs `content:manage`. Creates and publishes the content type from the proposal, as ' +
-        'you, and approves the template; then tells the run’s driver, when it has one ' +
-        '(`signalled`). 409 when the template changed since the `reviewDigest` you name, or an ' +
-        'unrelated type has its apiId. Approving an approved template answers it again, and ' +
-        'tells the driver again.',
+        'you, and approves the template; then tells the run’s driver (`signalled`, or `reason`: ' +
+        '`no-driver`, `driver-finished`, `unreachable`). 409 when the template changed since ' +
+        'the `reviewDigest` you name, or an unrelated type has its apiId. Approving an approved ' +
+        'template answers it again, and tells the driver again.',
     }),
     readScopes,
     async (c) => {
@@ -515,10 +515,10 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: migrationDocs.migrationPublishResult,
       description:
         'Needs `content:publish` (and `publish` on each type); through a release ' +
-        '(`viaRelease`), `content:write` too, and every loaded entry is added in this one ' +
-        `call. Publishing takes up to \`limit\` (default and most ${MIGRATION_PUBLISH_REQUEST_MAX}) ` +
-        'pages; call again with `next`. For a run its driver runs, send ' +
-        '`…/publish-approval` instead.',
+        '(`viaRelease`), `content:write` too, and the entries are added to `releaseId` or the ' +
+        `run’s own release. Takes up to \`limit\` (default and most ${MIGRATION_PUBLISH_REQUEST_MAX}) ` +
+        'pages either way; call again with `next`. 422 for a release named without ' +
+        '`viaRelease`. For a run its driver runs, send `…/publish-approval` instead.',
     }),
     requireScope(SCOPES.contentPublish),
     async (c) => {
@@ -549,7 +549,8 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'clusters, starts an authoring agent per template, waits for each template’s approval, ' +
         'transforms, loads, redirects and relinks, then waits for `…/publish-approval`. The way ' +
         'to migrate a large site. Safe to repeat: `started` is false when it was running ' +
-        'already. 501 where the engine’s driver isn’t bound.',
+        'already. 400 (`invalid_state`) for a run that failed or stopped, or whose driver has ' +
+        'finished. 501 where the engine’s driver isn’t bound.',
     }),
     requireScope(SCOPES.migrationRun),
     async (c) =>
@@ -566,7 +567,8 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 202,
       description:
         'Needs `content:publish`, and `content:write` through a release. The driver publishes ' +
-        'as you once its pages are loaded (or adds them to a release). 404 when the run has no ' +
+        'as you once its pages are loaded (or adds them to a release). 400 (`invalid_state`) for ' +
+        'a run that failed or stopped, or whose driver has finished; 404 when the run has no ' +
         'driver (`…/start` it, or publish with `…/publish`).',
     }),
     requireScope(SCOPES.contentPublish),

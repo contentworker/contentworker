@@ -160,8 +160,9 @@ Step by step, each call a bounded batch:
    migrated pages become links between their entries.
 4. **Redirect**: a 301 from each loaded page's old path to its entry's path, by the type's URL
    pattern. Pages whose path didn't move are skipped. Safe to repeat.
-5. **Publish** up to 50 loaded entries a call, or with `viaRelease` add every one to a release
-   (`releaseId`, or the run's own, titled `releaseTitle`) for someone to ship.
+5. **Publish** up to 50 loaded entries a call, or with `viaRelease` add them to a release
+   (`releaseId`, or the run's own, titled `releaseTitle`) for someone to ship, again with `after`
+   until `next` is absent. Naming a release without `viaRelease` is refused (`422`).
 
 ## Run it in the background
 
@@ -169,9 +170,13 @@ Step by step, each call a bounded batch:
 an authoring agent for each of the largest templates, then for each template a person approves
 transforms, loads and redirects its pages, relinks, and waits for the go-ahead to publish
 (`publish-approval`), which names its approver from the caller's credentials. Starting again is
-safe: it answers `started: false`. Approving a template tells the engine (`signalled: true`); when
-it says `false`, approve again. A go-ahead for a run that was never started answers `404`. Follow
-the run with its status and pages as before.
+safe: it answers `started: false`. Approving a template tells the engine (`signalled: true`);
+otherwise `reason` says why: `no-driver` (the run is taken step by step), `driver-finished`, or
+`unreachable`, when approving again tells it. A go-ahead for a run that was never started answers
+`404`. If no template is approved in time, or the go-ahead never comes, the engine stops waiting
+and the run's status becomes `stopped`. A stopped run, a failed one, or one whose engine run has
+finished can't be started or given the go-ahead again (`400`), but its templates can still be
+approved, loaded and published step by step. Follow the run with its status and pages as before.
 
 ### With curl
 
@@ -277,7 +282,7 @@ loaded entries here instead, batch by batch.
 | Status | Code                | Means                                                                                                                      |
 | ------ | ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `403`  | `forbidden`         | The token lacks the scope; the message names it.                                                                           |
-| `400`  | `invalid_state`     | The step is out of order: clustering before an inventory or once a template is authored, a script change once a template is approved, a transform or load before approval. |
+| `400`  | `invalid_state`     | The step is out of order: clustering before an inventory or once a template is authored, a script change once a template is approved, a transform or load before approval, or a start or go-ahead for a run that failed, stopped or whose engine run has finished. |
 | `404`  | `not_found`         | No such run or template in this environment, or no background driver to send a go-ahead to.                                |
 | `409`  | `conflict`          | Another step wrote the run first (`retryable: true`; send the call again), or the template changed since its `reviewDigest` was read (review it again). |
 | `422`  | `validation_failed` | A source field is malformed, or the URL is on a private address. The issue names the field, such as `source.include[0]`. |

@@ -29,8 +29,10 @@ export const migrationRun = z.object({
     maxPages: z.int(),
   }),
   status: z
-    .enum(['created', 'inventoried', 'clustered', 'failed'])
-    .describe('The step that last finished'),
+    .enum(['created', 'inventoried', 'clustered', 'stopped', 'failed'])
+    .describe(
+      'The step that last finished; `stopped` when its background driver ended without publishing',
+    ),
   threshold: z.number().describe('Score a page needs to count as validated (0..1)'),
   inventory: z
     .object({
@@ -40,7 +42,7 @@ export const migrationRun = z.object({
       warnings: z.array(z.string()),
     })
     .nullable(),
-  error: z.string().nullable(),
+  error: z.string().nullable().describe('Why the run failed or stopped'),
   releaseId: z
     .string()
     .nullable()
@@ -192,9 +194,14 @@ export const migrationTryResult = z.object({
 
 export const migrationApproval = z.object({
   template: migrationTemplate,
-  signalled: z
-    .boolean()
-    .describe('The run’s driver was told; false with no driver (approve again to retry)'),
+  signalled: z.boolean().describe('The run’s driver was told'),
+  reason: z
+    .enum(['no-driver', 'driver-finished', 'unreachable'])
+    .optional()
+    .describe(
+      'Why it wasn’t: no driver (a run taken step by step), its driver has finished, or it ' +
+        'couldn’t be reached now (approve again to tell it)',
+    ),
 });
 
 const pageFailure = z.object({ pageId: z.string(), url: z.string(), error: z.string() });

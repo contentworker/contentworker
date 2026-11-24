@@ -1236,7 +1236,9 @@ const migrateApprove: Command = {
         `Approved ${result.template.label} as ${result.template.contentTypeId}.` +
         (result.signalled
           ? ' The run’s driver goes on with its pages.'
-          : ` Next: transform and load its pages, or contentworker migrate start ${run}`),
+          : result.reason === 'unreachable'
+            ? ' The run’s driver couldn’t be reached: run this again to tell it.'
+            : ` Next: transform and load its pages${result.reason === 'no-driver' ? `, or contentworker migrate start ${run}` : ''}.`),
     };
   },
 };
@@ -1299,8 +1301,7 @@ const migratePublish: Command = {
       totals.failed += batch.failed.length;
       releaseId = batch.releaseId ?? releaseId;
       for (const f of batch.failed) if (!ctx.json) ctx.io.stderr(`failed: ${f.url}: ${f.error}`);
-      // A release takes every entry in one call.
-      after = viaRelease ? undefined : batch.next;
+      after = batch.next;
     } while (after);
     return {
       json: { run, ...totals, ...(releaseId ? { releaseId } : {}) },

@@ -426,7 +426,8 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
     {
       description:
         'Approve a template, as a person with content:manage: creates and publishes its ' +
-        'content type from the proposal and tells the run’s driver (`signalled`). `reviewed` ' +
+        'content type from the proposal and tells the run’s driver (`signalled`; else `reason`: ' +
+        'no-driver, driver-finished or unreachable, when approving again retries). `reviewed` ' +
         'is the reviewDigest from migration_template_get as you read it: a template changed ' +
         'since is refused (conflict). Only approve what a person has reviewed.',
       inputSchema: toolSchema('migration_template_approve', () =>
@@ -551,8 +552,9 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
     {
       description:
         `Publish up to ${MIGRATION_PUBLISH_REQUEST_MAX} of the run’s loaded entries now (needs ` +
-        'content:publish), or with viaRelease add every one to a release (content:write too). ' +
-        'Call again with `next`. For a run its driver runs, migration_publish instead.',
+        'content:publish), or with viaRelease add them to a release (content:write too; the ' +
+        'run’s own unless releaseId). Call again with `next`. Only ask for this when the person ' +
+        'has said to publish. For a run its driver runs, migration_publish instead.',
       inputSchema: toolSchema('migration_publish_entries', () =>
         z.object({ ...runArgs, ...migrationPublishBody.shape, ...scopeArgs }),
       ),
@@ -583,7 +585,8 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
         'Run the migration in the background, acting for you: inventory, fetch, cluster, an ' +
         'authoring agent per template, then for each template a person approves, transform, ' +
         'load, redirects and relink, then a wait for migration_publish. The way to migrate a ' +
-        'large site. Safe to repeat (`started` false when it was running).',
+        'large site. Safe to repeat (`started` false when it was running). Refused for a run ' +
+        'that failed or stopped, or whose driver has finished.',
       inputSchema: toolSchema('migration_start', () => z.object({ ...runArgs, ...scopeArgs })),
       annotations: { idempotentHint: true, openWorldHint: true },
     },
@@ -599,8 +602,9 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
       description:
         'Give a started run’s driver the go-ahead to publish its loaded entries, as you (needs ' +
         'content:publish; with viaRelease it adds them to a release instead, and needs ' +
-        'content:write). A not_found error means the run has no driver: migration_start it, ' +
-        'or publish with migration_publish_entries.',
+        'content:write). Send it only when the person says to publish. A not_found error means ' +
+        'the run has no driver; invalid_state that it failed, stopped or its driver finished: ' +
+        'ask the person whether to publish with migration_publish_entries.',
       inputSchema: toolSchema('migration_publish', () =>
         z.object({ ...runArgs, ...migrationPublishApprovalBody.shape, ...scopeArgs }),
       ),

@@ -195,6 +195,57 @@ describe('a migration run’s driver', () => {
       value: { status: 'clustered', templates: [{ status: 'timed-out' }] },
     });
     expect(await stages(ctx, params.runId)).toEqual({ clustered: 3 });
+    // Recorded, so starting it again is refused rather than finding the finished instance; its
+    // templates can still be authored by hand.
+    const run = await ctx.store.migrations.getRun(scope, params.runId);
+    expect(run).toMatchObject({ status: 'stopped', error: expect.stringMatching(/approved/) });
+    const templateId = (await ctx.store.migrations.listTemplates(scope, params.runId))[0]?.id;
+    await expect(
+      proposeTemplateModel(ctx, scope, {
+        runId: params.runId,
+        templateId: templateId as string,
+        model: MODEL,
+      }),
+    ).resolves.toMatchObject({ status: 'authoring' });
+  });
+
+  it('records a run whose go-ahead to publish never comes as stopped, with its pages loaded', async () => {
+    const { ctx, clock, host, params, steps } = await harness();
+    await steps.run(() => runSiteMigration(steps, host, params));
+    const templateId = (await ctx.store.migrations.listTemplates(scope, params.runId))[0]
+      ?.id as string;
+    await authorAndApprove(ctx, host, { runId: params.runId, templateId });
+    steps.sendEvent(migrationTemplateApprovedEvent(templateId), {});
+    await steps.run(() => runSiteMigration(steps, host, params));
+    clock.advance(15 * 24 * 60 * 60_000);
+    const done = await steps.run(() => runSiteMigration(steps, host, params));
+    expect(done).toMatchObject({ status: 'complete', value: { status: 'loaded' } });
+    expect(await ctx.store.migrations.getRun(scope, params.runId)).toMatchObject({
+      status: 'stopped',
+      error: expect.stringMatching(/go-ahead/),
+    });
+    expect(await stages(ctx, params.runId)).toEqual({ loaded: 3 });
+  });
+
+  it('adds every loaded entry to the run’s release through the go-ahead, a batch at a time', async () => {
+    const { ctx, host, params, steps } = await harness();
+    await steps.run(() => runSiteMigration(steps, host, params));
+    const templateId = (await ctx.store.migrations.listTemplates(scope, params.runId))[0]
+      ?.id as string;
+    await authorAndApprove(ctx, host, { runId: params.runId, templateId });
+    steps.sendEvent(migrationTemplateApprovedEvent(templateId), {});
+    await steps.run(() => runSiteMigration(steps, host, params));
+    steps.sendEvent(MIGRATION_PUBLISH_EVENT, {
+      approvedBy: { kind: 'deployment' },
+      viaRelease: true,
+      releaseTitle: 'Launch',
+    });
+    const done = await steps.run(() => runSiteMigration(steps, host, params));
+    expect(done).toMatchObject({ status: 'complete', value: { status: 'published' } });
+    const run = await ctx.store.migrations.getRun(scope, params.runId);
+    expect(run?.releaseId).toBeTruthy();
+    const items = await ctx.store.releases.listItems(scope, run?.releaseId as string);
+    expect(items).toHaveLength(3);
   });
 
   it('fails a template alone when its recorded approver can no longer act', async () => {

@@ -107,7 +107,7 @@ await cma.migrations.redirects(run.id);
 await cma.migrations.publish(run.id, { viaRelease: true, releaseTitle: 'Site launch' });
 ```
 
-`transform` and `relink` page with `after: next`; `load` needs `content:write` and `assets:write`,
+`transform`, `relink` and `publish` (including `viaRelease`) page with `after: next`; `load` needs `content:write` and `assets:write`,
 `redirects` `content:manage` and `publish` `content:publish`. After `start`, `approvePublish` is the
 driver's go-ahead to publish.
 

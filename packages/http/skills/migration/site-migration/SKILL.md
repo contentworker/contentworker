@@ -127,17 +127,19 @@ A small site can go step by step; each call is a bounded batch:
    the links between migrated pages at the entries they became.
 4. `migration_redirects`: a 301 from each old path to its entry's new one. Safe to repeat.
 5. `migration_publish_entries`, with `after: next`: publishes the loaded entries, or with
-   `viaRelease` adds every one to a release so a person can ship them together. Publishing makes
+   `viaRelease` adds them to the run's release, a batch a call, so a person can ship them together. Publishing makes
    entries live: ask the person first, and publish only when they say so.
 
 A large site goes in the background instead: `migration_start` hands the run to the engine, which
 runs every step above for you and starts an authoring agent per template. It still waits for a
-person to approve each template (`migration_template_approve` tells it; `signalled: false` means it
-wasn't reached, so approve again), and at the end waits for `migration_publish`, the go-ahead to
+person to approve each template (`migration_template_approve` tells it; with `signalled: false`,
+`reason` says why: `unreachable` means approve again, `no-driver` and `driver-finished` that the
+template's pages go in step by step), and at the end waits for `migration_publish`, the go-ahead to
 publish. That go-ahead is the person's: send it only when they give it, never because the run has
 reached that point. Follow the run with `migration_status`. A `not_found` from `migration_publish`
 means the run has no driver: ask the person whether to start it or publish with
-`migration_publish_entries`.
+`migration_publish_entries`. A run whose status is `stopped` (nothing approved in time, or no
+go-ahead) can't be started again; its templates can still be taken through step by step.
 
 Loading again is safe: entries are matched on their source page's URL, so a page loaded twice
 updates the entry it became. When pages fail or score low, see `migration-triage`.

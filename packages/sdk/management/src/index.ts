@@ -372,7 +372,8 @@ export interface MigrationRun {
   readonly name: string;
   readonly source: MigrationSource;
   /** The step that last finished. */
-  readonly status: 'created' | 'inventoried' | 'clustered' | 'failed';
+  /** `stopped`: its background driver ended without publishing; it can still be taken by hand. */
+  readonly status: 'created' | 'inventoried' | 'clustered' | 'stopped' | 'failed';
   readonly threshold: number;
   readonly inventory: {
     readonly discovered: number;
@@ -2960,10 +2961,12 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * the run's driver was told.
        */
       approve: (run: string, template: string, reviewed: string) =>
-        post<{ template: MigrationTemplate; signalled: boolean }>(
-          `${tplBase(run, template)}/approve`,
-          { reviewed },
-        ),
+        post<{
+          template: MigrationTemplate;
+          signalled: boolean;
+          /** Why the driver wasn't told: approve again to retry an `unreachable` one. */
+          reason?: 'no-driver' | 'driver-finished' | 'unreachable';
+        }>(`${tplBase(run, template)}/approve`, { reviewed }),
       /** At most 10 pages a call; go on with `after: next` while `more`. */
       transform: (
         run: string,
@@ -2982,7 +2985,10 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** Needs `content:manage`. Old paths to new, safe to repeat. */
       redirects: (run: string, o: { readonly template?: string } = {}) =>
         post<MigrationRedirectsResult>(`${envBase}/migrations/runs/${e(run)}/redirects`, o),
-      /** Needs `content:publish`. Publishes a batch now; for a started run, use `approvePublish`. */
+      /**
+       * Needs `content:publish`. Publishes a batch now, or adds it to a release (`viaRelease`);
+       * go on with `after: next`. For a started run, use `approvePublish`.
+       */
       publish: (
         run: string,
         o: MigrationPublishTarget & {

@@ -62,7 +62,11 @@ export function migrationTryResponse(result: TryImportScriptResult) {
 }
 
 export function migrationApprovalResponse(result: ApproveMigrationTemplateResult) {
-  return { template: migrationTemplateResponse(result.template), signalled: result.signalled };
+  return {
+    template: migrationTemplateResponse(result.template),
+    signalled: result.signalled,
+    ...(result.reason ? { reason: result.reason } : {}),
+  };
 }
 
 /** A template's script as text, with its hash (both null before one is written). */

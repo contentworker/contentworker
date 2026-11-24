@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import { type AppContext, createEnvironment, createSpace } from '@contentworker/application';
-import { NotFoundError, type Principal, SCOPES } from '@contentworker/domain';
+import {
+  MigrationDriverFinishedError,
+  NotFoundError,
+  type Principal,
+  SCOPES,
+} from '@contentworker/domain';
 import type {
+  MigrationDriverState,
   MigrationPublishApproved,
   MigrationRunner,
   MigrationRunParams,
@@ -85,11 +91,20 @@ class RecordingRunner implements MigrationRunner {
   readonly calls: { kind: string; status?: string | undefined; payload: unknown }[] = [];
   private readonly running = new Set<string>();
   constructor(private readonly ctx: AppContext) {}
-  async start(params: MigrationRunParams): Promise<boolean> {
+  readonly finished = new Set<string>();
+  /** Every signal fails this way: no instance, or the binding failing. */
+  failSignals?: 'missing' | 'broken';
+  async start(params: MigrationRunParams): Promise<MigrationDriverState> {
     this.calls.push({ kind: 'start', payload: params });
-    if (this.running.has(params.runId)) return false;
+    if (this.finished.has(params.runId)) return 'finished';
+    if (this.running.has(params.runId)) return 'running';
     this.running.add(params.runId);
-    return true;
+    return 'started';
+  }
+  private refuse(runId: string): void {
+    if (this.failSignals === 'missing') throw new NotFoundError('Migration driver', runId);
+    if (this.failSignals === 'broken') throw new Error('internal error: Workflows is unavailable');
+    if (this.finished.has(runId)) throw new MigrationDriverFinishedError(runId);
   }
   async templateApproved(
     scope: { spaceId: string; environmentId: string },
@@ -97,16 +112,18 @@ class RecordingRunner implements MigrationRunner {
     templateId: string,
     event: MigrationTemplateApproved,
   ) {
+    this.refuse(runId);
     const t = await this.ctx.store.migrations.getTemplate(scope, runId, templateId);
     this.calls.push({ kind: 'templateApproved', status: t?.status, payload: event });
   }
   async publishApproved(_scope: unknown, runId: string, event: MigrationPublishApproved) {
+    this.refuse(runId);
     if (!this.running.has(runId)) throw new NotFoundError('Migration driver', runId);
     this.calls.push({ kind: 'publishApproved', payload: event });
   }
 }
 
-async function setup() {
+async function setup(opts: { runner?: boolean; sandbox?: boolean } = {}) {
   const ctx: AppContext = {
     store: new InMemoryContentStore(),
     clock: new FixedClock(),
@@ -125,8 +142,8 @@ async function setup() {
     blob: new FakeBlobStore(),
     siteSource: new FakeSiteSource(SITE),
     remoteFetcher: new FakeRemoteFetcher(),
-    importScriptSandbox: sandbox,
-    migrationRunner: driver,
+    ...(opts.sandbox === false ? {} : { importScriptSandbox: sandbox }),
+    ...(opts.runner === false ? {} : { migrationRunner: driver }),
   };
   await createSpace(ctx, { spaceId: SPACE, name: 'Site', defaultLocale: 'en-US' });
   return { ctx, deps, sandbox, driver };
@@ -342,5 +359,82 @@ describe('site migration authoring tools', () => {
       expect(res.text, tool).toMatch(/not_found|was not found/);
     }
     expect(driver.calls).toEqual([]);
+  });
+
+  it('answer not_configured without a runner or a sandbox, as the routes answer 501', async () => {
+    const { deps } = await setup({ runner: false, sandbox: false });
+    const { call, ref, digest } = await authored(deps);
+    for (const [tool, args, as] of [
+      ['migration_start', { run: ref.run }, runner],
+      ['migration_publish', { run: ref.run }, publisher],
+      ['migration_script_try', ref, runner],
+    ] as const) {
+      const res = await (await connect(deps, as))(tool, args);
+      expect(res.isError, tool).toBe(true);
+      expect(res.text, tool).toMatch(/not_configured|not configured/);
+    }
+    // With no driver bound, approval still stands and says why it told none.
+    const approved = await (await connect(deps, manager))('migration_template_approve', {
+      ...ref,
+      reviewed: digest,
+    });
+    expect(approved.body).toMatchObject({ signalled: false, reason: 'no-driver' });
+    expect((await call('migration_template_get', ref)).body).toMatchObject({ status: 'approved' });
+  });
+
+  it('report signalled and its reason on approval, as the route does', async () => {
+    const { deps, driver } = await setup();
+    const { ref, digest } = await authored(deps);
+    const asManager = await connect(deps, manager);
+    driver.failSignals = 'broken';
+    expect(
+      (await asManager('migration_template_approve', { ...ref, reviewed: digest })).body,
+    ).toMatchObject({ template: { status: 'approved' }, signalled: false, reason: 'unreachable' });
+    driver.failSignals = 'missing';
+    expect(
+      (await asManager('migration_template_approve', { ...ref, reviewed: digest })).body,
+    ).toMatchObject({ signalled: false, reason: 'no-driver' });
+    driver.failSignals = undefined;
+    driver.finished.add(ref.run);
+    expect(
+      (await asManager('migration_template_approve', { ...ref, reviewed: digest })).body,
+    ).toMatchObject({ signalled: false, reason: 'driver-finished' });
+    driver.finished.clear();
+    const told = (await asManager('migration_template_approve', { ...ref, reviewed: digest }))
+      .body as { signalled: boolean; reason?: string };
+    expect(told.signalled).toBe(true);
+    expect(told).not.toHaveProperty('reason');
+  });
+
+  it('take the approver from the caller, never from an argument', async () => {
+    const { deps, driver } = await setup();
+    const { call, ref } = await authored(deps);
+    await call('migration_start', { run: ref.run });
+    const res = await (await connect(deps, publisher))('migration_publish', {
+      run: ref.run,
+      approvedBy: { kind: 'deployment' },
+    });
+    expect(res.isError).toBe(false);
+    expect(driver.calls.at(-1)?.payload).toEqual({
+      approvedBy: { kind: 'key', keyId: 'key-publisher' },
+    });
+  });
+
+  it('refuse a release named without viaRelease, and a finished driver', async () => {
+    const { deps, driver } = await setup();
+    const { call, ref } = await authored(deps);
+    const asReleaser = await connect(
+      deps,
+      key('releaser', [SCOPES.contentPublish, SCOPES.contentWrite]),
+    );
+    for (const tool of ['migration_publish', 'migration_publish_entries']) {
+      const res = await asReleaser(tool, { run: ref.run, releaseTitle: 'Launch' });
+      expect(res.isError, tool).toBe(true);
+      expect(res.text, tool).toMatch(/viaRelease/);
+    }
+    driver.finished.add(ref.run);
+    const start = await call('migration_start', { run: ref.run });
+    expect(start.isError).toBe(true);
+    expect(start.text).toMatch(/has finished/);
   });
 });

@@ -17,10 +17,16 @@ import {
   type TemplateAgentState,
   templateAgentTurn,
 } from '@contentworker/application';
-import { InvalidStateError, NotFoundError, type Scope } from '@contentworker/domain';
+import {
+  InvalidStateError,
+  MigrationDriverFinishedError,
+  NotFoundError,
+  type Scope,
+} from '@contentworker/domain';
 import type {
   ChatMessage,
   ImportScriptSandbox,
+  MigrationDriverState,
   MigrationPublishApproved,
   MigrationRunner,
   MigrationRunParams,
@@ -50,13 +56,16 @@ export type MigrationWorkflowBinding = Pick<Workflow<MigrationRunParams>, 'creat
 export class CloudflareMigrationRunner implements MigrationRunner {
   constructor(private readonly wf: MigrationWorkflowBinding) {}
 
-  async start(params: MigrationRunParams): Promise<boolean> {
+  async start(params: MigrationRunParams): Promise<MigrationDriverState> {
     const { created, errors } = await this.wf.createBatch({
       instances: [{ id: migrationInstanceId(params.runId), params }],
     });
-    if (created.length > 0) return true;
+    if (created.length > 0) return 'started';
     const [error] = errors;
-    if (error?.code === WORKFLOW_INSTANCE_EXISTS) return false;
+    if (error?.code === WORKFLOW_INSTANCE_EXISTS) {
+      // The id is taken until Workflows' retention passes, whether or not the instance still runs.
+      return (await this.finished(await this.driver(params.runId))) ? 'finished' : 'running';
+    }
     throw new Error(
       `Workflows did not start migration ${params.runId}: ${error ? `${error.code} ${error.message}` : 'no result'}`,
     );
@@ -68,7 +77,7 @@ export class CloudflareMigrationRunner implements MigrationRunner {
     templateId: string,
     event: MigrationTemplateApproved,
   ): Promise<void> {
-    const instance = await this.driver(runId);
+    const instance = await this.waiting(runId);
     await instance.sendEvent({ type: migrationTemplateApprovedEvent(templateId), payload: event });
   }
 
@@ -77,7 +86,7 @@ export class CloudflareMigrationRunner implements MigrationRunner {
     runId: string,
     event: MigrationPublishApproved,
   ): Promise<void> {
-    const instance = await this.driver(runId);
+    const instance = await this.waiting(runId);
     await instance.sendEvent({ type: MIGRATION_PUBLISH_EVENT, payload: event });
   }
 
@@ -91,13 +100,27 @@ export class CloudflareMigrationRunner implements MigrationRunner {
     try {
       return await this.wf.get(migrationInstanceId(runId));
     } catch (err) {
-      if (err instanceof Error && /not[._ ]?found/i.test(err.message)) {
+      if (err instanceof Error && err.message.includes('instance.not_found')) {
         throw new NotFoundError('Migration driver', runId);
       }
       throw err;
     }
   }
+
+  /** An instance that can still take an event: a finished one would drop it unread. */
+  private async waiting(runId: string) {
+    const instance = await this.driver(runId);
+    if (await this.finished(instance)) throw new MigrationDriverFinishedError(runId);
+    return instance;
+  }
+
+  private async finished(instance: WorkflowInstance): Promise<boolean> {
+    return FINISHED.has((await instance.status()).status);
+  }
 }
+
+/** Instance statuses that run no further: completed, failed or terminated. */
+const FINISHED: ReadonlySet<string> = new Set(['complete', 'errored', 'terminated']);
 
 /** What one driver invocation needs, opened per invocation and closed after it. */
 export interface MigrationHostDeps extends SiteMigrationRunHost {
