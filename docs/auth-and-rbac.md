@@ -167,10 +167,10 @@ capped by a role: consent to `preview:read` capped by a role granting only `asse
 `assets:read`): every Administrator role and admin key stored before the scope existed can run a
 migration without being rewritten, and `migration:run` alone grants nothing else. The steps (create,
 inventory, fetch, cluster) need `migration:run`; listing runs and reading a run, its pages and its
-templates need `migration:run` or `content:manage` (`authorizeAny`). An anonymously registered
-OAuth client can't ask for it (the registration ceiling holds `delivery:read`, `preview:read`,
-`search:read`, `content:write` and `content:publish`), so a migration is run with a personal access
-token or a Management key.
+templates need `migration:run` or `content:manage` (`authorizeAny`). An OAuth client may ask for
+it (the registration ceiling holds `delivery:read`, `preview:read`, `search:read`,
+`content:write`, `content:publish` and `migration:run`); the token carries it only when the
+approving person's role does.
 
 Asset operations by scope. `assets:read`: every asset read, drafts included (library list and
 search, files, metadata, folders, collections, renditions, usage, versions, transform URLs,
@@ -939,7 +939,7 @@ What the implementation guarantees:
   must not be able to put "administer this space" in front of a human as one approve button. A
   registered client holds no authority at all until a human approves a grant. A client that
   registers without a `scope` (as MCP clients commonly do, choosing scopes when they authorize) may
-  later ask for anything under that ceiling (read, write, publish); the person approving still
+  later ask for anything under that ceiling (read, write, publish, run site migrations); the person approving still
   sees every scope, and the token never exceeds their role.
 - **The consent form keeps its Origin.** The api sends `Referrer-Policy: same-origin`, not
   `no-referrer`: under `no-referrer` a browser posts the form with `Origin: null`, which the web

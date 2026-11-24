@@ -25,13 +25,16 @@ and never receives `space:admin` or `content:manage`, and its token is short-liv
 as you use it. Revoke it under **Settings → Access → Connected apps**, or with `contentworker
 logout`.
 
-Changing the content model needs `content:manage`, and the `migrate` commands need `migration:run`,
-which a connected app can't be granted, so for `model apply` and `migrate` sign in with a
-[personal access token](/guides/api-keys/#personal-access-tokens) or a Management key instead:
+Changing the content model needs `content:manage`, which a connected app can't be granted, so for
+`model apply` sign in with a [personal access token](/guides/api-keys/#personal-access-tokens) or
+a Management key instead:
 
 ```sh
 contentworker login --url https://api.cms.example.com --token "$TOKEN"
 ```
+
+The `migrate` commands need `migration:run`, which a `login` token carries when your role holds it
+(the Administrator role does).
 
 Tokens are kept in `credentials.json` in your user config directory (`~/.config/contentworker`,
 or `%APPDATA%\contentworker` on Windows), readable only by you. Name a profile with `--profile`

@@ -72,6 +72,9 @@ export function defaultOAuthConfig(issuer: string, resource: string): OAuthConfi
       SCOPES.searchRead,
       SCOPES.contentWrite,
       SCOPES.contentPublish,
+      // A site migration's steps: they fetch from the run's source site and write nothing past the
+      // run, so an agent can be handed one without being handed the space.
+      SCOPES.migrationRun,
     ],
   };
 }

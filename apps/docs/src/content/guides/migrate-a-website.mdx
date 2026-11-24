@@ -30,8 +30,8 @@ part of this yet. A run ends, for now, at its list of templates and the pages in
 - `space:admin` carries `migration:run`, so the Administrator role and every admin key can run a
   migration. Other roles and keys can be given the scope on its own; the token picker calls it
   **Migrate websites**. See [API keys and access](/guides/api-keys/#scopes).
-- A connected app (OAuth, which includes `contentworker login`) can't be granted `migration:run`.
-  Use a [personal access token](/guides/api-keys/#personal-access-tokens) or a Management key.
+- A connected app (OAuth, which includes `contentworker login` and MCP clients) can ask for
+  `migration:run`; its token carries it only when the approving person's role does.
 - The site must be public: a run has no way to sign in to it.
 
 ## How the site is read
