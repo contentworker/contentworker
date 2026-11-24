@@ -211,7 +211,8 @@ and the run's status becomes `stopped`. A stopped run, a failed one, or one whos
 finished can't be started or given the go-ahead again (`400`), but its templates can still be
 approved, loaded and published step by step. From the moment the engine takes a run's templates on,
 the run carries `clusteringHeldAt` and its pages can't be clustered again (`400`, `invalid_state`),
-whatever becomes of the engine run. Until then you can cluster it by hand as often as you need. To
+whatever becomes of the engine run. Until then you can cluster it by hand as often as you need; fetch
+every page first, because a page fetched after the clustering the engine takes joins no template. To
 group the pages another way afterwards, create another run. Follow the run with its status and pages as before.
 
 ### With curl

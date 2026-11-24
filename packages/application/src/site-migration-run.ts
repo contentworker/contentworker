@@ -154,12 +154,19 @@ type Settled<T> = { readonly ok: T } | { readonly failed: string };
  * run is gone, in the wrong state, the actor lost access) is a failure no retry fixes: returned
  * as one, so the step is recorded and not retried. Anything else throws, and the step retries.
  */
-async function settle<T>(fn: () => Promise<T>): Promise<Settled<T>> {
+async function settle<T>(
+  fn: () => Promise<T>,
+  /** What the last lost race is: a failure, or thrown, for the step's own retries to take over. */
+  lost: 'fails' | 'throws' = 'fails',
+): Promise<Settled<T>> {
   for (let attempt = 1; ; attempt++) {
     try {
       return { ok: await fn() };
     } catch (err) {
-      if (err instanceof TransactionConflictError && attempt < 3) continue;
+      if (err instanceof TransactionConflictError) {
+        if (attempt < 3) continue;
+        if (lost === 'throws') throw err;
+      }
       if (err instanceof DomainError) return { failed: err.message.slice(0, MAX_ERROR_LENGTH) };
       throw err;
     }
@@ -217,7 +224,8 @@ export async function runSiteMigration(
             // Held by an approval: reopened by hand before the driver started.
             held: t.contentTypeId !== null,
           }));
-        }),
+          // Templates being written, or grouped again, as it takes them are no reason to fail.
+        }, 'throws'),
       ),
     );
     if (templates.length === 0) return { status: 'clustered', templates: [] };

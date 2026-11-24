@@ -437,6 +437,26 @@ describe('clustering a run its driver has taken on', () => {
     await expect(recluster(h)).rejects.toThrow(MigrationClusteringHeldError);
   });
 
+  it('leaves a taking that keeps losing its race to the step’s retries', async () => {
+    const h = await harness();
+    await byHand(h);
+    const save = h.ctx.store.migrations.saveRun.bind(h.ctx.store.migrations);
+    let losses = 4;
+    h.ctx.store.migrations.saveRun = async (...args) => {
+      if (losses > 0) {
+        losses -= 1;
+        throw new TransactionConflictError();
+      }
+      return save(...args);
+    };
+    expect((await pass(h)).status).toBe('waiting');
+    expect(losses).toBe(0);
+    expect(await h.ctx.store.migrations.getRun(scope, h.run.id)).toMatchObject({
+      status: 'clustered',
+      clusteringHeldAt: expect.any(String),
+    });
+  });
+
   it('stays refused when the step that took it runs again, its result lost', async () => {
     const h = await harness();
     await pass(h);

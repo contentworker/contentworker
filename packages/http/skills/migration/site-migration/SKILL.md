@@ -74,7 +74,8 @@ credentials, never from an argument.
    The default `threshold` (0.6) suits most sites; lower it if one page shape was split into many
    templates, raise it if unlike pages were merged. Clustering again replaces the earlier grouping,
    until a template is being authored or a background run has taken the templates on
-   (`clusteringHeldAt` on the run): settle the grouping before `migration_start`.
+   (`clusteringHeldAt` on the run): fetch every page and settle the
+   grouping before `migration_start`, and don't cluster by hand while the background run fetches.
 7. **Review the templates** with `migration_templates` (largest first) and, for each,
    `migration_pages` with `template` set to its id. Walk the person through them: which page
    shapes the site has, how many pages each holds, and the sample pages' URLs and titles. A
