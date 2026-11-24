@@ -104,7 +104,7 @@ export function Section({
     >
       {/* On a phone a description beside the actions would wrap a word to a line: the actions go
           under it instead. */}
-      <CardHeader className={cn(description && actions && 'max-sm:grid-cols-1!')}>
+      <CardHeader className={cn(actions && (description ? 'max-sm:grid-cols-1!' : 'items-center'))}>
         <CardTitle className="section-title">
           <h2>{title}</h2>
         </CardTitle>
@@ -113,8 +113,11 @@ export function Section({
           <CardAction
             className={cn(
               'self-center',
-              description &&
-                'max-sm:col-start-1 max-sm:row-span-1 max-sm:row-start-auto max-sm:justify-self-start',
+              // Maia's action spans the description's row too. With none, the empty row's gap would
+              // set it below the title's middle.
+              description
+                ? 'max-sm:col-start-1 max-sm:row-span-1 max-sm:row-start-auto max-sm:justify-self-start'
+                : 'row-span-1',
             )}
           >
             {actions}
