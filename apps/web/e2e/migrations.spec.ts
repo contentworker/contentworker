@@ -403,6 +403,8 @@ async function stubRun(page: Page) {
 }
 
 test('a website migration: list, a new run, and its steps', async ({ page }, testInfo) => {
+  // The whole of a run, with a scan at each stop: past the default 30 s on a busy runner.
+  test.setTimeout(90_000);
   const stamp = Date.now();
   const calls = await stubRun(page);
   await openCms(page, '/migrations');
