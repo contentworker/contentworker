@@ -605,7 +605,16 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   scroller takes keyboard focus. A first publish asks the same way, saying the whole entry goes live, with Keep as draft as the safe choice. Beside the form sits the **side pane** (after felix's):
   where the row the two share is wide enough for both (a 420px form and a 336px pane; collapsing
   the sidebar buys the room back) it stands behind a hairline divider, sticky, scrolling on its own;
-  narrower, it stacks under the form. The divider is an ARIA splitter (drag, arrows, Shift for a
+  narrower, it stacks under the form, except beside Coworker's column: there it folds to a **rail**
+  on the form's right edge behind a hairline (`pane/PaneRail.tsx`), one icon button per view, named
+  in words and a tooltip, one tab stop with the arrows between them, held under the action bar, so
+  the entry's history never drops below the form while Coworker proposes changes to it (the action
+  bar keeps its state stamp in view as ever). A view pressed opens the pane over the form's right
+  edge (24rem, `shadow-overlay`, the view's name and a ghost Close at its top) and marks its
+  button as the current item; that button again, Close, Escape or a press in the form closes it, and
+  focus goes back to the button. It travels in from the rail on `--motion-travel` and `ease-arrive`
+  (at once with reduced motion), stays as it was left while closed, and opens closed on another
+  entry. The divider is an ARIA splitter (drag, arrows, Shift for a
   bigger step, Home and End, Enter or a double click to reset), and its share is kept per browser.
   A segmented switch shows **Details** (the panels) or **Preview**: the draft as a document, live
   as you type, in the form's locale with delivery's fallbacks (its title and values carry that

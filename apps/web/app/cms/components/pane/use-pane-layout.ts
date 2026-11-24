@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState } from 'react';
+import { type KeyboardEvent, type RefObject, useLayoutEffect, useRef, useState } from 'react';
 
 /**
  * The widths the entry form and the side pane each need before they can sit side by side: a form
@@ -8,6 +8,21 @@ import { useLayoutEffect, useState } from 'react';
  */
 export const MAIN_MIN_PX = 420;
 export const PANE_MIN_PX = 336;
+
+/**
+ * How the pane stands beside the form. `split`: side by side, behind the divider. `stack`: under
+ * the form, as on a phone or an iPad. `rail`: a strip of the pane's views on the form's right edge,
+ * each opening the pane over the form; only beside the assistant's column, where the row is too
+ * narrow to split and stacking would push the entry's history below the fold just while Coworker
+ * proposes changes to it.
+ */
+export type PaneMode = 'split' | 'rail' | 'stack';
+
+export function paneMode(width: number, beside: { readonly assistantColumn: boolean }): PaneMode {
+  if (width >= MAIN_MIN_PX + PANE_MIN_PX) return 'split';
+  // Unmeasured (the server, the first render) stacks, as it always has.
+  return width > 0 && beside.assistantColumn ? 'rail' : 'stack';
+}
 
 const SHARE_KEY = 'cw.entry-pane.share';
 /** Under half: the form keeps the larger side until someone moves the divider. */
@@ -34,6 +49,8 @@ function writeShare(v: number) {
 export interface PaneLayout {
   /** The row the form and the pane share: a callback ref, so a row that mounts late is measured. */
   ref: (el: HTMLElement | null) => void;
+  /** Side by side, a rail beside the form, or stacked under it. */
+  mode: PaneMode;
   /** Room for both side by side. */
   split: boolean;
   /** The pane's share of the row, clamped so neither side drops below its floor. */
@@ -51,7 +68,7 @@ export interface PaneLayout {
  * it ends. The server can't measure, so it draws the stacked layout and the split arrives before
  * the first paint after hydration.
  */
-export function usePaneLayout(): PaneLayout {
+export function usePaneLayout(beside: { readonly assistantColumn: boolean }): PaneLayout {
   const [el, ref] = useState<HTMLElement | null>(null);
   const [width, setWidth] = useState(0);
   useLayoutEffect(() => {
@@ -71,13 +88,15 @@ export function usePaneLayout(): PaneLayout {
   useLayoutEffect(() => setStored(readShare()), []);
   const [live, setLive] = useState<number | null>(null);
 
-  const split = width >= MAIN_MIN_PX + PANE_MIN_PX;
+  const mode = paneMode(width, beside);
+  const split = mode === 'split';
   const min = width ? Math.min(PANE_MIN_PX / width, 0.5) : DEFAULT_SHARE;
   const max = width ? Math.max(1 - MAIN_MIN_PX / width, min) : DEFAULT_SHARE;
   const share = Math.min(max, Math.max(min, live ?? stored));
 
   return {
     ref,
+    mode,
     split,
     share,
     min,
@@ -151,4 +170,57 @@ export function usePaneView(): [PaneView, (v: PaneView) => void] {
       }
     },
   ];
+}
+
+export interface PanePeek {
+  /** The pane is open over the form. */
+  open: boolean;
+  /** A rail view pressed: open the pane at it, or close it when it is the view already open. */
+  pick: (v: PaneView) => void;
+  /** Close it; `refocus` hands focus back to the open view's button in the rail. */
+  close: (refocus: boolean) => void;
+  /** Escape, on the rail or in the pane, closes it. */
+  onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
+  railRef: RefObject<HTMLDivElement | null>;
+}
+
+/**
+ * The pane opened from the rail. Held against the entry it was opened on, so another entry, or
+ * the split coming back, finds it closed without an effect to reset it.
+ */
+export function usePanePeek(opts: {
+  /** Whether the pane is folded to the rail at all. */
+  readonly rail: boolean;
+  /** The entry on screen (its id, or 'new'). */
+  readonly entry: string;
+  /** The view the pane shows. */
+  readonly view: PaneView;
+  /** Picks the pane's view; absent where it has one view only (a new entry's preview). */
+  readonly onView?: ((v: PaneView) => void) | undefined;
+}): PanePeek {
+  const [openOn, setOpenOn] = useState<string | null>(null);
+  const railRef = useRef<HTMLDivElement>(null);
+  const open = opts.rail && openOn === opts.entry;
+  const close = (refocus: boolean) => {
+    setOpenOn(null);
+    // The rail's one tab stop is the open view's button, so the keyboard picks up where it was.
+    if (refocus) railRef.current?.querySelector<HTMLElement>('button[tabindex="0"]')?.focus();
+  };
+  return {
+    open,
+    pick: (v) => {
+      if (open && opts.view === v) return close(false);
+      opts.onView?.(v);
+      setOpenOn(opts.entry);
+    },
+    close,
+    onKeyDown: (e) => {
+      if (e.key !== 'Escape' || !open || e.defaultPrevented) return;
+      // A menu or dialog the pane opened is portalled outside it and keeps its own Escape.
+      if (!e.currentTarget.contains(e.target as Node)) return;
+      e.preventDefault();
+      close(true);
+    },
+    railRef,
+  };
 }
