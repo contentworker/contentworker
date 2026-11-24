@@ -1,59 +1,48 @@
 import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
 import { Skeleton } from '@contentworker/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
 import { SearchX } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { Ago } from '~/cms/components/ago';
 import { entryPath, entryRef } from '~/cms/components/dashboard/entry-titles';
 import { LiveActivityCard } from '~/cms/components/dashboard/LiveActivityCard';
-import { ThroughputCard } from '~/cms/components/dashboard/ThroughputCard';
-import { UsageByWorkflowCard } from '~/cms/components/dashboard/UsageByWorkflowCard';
-import { UsageTrendCard } from '~/cms/components/dashboard/UsageTrendCard';
 import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
 import {
-  AgentReviewCard,
+  DecisionsCard,
   UnpublishedWorkCard,
   UpcomingCard,
 } from '~/cms/components/dashboard/WorkCards';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
-import { StatusBadge } from '~/cms/components/status';
-import { Mark } from '~/components/mark';
-import { useClient } from '../lib/client-context';
-import { humanize } from '../lib/format';
-import type { SearchHit } from '../lib/management';
 import {
-  useAgentRunsQuery,
-  useAllEntriesQuery,
-  useContentTypesQuery,
-  useScopedQuery,
-} from '../lib/queries';
+  usePendingAgentReviews,
+  usePendingApprovalsCount,
+  usePendingWorkflowTasks,
+} from '../lib/approvals';
+import { useClient } from '../lib/client-context';
+import type { SearchHit } from '../lib/management';
+import { useAllEntriesQuery, useContentTypesQuery, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
+import { useNow } from '../lib/use-now';
 
 /** Unpublished entries fetched for the work card; the card says "N+" at the cap. */
 const UNPUBLISHED_CAP = 50;
-/** Agent runs that stopped for a human decision (agent-runtime's review states). */
-const REVIEW_STATES = new Set(['needs_review', 'held']);
+/** How often overdue schedules and deadlines are re-read against the clock. */
+const NOW_REFRESH_MS = 60_000;
 
 /**
- * The editor's start page: what needs attention first (unpublished work,
- * what's scheduled, agent proposals waiting on a decision), then search, then
- * AI usage as a quieter, clearly windowed section at the bottom.
+ * The editor's start page: what needs attention (unpublished work, what's
+ * scheduled and what missed its time, what waits on a decision in Approvals),
+ * then search. AI token usage lives in Settings → AI, not here.
  */
 export function Dashboard() {
   const { client, conn } = useClient();
   const toast = useToast();
   const types = useContentTypesQuery().data ?? [];
-  const runsQuery = useAgentRunsQuery();
-  const runs = runsQuery.data ?? [];
+  const now = useNow(NOW_REFRESH_MS);
+  // The inbox's own lists and the shell's own count, so the card agrees with both.
+  const tasksQuery = usePendingWorkflowTasks({ silent: true });
+  const reviewsQuery = usePendingAgentReviews({ silent: true });
+  const pendingTotal = usePendingApprovalsCount();
 
   // Silent: each card shows its own inline failure instead of a toast storm
   // when a token lacks one of these scopes.
@@ -93,27 +82,22 @@ export function Dashboard() {
     for (const e of unpublished) map.set(e.id, e);
     return map;
   }, [allEntries, unpublished, types, conn.locale]);
-  const scheduled = useMemo(
-    () =>
-      scheduledQuery.data
-        ? [...scheduledQuery.data].sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor))
-        : undefined,
-    [scheduledQuery.data],
-  );
+  // The card splits and orders these against the clock.
+  const scheduled = scheduledQuery.data;
   const openReleases = useMemo(
     () => releasesQuery.data?.filter((r) => r.status === 'open'),
     [releasesQuery.data],
   );
-  const awaitingReview = useMemo(() => runs.filter((r) => REVIEW_STATES.has(r.status)), [runs]);
 
   // Every entry a card names by id is resolved by id, in one batched lookup: the capped list
   // above can't be trusted to hold them, and an id is never a name.
   const namedIds = useMemo(
     () => [
-      ...runs.map((r) => r.entryId),
+      ...(tasksQuery.data ?? []).map((t) => t.entryId),
+      ...(reviewsQuery.data ?? []).map((r) => r.entryId),
       ...(scheduled ?? []).filter((a) => a.entityType === 'Entry').map((a) => a.entityId),
     ],
-    [runs, scheduled],
+    [tasksQuery.data, reviewsQuery.data, scheduled],
   );
   const named = useEntriesById(namedIds);
   const entryById = (id: string) => named.refs.get(id) ?? refs.get(id);
@@ -167,14 +151,22 @@ export function Dashboard() {
             isError: releasesQuery.isError,
           }}
           entryById={entryById}
+          now={now}
         />
-        <AgentReviewCard
-          runs={{
-            data: runsQuery.data ? awaitingReview : undefined,
-            isLoading: runsQuery.isLoading || named.isLoading,
-            isError: runsQuery.isError,
+        <DecisionsCard
+          tasks={{
+            data: tasksQuery.data,
+            isLoading: tasksQuery.isLoading || named.isLoading,
+            isError: tasksQuery.isError,
           }}
+          reviews={{
+            data: reviewsQuery.data,
+            isLoading: reviewsQuery.isLoading || named.isLoading,
+            isError: reviewsQuery.isError,
+          }}
+          total={pendingTotal}
           entryById={entryById}
+          now={now}
         />
         <LiveActivityCard entryById={entryById} />
       </section>
@@ -235,77 +227,6 @@ export function Dashboard() {
           </Empty>
         )}
       </Section>
-
-      <section aria-labelledby="dash-ai-usage" className="space-y-4 pt-2">
-        <div>
-          <h2 id="dash-ai-usage" className="section-title">
-            AI usage
-          </h2>
-          <p className="max-w-measure text-muted-foreground text-sm">
-            Tokens spent by agent runs. Each card states its time window.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <UsageTrendCard runs={runs} />
-          <ThroughputCard runs={runs} />
-          <UsageByWorkflowCard runs={runs} />
-        </div>
-
-        <Section id="agent-runs" title="Recent agent runs" flush={runs.length > 0}>
-          {runs.length === 0 ? (
-            <Empty icon={<Mark className="text-ai" />} title="No agent runs yet">
-              Enable AGENTS_ENRICH on the worker and runs will appear here as content is published.
-            </Empty>
-          ) : (
-            <Table stack="cards" caption="Recent agent runs">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Workflow</TableHead>
-                  <TableHead>Entry</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead numeric>Tokens (in/out)</TableHead>
-                  <TableHead>When</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {runs.map((r) => {
-                  const ref = r.entryId ? entryById(r.entryId) : undefined;
-                  return (
-                    <TableRow key={r.id}>
-                      <TableCell className="font-medium">{humanize(r.workflow)}</TableCell>
-                      <TableCell label="Entry" className="max-w-56 truncate text-muted-foreground">
-                        {ref ? (
-                          <Link to={entryPath(ref)} className="underline-offset-2 hover:underline">
-                            {ref.title}
-                          </Link>
-                        ) : r.entryId ? (
-                          named.isLoading ? (
-                            <Skeleton className="h-4 w-24" aria-hidden />
-                          ) : (
-                            'Entry no longer available'
-                          )
-                        ) : (
-                          // A space-level run (curate, a digest) acts on no one entry.
-                          '—'
-                        )}
-                      </TableCell>
-                      <TableCell label="Status">
-                        <StatusBadge status={r.status} />
-                      </TableCell>
-                      <TableCell label="Tokens" numeric className="text-muted-foreground">
-                        {r.inputTokens}/{r.outputTokens}
-                      </TableCell>
-                      <TableCell label="When" className="text-muted-foreground">
-                        <Ago at={r.createdAt} />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </Section>
-      </section>
     </div>
   );
 }

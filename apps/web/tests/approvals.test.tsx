@@ -180,6 +180,17 @@ describe('Approvals', () => {
     expect(screen.getByTestId('badge').textContent).toBe('3');
   });
 
+  it('says in a line what each list’s state means, and where moderation holds are', async () => {
+    setup();
+    await screen.findByRole('listitem', { name: 'Legal sign-off' });
+    expect(screen.getByText(/^Pending: the workflow is paused here/)).toBeTruthy();
+    expect(screen.getByText(/Needs review: an agent proposed changes/)).toBeTruthy();
+    expect(screen.getByText(/Moderation holds aren’t listed here/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Settings → AI' }).getAttribute('href')).toBe(
+      '/settings/ai',
+    );
+  });
+
   it('names every entry by its title, from one batched lookup', async () => {
     const calls = setup();
     const step = await screen.findByRole('listitem', { name: 'Legal sign-off' });

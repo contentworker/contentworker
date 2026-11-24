@@ -496,7 +496,12 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 ## Screens
 
 - **Overview** (`cms/components/Dashboard.tsx`): what needs attention as cards (not yet published,
-  coming up, agent proposals, live activity), then search, AI usage and recent agent runs.
+  coming up, waiting on a decision, live activity), then search. Coming up puts a pending action
+  past its time (two minutes' grace for the minute sweep) under Overdue, a `bad` "Overdue" stamp
+  where the time would be, as Approvals stamps a step past its deadline. Waiting on a decision
+  lists Approvals' own two lists and shows the shell's count, so the card, the inbox and the badge
+  give one number; the agent-run ledger is history and never counts. AI usage and recent agent
+  runs sit under the capabilities in Settings → AI.
 - **Content:** the content types as a catalog (`PageHeader` with New content type): each type's
   icon as its tile (its own, else the one its name suggests, else its initials), its name linked to its entries (a singleton's to its one entry, `/entry`, as the
   sidebar's link is), its API id in mono and its field count under it ("One entry only" beside them
