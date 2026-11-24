@@ -3,21 +3,16 @@ import {
   type ContentTypeDraft,
   DomainError,
   MIGRATION_SOURCE_URL_FIELD,
+  type MigrationActor,
   RateLimitedError,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
-import type {
-  AIProvider,
-  ChatMessage,
-  MigrationActor,
-  ModelTier,
-  ToolCall,
-  ToolSpec,
-} from '@contentworker/ports';
+import type { AIProvider, ChatMessage, ModelTier, ToolCall, ToolSpec } from '@contentworker/ports';
 import { generateWithBudget } from './ai-budget';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import type { AppContext } from './context';
+import { migrationActorPrincipal } from './site-migration-run';
 import {
   getImportScript,
   MIGRATION_TRY_MAX_PAGES,
@@ -53,8 +48,8 @@ export const TEMPLATE_AGENT_LIMITS = {
   maxToolCallsPerTurn: 4,
   /** Tokens one answer may take (a script fits). */
   maxAnswerTokens: 8_000,
-  /** Characters of page HTML one `get_source_page` returns. */
-  maxPageChars: 40_000,
+  /** Characters of page HTML one `get_source_page` returns (within `maxResultChars`). */
+  maxPageChars: 24_000,
   /** Characters of one tool result. */
   maxResultChars: 24_000,
   /** Characters the conversation keeps in full; older tool results are elided past it. */
@@ -209,6 +204,10 @@ export async function templateAgentTurn(
   if (state.turns >= limits.maxTurns || state.tokens >= limits.maxTokens) {
     return stop(state, `Stopped at its budget: ${state.turns} turns, ${state.tokens} tokens`);
   }
+  // Spends on behalf of whoever started the run: not once they no longer act in the space.
+  if (!(await migrationActorPrincipal(ctx, state.scope, state.startedBy))) {
+    return stop(state, 'Stopped: whoever started the run no longer has access to the space');
+  }
   let answer: Awaited<ReturnType<typeof generateWithBudget>>;
   try {
     answer = await generateWithBudget(
@@ -311,7 +310,7 @@ async function runTool(
         const script = await getImportScript(ctx, deps, scope, ref);
         // Sample URLs and the last try's problems are the site's text: fenced like a page.
         return {
-          result: wrapUntrusted(
+          result: fence(
             JSON.stringify({
               label: template.label,
               status: template.status,
@@ -336,8 +335,9 @@ async function runTool(
         const html = page.html ? await deps.blob.get(page.html.key) : null;
         if (html === null) return { result: { error: 'The page has no fetched HTML.' } };
         const lean = leanHtml(html);
+        // The URL is the site's to choose too: inside the fence with the page.
         return {
-          result: `url: ${page.url}\nbytes: ${html.length}${lean.length > TEMPLATE_AGENT_LIMITS.maxPageChars ? ' (clipped)' : ''}\n${wrapUntrusted(clip(lean, TEMPLATE_AGENT_LIMITS.maxPageChars))}`,
+          result: `bytes: ${html.length}${lean.length > PAGE_CHARS ? ' (clipped)' : ''}\n${fence(`url: ${page.url}\n${lean}`, PAGE_CHARS)}`,
         };
       }
       case 'propose_model': {
@@ -363,26 +363,27 @@ async function runTool(
           ...(ids?.length ? { pageIds: ids } : {}),
         });
         const perPage = Math.floor(
-          TEMPLATE_AGENT_LIMITS.maxResultChars / (tried.results.length + 1),
+          TEMPLATE_AGENT_LIMITS.maxResultChars / (tried.results.length + 2),
         );
+        const { problems, ...counts } = tried.summary;
+        // Only the counts go unfenced: the problems quote URLs, errors and keys from the page, and
+        // what a script read out of a page is the page's text.
         const result = [
-          JSON.stringify({ summary: tried.summary }),
+          JSON.stringify({ summary: counts }),
+          fence(JSON.stringify({ problems }), perPage),
           ...tried.results.map((r) =>
-            // What a script read out of a page is the page's text: fenced as such.
-            wrapUntrusted(
-              clip(
-                JSON.stringify({
-                  pageId: r.pageId,
-                  url: r.url,
-                  ok: r.ok,
-                  score: r.score,
-                  issues: r.issues,
-                  error: r.error,
-                  logs: r.logs.slice(0, 20),
-                  output: r.output,
-                }),
-                perPage,
-              ),
+            fence(
+              JSON.stringify({
+                pageId: r.pageId,
+                url: r.url,
+                ok: r.ok,
+                score: r.score,
+                issues: r.issues,
+                error: r.error,
+                logs: r.logs.slice(0, 20),
+                output: r.output,
+              }),
+              perPage,
             ),
           ),
         ].join('\n');
@@ -410,7 +411,9 @@ const DROPPED = ['script', 'style', 'svg', 'noscript', 'template'];
  */
 export function leanHtml(html: string): string {
   const src = html.slice(0, LEAN_INPUT_CHARS);
-  const lower = src.toLowerCase();
+  // ASCII only, so every offset in `lower` is the same in `src` (`toLowerCase` can change a
+  // string's length: U+0130 lowercases to two code units).
+  const lower = src.replace(/[A-Z]+/g, (m) => m.toLowerCase());
   let out = '';
   let at = 0;
   while (at < src.length) {
@@ -458,6 +461,16 @@ function compact(messages: ChatMessage[], max: number): ChatMessage[] {
     total += note.length;
   }
   return messages;
+}
+
+/** Characters of page HTML one `get_source_page` returns, fence included. */
+const PAGE_CHARS = TEMPLATE_AGENT_LIMITS.maxPageChars;
+/** Room a fence takes around its text. */
+const FENCE_CHARS = 40;
+
+/** Untrusted text clipped to fit, then fenced: a clip never cuts the closing tag off. */
+function fence(text: string, max: number = TEMPLATE_AGENT_LIMITS.maxResultChars): string {
+  return wrapUntrusted(clip(text, Math.max(0, max - FENCE_CHARS)));
 }
 
 const clip = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);

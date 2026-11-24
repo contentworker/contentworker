@@ -90,9 +90,8 @@ export interface EdgeEnv {
    */
   readonly APP_OPERATION_WF?: Workflow;
   /**
-   * Site migration runs (`MigrationWorkflow`, one instance per run), started and signalled by the
-   * api (`CloudflareMigrationRunner`). Absent → migration runs are driven step by step by their
-   * callers only.
+   * Site migration runs (`MigrationWorkflow`, one instance per run), started and signalled through
+   * `CloudflareMigrationRunner` (`wired.migrationRunner`). Absent → no runner is wired.
    */
   readonly MIGRATION_WF?: Workflow;
   /**

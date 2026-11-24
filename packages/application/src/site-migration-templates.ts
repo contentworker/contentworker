@@ -6,6 +6,7 @@ import {
   type ContentType,
   type ContentTypeDraft,
   checkTemplateModel,
+  DomainError,
   defineContentType,
   type FieldDefinition,
   type ImportScriptOutput,
@@ -36,6 +37,7 @@ import {
 } from '@contentworker/ports';
 import { createContentType, publishContentType } from './content-types';
 import type { AppContext } from './context';
+import { jobStarterOf } from './job-starter';
 import { migrationArtifactKey } from './site-migrations';
 import { sha256Hex } from './token-crypto';
 
@@ -265,28 +267,59 @@ export async function tryImportScript(
 
 // --- approve ----------------------------------------------------------------
 
+export interface ApproveTemplateInput extends TemplateRef {
+  /**
+   * The {@link templateReviewDigest} of the template as the person reviewed it. The template's
+   * agent may still be writing while someone reviews; an approval holds only for what they read.
+   */
+  readonly reviewed: string;
+}
+
+/**
+ * What a person approves: the proposal and the script version, as one SHA-256. A try's summary
+ * or a status change doesn't change it; a new proposal or script does.
+ */
+export function templateReviewDigest(template: MigrationTemplate): string {
+  return sha256Hex(
+    JSON.stringify({ proposal: template.proposal, script: template.script?.sha256 ?? null }),
+  );
+}
+
 /**
  * Approves a template: creates its content type from the proposal (or revises the one of that
  * apiId the run's templates already hold), publishes it, and moves the template to `approved`
- * with `contentTypeId`. Needs `content:manage`, as any change to the model does; the type is
- * saved as `principal`.
+ * with `contentTypeId` and `approvedBy` (the approver, whom its pages are loaded as). Needs
+ * `content:manage`, as any change to the model does; the type is saved as `principal`. Refused
+ * (`ConflictError`) unless the template is still what `input.reviewed` says the person read.
  *
  * A type of the proposal's apiId that no template of the run holds is someone's own model, and is
- * refused rather than revised. The template claims the apiId first, so an approval that stopped
- * part-way (the type saved, the template not yet approved) finishes on a second call.
+ * refused rather than revised; the save is held to the type's version as read, so one created or
+ * changed meanwhile is refused too. The template claims the apiId first, so an approval that
+ * stopped part-way (the type saved, the template not yet approved) finishes on a second call.
  */
 export async function approveTemplate(
   ctx: AppContext,
   principal: Principal,
   scope: Scope,
-  ref: TemplateRef,
+  input: ApproveTemplateInput,
 ): Promise<MigrationTemplate> {
   authorize(principal, SCOPES.contentManage, scope.spaceId);
+  const approvedBy = jobStarterOf(principal);
+  if (!approvedBy) {
+    throw new InvalidStateError('This caller can’t be recorded as a template’s approver');
+  }
+  const ref = { runId: input.runId, templateId: input.templateId };
   const template = await requireTemplate(ctx, scope, ref.runId, ref.templateId);
   if (template.status === 'approved') return template;
   if (!template.proposal) throw new InvalidStateError('The template has no proposed model');
   if (!template.script) throw new InvalidStateError('The template has no import script');
-  const apiId = template.proposal.apiId;
+  if (templateReviewDigest(template) !== input.reviewed) {
+    throw new ConflictError(
+      'The template’s model or script changed after it was reviewed: review it again',
+    );
+  }
+  const proposal = template.proposal;
+  const apiId = proposal.apiId;
   const existing = await ctx.store.contentTypes.get(scope, apiId);
   if (existing) {
     const held = (await ctx.store.migrations.listTemplates(scope, ref.runId)).some(
@@ -305,11 +338,18 @@ export async function approveTemplate(
       return { ...current, contentTypeId: apiId };
     });
   }
-  await createContentType(ctx, principal, scope, template.proposal);
+  await createContentType(ctx, principal, scope, proposal, {
+    expectedVersion: existing?.version ?? 0,
+  });
   await publishContentType(ctx, scope, apiId);
   return writeTemplate(ctx, scope, ref, (current, at) => {
     if (current.status === 'approved') return current;
-    return { ...current, status: 'approved', contentTypeId: apiId, updatedAt: at };
+    if (templateReviewDigest(current) !== input.reviewed) {
+      throw new ConflictError(
+        'The template’s model or script changed while it was approved: review it again',
+      );
+    }
+    return { ...current, status: 'approved', contentTypeId: apiId, approvedBy, updatedAt: at };
   });
 }
 
@@ -522,7 +562,11 @@ function checkOutput(
   return { ok: issues.length === 0, output, issues };
 }
 
-function runScript(
+/**
+ * One page's run. A run the sandbox refuses (a page over its size limit) fails that page alone;
+ * a sandbox that can't run at all (a domain error: no Worker Loader) fails the call.
+ */
+async function runScript(
   sandbox: ImportScriptSandbox,
   scope: Scope,
   script: string,
@@ -530,13 +574,22 @@ function runScript(
   html: string,
   contentType: ImportScriptContentType,
 ): Promise<ImportScriptResult> {
-  return sandbox.run({
-    scope,
-    script,
-    page: { url: page.url, html },
-    contentType,
-    timeoutMs: SCRIPT_TIMEOUT_MS,
-  });
+  try {
+    return await sandbox.run({
+      scope,
+      script,
+      page: { url: page.url, html },
+      contentType,
+      timeoutMs: SCRIPT_TIMEOUT_MS,
+    });
+  } catch (err) {
+    if (err instanceof DomainError || !(err instanceof RangeError)) throw err;
+    return {
+      ok: false,
+      error: { kind: 'invalid-output', message: `the sandbox refused the page: ${err.message}` },
+      logs: [],
+    };
+  }
 }
 
 /** The type a template's pages are scripted against: the approved one, else the proposal. */

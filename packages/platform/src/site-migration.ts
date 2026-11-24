@@ -147,8 +147,12 @@ const META = 'meta';
 const MESSAGE = (i: number) => `m:${String(i).padStart(5, '0')}`;
 /** Turns one alarm takes before it hands over to the next (each is a model call and its tools). */
 const TURNS_PER_ALARM = 3;
-/** Alarms in a row that fail before the agent stops (the alarm's own retries come first). */
+/** Alarms in a row that fail before the agent stops. */
 const MAX_FAILURES = 5;
+/** Wall time an alarm starts turns in. */
+const ALARM_BUDGET_MS = 5 * 60_000;
+/** How long a finished agent keeps its conversation, for a reviewer to read, before it is deleted. */
+const RETAIN_MS = 30 * 24 * 60 * 60_000;
 
 type StoredMeta = Omit<TemplateAgentState, 'messages'> & {
   readonly messageCount: number;
@@ -160,7 +164,8 @@ type StoredMeta = Omit<TemplateAgentState, 'messages'> & {
  * alarm, and each alarm takes a few turns of the agent loop (`templateAgentTurn`) and sets the
  * next, until the agent is done or out of budget. Its state lives in the object's storage, each
  * message under its own key (a value has a size limit, a conversation doesn't), so an evicted or
- * restarted object goes on from its last finished turn.
+ * restarted object goes on from its last finished turn. Thirty days after it finishes, its storage
+ * is deleted.
  *
  * It has no fetch handler and no route: the engine's driver starts it over RPC, and nothing else
  * reaches it.
@@ -192,12 +197,26 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
 
   override async alarm(): Promise<void> {
     const meta = await this.ctx.storage.get<StoredMeta>(META);
-    if (meta?.status !== 'running') return;
-    let state = await this.load(meta);
+    if (!meta) return;
+    if (meta.status !== 'running') {
+      // The alarm set when it finished: its conversation has been kept long enough.
+      await this.ctx.storage.deleteAll();
+      return;
+    }
+    let state: TemplateAgentState = { ...meta, messages: [] };
     let failures = meta.failures;
-    const wired = await this.wire(state);
+    let wired: TemplateAgentWiring | undefined;
+    // Turns stop starting past this, well inside an alarm's 15 minutes of wall time: a turn is a
+    // model call (90 s at most) and its tools (a try is a few sandbox runs).
+    const deadline = Date.now() + ALARM_BUDGET_MS;
     try {
-      for (let i = 0; i < TURNS_PER_ALARM && state.status === 'running'; i++) {
+      state = await this.load(meta);
+      wired = await this.wire(state);
+      for (
+        let i = 0;
+        i < TURNS_PER_ALARM && state.status === 'running' && Date.now() < deadline;
+        i++
+      ) {
         const before = state.messages.length;
         state = await templateAgentTurn(wired.ctx, wired.deps, state);
         failures = 0;
@@ -205,19 +224,24 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
         if (state.retryAfterSeconds !== undefined) break;
       }
     } catch (err) {
+      // Caught, so the alarm is never left to the runtime's few retries: a failure here is
+      // counted, kept, and tried again later, until there have been too many in a row.
       failures += 1;
       console.error('migration template agent: a turn failed', {
-        templateId: state.templateId,
+        templateId: meta.templateId,
         error: err instanceof Error ? err.message : String(err),
       });
       if (failures >= MAX_FAILURES) {
         state = { ...state, status: 'stopped', summary: 'Stopped after repeated errors' };
       }
-      await this.save(state, state.messages.length, failures);
+      await this.saveMeta(state, meta.messageCount, failures);
     } finally {
-      await wired.close();
+      await wired?.close();
     }
-    if (state.status !== 'running') return;
+    if (state.status !== 'running') {
+      await this.ctx.storage.setAlarm(Date.now() + RETAIN_MS);
+      return;
+    }
     const wait =
       state.retryAfterSeconds !== undefined
         ? state.retryAfterSeconds * 1000
@@ -225,6 +249,16 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
           ? 30_000 * failures
           : 0;
     await this.ctx.storage.setAlarm(Date.now() + wait);
+  }
+
+  /** Writes only the meta: the messages it names are those already stored. */
+  private async saveMeta(
+    state: TemplateAgentState,
+    messageCount: number,
+    failures: number,
+  ): Promise<void> {
+    const { messages: _, ...rest } = state;
+    await this.ctx.storage.put(META, { ...rest, messageCount, failures } satisfies StoredMeta);
   }
 
   private async load(meta: StoredMeta): Promise<TemplateAgentState> {

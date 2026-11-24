@@ -29,6 +29,7 @@ import type {
   InviteRole,
   LocalizedValue,
   MenuItem,
+  MigrationActor,
   MigrationArtifact,
   MigrationInventory,
   MigrationPageStage,
@@ -1571,6 +1572,8 @@ export const migrationTemplates = sqliteTable(
     proposal: text('proposal', { mode: 'json' }).$type<ContentTypeDraft>(),
     /** 0050_site_migration_authoring. */
     lastTry: text('last_try', { mode: 'json' }).$type<MigrationTrySummary>(),
+    /** 0050_site_migration_authoring. */
+    approvedBy: text('approved_by', { mode: 'json' }).$type<MigrationActor>(),
     version: integer('version').notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),

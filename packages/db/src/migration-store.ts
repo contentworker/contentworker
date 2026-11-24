@@ -57,6 +57,7 @@ const toTemplate = (r: TemplateRow): MigrationTemplate => ({
   script: r.script ?? null,
   proposal: r.proposal ?? null,
   lastTry: r.lastTry ?? null,
+  approvedBy: r.approvedBy ?? null,
   version: r.version,
   createdAt: r.createdAt.toISOString(),
   updatedAt: r.updatedAt.toISOString(),
@@ -307,6 +308,7 @@ export function makeMigrationStore(x: Exec): MigrationStore {
             script: t.script,
             proposal: t.proposal,
             lastTry: t.lastTry,
+            approvedBy: t.approvedBy,
             version: t.version,
             updatedAt: new Date(t.updatedAt),
           })
@@ -342,6 +344,7 @@ export function makeMigrationStore(x: Exec): MigrationStore {
         script: t.script,
         proposal: t.proposal,
         lastTry: t.lastTry,
+        approvedBy: t.approvedBy,
         version: t.version,
         createdAt: new Date(t.createdAt),
         updatedAt: new Date(t.updatedAt),

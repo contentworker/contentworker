@@ -1,6 +1,7 @@
 import {
   DomainError,
   InvalidStateError,
+  type MigrationActor,
   type MigrationRun,
   NotFoundError,
   type Principal,
@@ -8,7 +9,6 @@ import {
   scopesForKind,
 } from '@contentworker/domain';
 import {
-  type MigrationActor,
   type MigrationPublishApproved,
   type MigrationRunParams,
   type MigrationTemplateApproved,
@@ -42,8 +42,10 @@ import {
  * moved the run first: the step reads again and goes on.
  *
  * The agents only author: they can't approve, load or publish. Approvals and the go-ahead come
- * from people, as events ({@link migrationTemplateApprovedEvent}, {@link MIGRATION_PUBLISH_EVENT})
- * carrying who decided, and the loads and the publish act as them, resolved again at each step.
+ * from people, as events ({@link migrationTemplateApprovedEvent}, {@link MIGRATION_PUBLISH_EVENT}).
+ * An approval is a wake-up: who approved is read from the template (`approvedBy`), never from
+ * the event. The go-ahead names who gave it. Every actor (the run's starter too) is resolved
+ * again before each step that acts for them.
  */
 
 /** The event a template's approval is delivered as. Workflows event types take `[A-Za-z0-9_-]`. */
@@ -53,6 +55,10 @@ export const migrationTemplateApprovedEvent = (templateId: string) =>
 export const MIGRATION_PUBLISH_EVENT = 'publish-approved';
 /** How long a template waits for a person to approve it, and a run for the go-ahead. */
 export const MIGRATION_APPROVAL_TIMEOUT = '14 days';
+/** Templates a run's driver takes through (largest first); the rest are left to its callers. */
+export const MIGRATION_DRIVEN_TEMPLATES = 50;
+/** Templates a run starts an agent for (largest first); a person authors the rest. */
+export const MIGRATION_AGENTS_PER_RUN = 20;
 /** How long a step waits before reading a site that couldn't be read again. */
 const UNAVAILABLE_WAIT = '10 minutes';
 /** Times a site that can't be read is waited out, in all, before the run fails. */
@@ -63,6 +69,8 @@ const STEP = {
   retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
   timeout: '10 minutes',
 } as const;
+/** A fetch batch at a site's longest crawl delay, with slow pages, takes longer than most steps. */
+const FETCH_STEP = { ...STEP, timeout: '30 minutes' } as const;
 const MAX_ERROR_LENGTH = 500;
 
 /**
@@ -119,7 +127,8 @@ export interface SiteMigrationRunHost {
 
 export interface TemplateOutcome {
   readonly templateId: string;
-  readonly status: 'loaded' | 'transformed' | 'timed-out' | 'failed';
+  /** `not-driven`: past {@link MIGRATION_DRIVEN_TEMPLATES}, left for its callers to take through. */
+  readonly status: 'loaded' | 'transformed' | 'timed-out' | 'failed' | 'not-driven';
   readonly error?: string;
   /** Who approved it. */
   readonly approvedBy?: MigrationActor;
@@ -193,6 +202,7 @@ export async function runSiteMigration(
     const templates = unwrap(
       await steps.do('cluster', STEP, () =>
         settle(async () => {
+          await actingAs(ctx, scope, params.startedBy);
           const run = await requireRun(ctx, scope, runId);
           const view =
             run.status === 'clustered'
@@ -203,13 +213,29 @@ export async function runSiteMigration(
       ),
     );
     if (templates.length === 0) return { status: 'clustered', templates: [] };
+    // Largest first (as clustering returns them). A site of many one-off pages is many templates:
+    // agents and the driver's waits are kept to the ones that cover most of it.
+    const driven = templates.slice(0, MIGRATION_DRIVEN_TEMPLATES);
+    const skipped: TemplateOutcome[] = templates
+      .slice(MIGRATION_DRIVEN_TEMPLATES)
+      .map((t) => ({ templateId: t.id, status: 'not-driven' }));
 
-    for (const t of templates) {
+    for (const t of driven.slice(0, MIGRATION_AGENTS_PER_RUN)) {
       if (t.status === 'approved') continue;
-      await steps.do(`start agent ${t.id}`, STEP, async () => {
-        await host.agents.start({ scope, runId, templateId: t.id, startedBy: params.startedBy });
-        return true;
-      });
+      unwrap(
+        await steps.do(`start agent ${t.id}`, STEP, () =>
+          settle(async () => {
+            await actingAs(ctx, scope, params.startedBy);
+            await host.agents.start({
+              scope,
+              runId,
+              templateId: t.id,
+              startedBy: params.startedBy,
+            });
+            return true;
+          }),
+        ),
+      );
     }
 
     // Templates are approved in any order and each waits on its own; their pages are processed
@@ -224,27 +250,31 @@ export async function runSiteMigration(
       return next;
     };
     await Promise.all(
-      templates.map(async (t) => {
-        let approvedBy: MigrationActor = params.startedBy;
+      driven.map(async (t) => {
         if (t.status !== 'approved') {
           try {
-            const event = await steps.waitForEvent<MigrationTemplateApproved>(`approval ${t.id}`, {
+            // A wake-up only: who approved it is read from the template.
+            await steps.waitForEvent<MigrationTemplateApproved>(`approval ${t.id}`, {
               type: migrationTemplateApprovedEvent(t.id),
               timeout: MIGRATION_APPROVAL_TIMEOUT,
             });
-            approvedBy = event.payload?.approvedBy ?? params.startedBy;
           } catch {
             outcomes.push({ templateId: t.id, status: 'timed-out' });
             return;
           }
         }
-        outcomes.push(await serial(() => processTemplate(steps, host, params, t.id, approvedBy)));
+        outcomes.push(await serial(() => processTemplate(steps, host, params, t.id)));
       }),
     );
+    outcomes.push(...skipped);
 
     const load = host.load;
     // Links between templates' pages are pointed at each other once every template is in, as
     // whoever approved the first (relinking edits only the run's own entries).
+    // In the templates' order, not the order approvals came in: a replay resolves its waits in
+    // call order, and every relink step must act as the same person.
+    const ordered = templates.flatMap((t) => outcomes.filter((o) => o.templateId === t.id));
+    outcomes.splice(0, outcomes.length, ...ordered);
     const relinker = outcomes.find((o) => o.status === 'loaded')?.approvedBy;
     if (!load || !relinker) {
       return {
@@ -279,6 +309,8 @@ export async function runSiteMigration(
     } catch {
       return { status: 'loaded', templates: outcomes };
     }
+    // Fails closed: a go-ahead that names nobody publishes nothing.
+    if (!isActor(go?.approvedBy)) throw new RunFailure('The go-ahead to publish names no approver');
     let cursor: string | undefined;
     for (let i = 0; i < MAX_BATCHES; i++) {
       const published = unwrap(
@@ -301,7 +333,9 @@ export async function runSiteMigration(
     }
     return { status: 'published', templates: outcomes };
   } catch (err) {
-    if (!(err instanceof RunFailure)) throw err;
+    // Any failure is recorded on the run: a step that ran out of retries rethrows a serialized
+    // error (not the class it threw), and a run left in flight for ever helps nobody.
+    const message = (err instanceof Error ? err.message : String(err)).slice(0, MAX_ERROR_LENGTH);
     await steps.do('record failure', STEP, async () => {
       for (let attempt = 1; attempt <= 3; attempt++) {
         const run = await ctx.store.migrations.getRun(scope, runId);
@@ -312,7 +346,7 @@ export async function runSiteMigration(
             {
               ...run,
               status: 'failed',
-              error: err.message,
+              error: message,
               version: run.version + 1,
               updatedAt: ctx.clock.now().toISOString(),
             },
@@ -325,7 +359,7 @@ export async function runSiteMigration(
       }
       return false;
     });
-    return { status: 'failed', templates: outcomes, error: err.message };
+    return { status: 'failed', templates: inOrder(outcomes), error: message };
   }
 }
 
@@ -343,6 +377,7 @@ async function inventoryAndFetch(
     const inventoried = unwrap(
       await steps.do(`inventory ${attempt}`, STEP, () =>
         settle(async () => {
+          await actingAs(ctx, scope, params.startedBy);
           const now = await requireRun(ctx, scope, runId);
           if (now.status !== 'created') return { unavailable: null };
           try {
@@ -362,8 +397,11 @@ async function inventoryAndFetch(
   let waits = 0;
   for (let i = 0; i < MAX_BATCHES; i++) {
     const fetched = unwrap(
-      await steps.do(`fetch ${i}`, STEP, () =>
-        settle(() => fetchSourcePages(ctx, site, scope, runId)),
+      await steps.do(`fetch ${i}`, FETCH_STEP, () =>
+        settle(async () => {
+          await actingAs(ctx, scope, params.startedBy);
+          return fetchSourcePages(ctx, site, scope, runId);
+        }),
       ),
     );
     if (fetched.unavailable) {
@@ -382,11 +420,22 @@ async function processTemplate(
   host: SiteMigrationRunHost,
   params: MigrationRunParams,
   templateId: string,
-  approvedBy: MigrationActor,
 ): Promise<TemplateOutcome> {
   const { ctx, authoring, load } = host;
   const { scope, runId } = params;
   try {
+    // The store's word, not the event's: `approveTemplate` records who approved it.
+    const approvedBy = unwrap(
+      await steps.do(`approver ${templateId}`, STEP, () =>
+        settle(async () => {
+          const template = await ctx.store.migrations.getTemplate(scope, runId, templateId);
+          if (template?.status !== 'approved' || !isActor(template.approvedBy)) {
+            throw new InvalidStateError('The template has no recorded approval');
+          }
+          return template.approvedBy;
+        }),
+      ),
+    );
     let after: string | undefined;
     for (let i = 0; i < MAX_BATCHES; i++) {
       const batch = unwrap(
@@ -430,9 +479,10 @@ async function processTemplate(
     );
     return { templateId, status: 'loaded', approvedBy };
   } catch (err) {
-    // One template's failure (its script, its approver's access) leaves the others to finish.
-    if (!(err instanceof RunFailure)) throw err;
-    return { templateId, status: 'failed', error: err.message };
+    // One template's failure (its script, its approver's access, a step out of retries) leaves
+    // the others to finish.
+    const error = (err instanceof Error ? err.message : String(err)).slice(0, MAX_ERROR_LENGTH);
+    return { templateId, status: 'failed', error };
   }
 }
 
@@ -443,6 +493,21 @@ async function actingAs(ctx: AppContext, scope: Scope, actor: MigrationActor): P
   }
   return principal;
 }
+
+const isActor = (v: unknown): v is MigrationActor => {
+  const a = v as Partial<Record<string, unknown>> | null | undefined;
+  return (
+    (a?.kind === 'key' && typeof a.keyId === 'string') ||
+    (a?.kind === 'member' && typeof a.memberId === 'string') ||
+    a?.kind === 'deployment'
+  );
+};
+
+/** Outcomes in a stable order (by template id), whatever order they resolved in. */
+const inOrder = (outcomes: TemplateOutcome[]): TemplateOutcome[] =>
+  [...outcomes].sort((a, b) =>
+    a.templateId < b.templateId ? -1 : a.templateId > b.templateId ? 1 : 0,
+  );
 
 async function requireRun(ctx: AppContext, scope: Scope, id: string): Promise<MigrationRun> {
   const run = await ctx.store.migrations.getRun(scope, id);

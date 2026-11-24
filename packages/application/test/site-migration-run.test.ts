@@ -13,6 +13,8 @@ import {
   type AppContext,
   approveTemplate,
   createMigrationRun,
+  MIGRATION_AGENTS_PER_RUN,
+  MIGRATION_DRIVEN_TEMPLATES,
   MIGRATION_PUBLISH_EVENT,
   type MigrationLoadSteps,
   migrationTemplateApprovedEvent,
@@ -20,6 +22,7 @@ import {
   runSiteMigration,
   type SiteMigrationRunHost,
   setImportScript,
+  templateReviewDigest,
 } from '../src/index';
 
 const scope = { spaceId: 'site', environmentId: 'main' };
@@ -81,7 +84,7 @@ const SCRIPT = `export default (page) => ({
   assets: [],
   links: [],
 })`;
-const editor: Principal = { spaceId: 'site', kind: 'cma', scopes: scopesForKind('cma') };
+const editor: Principal = { spaceId: 'site', kind: 'admin', scopes: scopesForKind('cma') };
 
 /** Load steps that record who they acted as. */
 class RecordingLoad implements MigrationLoadSteps {
@@ -143,7 +146,8 @@ async function authorAndApprove(
 ) {
   await proposeTemplateModel(ctx, scope, { ...ref, model: MODEL });
   await setImportScript(ctx, host.authoring, scope, { ...ref, script: SCRIPT });
-  await approveTemplate(ctx, editor, scope, ref);
+  const t = await ctx.store.migrations.getTemplate(scope, ref.runId, ref.templateId);
+  await approveTemplate(ctx, editor, scope, { ...ref, reviewed: templateReviewDigest(t as never) });
 }
 
 describe('a migration run’s driver', () => {
@@ -225,20 +229,102 @@ describe('a migration run’s driver', () => {
     expect(load.calls).toEqual([]);
   });
 
-  it('fails a template alone when its approver can no longer act', async () => {
-    const { ctx, host, params, steps } = await harness();
+  it('fails a template alone when its recorded approver can no longer act', async () => {
+    const { ctx, host, params, steps, load } = await harness();
     await steps.run(() => runSiteMigration(steps, host, params));
     const [t] = await ctx.store.migrations.listTemplates(scope, params.runId);
-    await authorAndApprove(ctx, host, { runId: params.runId, templateId: t?.id as string });
-    // A key that doesn't exist: the load step refuses, and that template fails alone.
-    steps.sendEvent(migrationTemplateApprovedEvent(t?.id as string), {
+    const ref = { runId: params.runId, templateId: t?.id as string };
+    await authorAndApprove(ctx, host, ref);
+    // The approval was a key's, since revoked.
+    const approved = await ctx.store.migrations.getTemplate(scope, ref.runId, ref.templateId);
+    await ctx.store.migrations.saveTemplate(scope, ref.runId, {
+      ...(approved as NonNullable<typeof approved>),
       approvedBy: { kind: 'key', keyId: 'gone' },
+    });
+    steps.sendEvent(migrationTemplateApprovedEvent(ref.templateId), {});
+    const done = await steps.run(() => runSiteMigration(steps, host, params));
+    expect(done).toMatchObject({
+      status: 'complete',
+      value: { status: 'clustered', templates: [{ status: 'failed' }] },
+    });
+    // Transformed, but loaded as nobody.
+    expect(load.calls).toEqual([]);
+    expect((await ctx.store.migrations.countPages(scope, params.runId)).byStage).toEqual({
+      validated: 3,
+    });
+  });
+
+  it('takes an approval event as a wake-up only: the store says who approved, and whether', async () => {
+    const { ctx, host, params, steps, load } = await harness();
+    await steps.run(() => runSiteMigration(steps, host, params));
+    const [t] = await ctx.store.migrations.listTemplates(scope, params.runId);
+    // An event for a template nobody approved: nothing is transformed or loaded.
+    steps.sendEvent(migrationTemplateApprovedEvent(t?.id as string), {
+      approvedBy: { kind: 'deployment' },
     });
     const done = await steps.run(() => runSiteMigration(steps, host, params));
     expect(done).toMatchObject({
       status: 'complete',
       value: { status: 'clustered', templates: [{ status: 'failed' }] },
     });
+    expect(load.calls).toEqual([]);
+    expect((await ctx.store.migrations.countPages(scope, params.runId)).byStage).toEqual({
+      clustered: 3,
+    });
+  });
+
+  it('publishes nothing on a go-ahead that names no approver', async () => {
+    const { ctx, host, params, steps, load } = await harness();
+    await steps.run(() => runSiteMigration(steps, host, params));
+    const [t] = await ctx.store.migrations.listTemplates(scope, params.runId);
+    await authorAndApprove(ctx, host, { runId: params.runId, templateId: t?.id as string });
+    steps.sendEvent(migrationTemplateApprovedEvent(t?.id as string), {});
+    await steps.run(() => runSiteMigration(steps, host, params));
+    steps.sendEvent(MIGRATION_PUBLISH_EVENT, {});
+    const done = await steps.run(() => runSiteMigration(steps, host, params));
+    expect(done).toMatchObject({ status: 'complete', value: { status: 'failed' } });
+    expect(load.calls.some((c) => c.step === 'publish')).toBe(false);
+    expect((await ctx.store.migrations.getRun(scope, params.runId))?.status).toBe('failed');
+  });
+
+  it('stops when whoever started the run no longer acts in the space', async () => {
+    const { ctx, host, params, steps, started } = await harness();
+    const gone = { ...params, startedBy: { kind: 'member' as const, memberId: 'removed' } };
+    const done = await steps.run(() => runSiteMigration(steps, host, gone));
+    expect(done).toMatchObject({ status: 'complete', value: { status: 'failed' } });
+    expect(started).toEqual([]);
+    expect((await ctx.store.migrations.getRun(scope, params.runId))?.status).toBe('failed');
+  });
+
+  it('starts agents for the largest templates only, and drives a bounded number', async () => {
+    const { ctx, host, params, steps, started, run } = await harness();
+    // A site of many one-off structures: 60 templates, written as a clustering would.
+    const at = '2026-11-20T00:00:00.000Z';
+    const clusters = Array.from({ length: 60 }, (_, i) => ({
+      template: {
+        id: `t-${String(i).padStart(3, '0')}`,
+        runId: run.id,
+        label: `Template ${i + 1}`,
+        status: 'pending' as const,
+        pageCount: 60 - i,
+        samplePageIds: [],
+        fingerprint: [],
+        contentTypeId: null,
+        script: null,
+        proposal: null,
+        lastTry: null,
+        approvedBy: null,
+        version: 1,
+        createdAt: at,
+        updatedAt: at,
+      },
+      pageIds: [],
+    }));
+    await ctx.store.migrations.replaceTemplates(scope, run.id, clusters, at);
+    await ctx.store.migrations.saveRun(scope, { ...run, status: 'clustered', version: 2 }, 1);
+    const first = await steps.run(() => runSiteMigration(steps, host, params));
+    expect(started).toEqual(clusters.slice(0, MIGRATION_AGENTS_PER_RUN).map((c) => c.template.id));
+    expect(first.status === 'waiting' && first.on.length).toBe(MIGRATION_DRIVEN_TEMPLATES);
   });
 
   it('records a run gone wrong as failed', async () => {

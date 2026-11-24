@@ -34,6 +34,8 @@ const WIDGET_TAGS = new Set(['button', 'label', 'select', 'textarea', 'input', '
 const WIDGET_ROLES = new Set(['navigation', 'status', 'dialog', 'alert', 'search']);
 /** Keys whose values are addresses, not text a reader sees. */
 const ADDRESS_KEYS = new Set(['url', 'href', 'src', 'uri']);
+/** The longest output word checked for being two source words run together. */
+const MAX_MERGED_WORD = 64;
 
 export function scoreImportOutput(sourceHtml: string, output: ImportScriptOutput): MigrationScore {
   const parsed = parseHtml(sourceHtml);
@@ -51,7 +53,9 @@ export function scoreImportOutput(sourceHtml: string, output: ImportScriptOutput
   const sourceSet = new Set(sourceWords);
   const merged = new Set<string>();
   for (const w of outputWords) {
-    if (sourceSet.has(w) || w.length < 6) continue;
+    // Words past MAX_MERGED_WORD aren't two words run together, and the check is quadratic in a
+    // word's length, which the page decides.
+    if (sourceSet.has(w) || w.length < 6 || w.length > MAX_MERGED_WORD) continue;
     for (let i = 3; i <= w.length - 3; i += 1) {
       if (sourceSet.has(w.slice(0, i)) && sourceSet.has(w.slice(i))) {
         merged.add(w);

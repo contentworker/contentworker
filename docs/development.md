@@ -467,7 +467,8 @@ tables and nullable columns: code deployed before it never names them, and an ex
 schedule reads as "the default project", which is none until one is set.
 
 `0050_site_migration_authoring.sql` adds `migration_templates.proposal` (the proposed content
-type, JSON) and `migration_templates.last_try` (the last script try's summary, JSON), and
+type, JSON) and `migration_templates.last_try` (the last script try's summary, JSON),
+`migration_templates.approved_by` (who approved it, actor JSON), and
 `migration_pages.output_script` (the SHA-256 of the script version a page's last transform ran).
 Nullable columns, which code deployed before them never names; an existing page reads as never
 transformed. See [Site migrations](./domain-model.md#site-migrations).

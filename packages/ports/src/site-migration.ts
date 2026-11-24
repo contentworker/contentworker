@@ -1,4 +1,5 @@
 import type {
+  MigrationActor,
   MigrationPage,
   MigrationPageStage,
   MigrationRun,
@@ -69,15 +70,6 @@ export interface MigrationStore {
   ): Promise<void>;
 }
 
-/**
- * Who a migration's background steps act as, by reference, resolved again before each step that
- * writes content (`JobStarter` in the application): never a credential.
- */
-export type MigrationActor =
-  | { readonly kind: 'key'; readonly keyId: string }
-  | { readonly kind: 'member'; readonly memberId: string }
-  | { readonly kind: 'deployment' };
-
 /** What a migration run's durable driver starts with. */
 export interface MigrationRunParams {
   readonly scope: Scope;
@@ -86,10 +78,12 @@ export interface MigrationRunParams {
   readonly startedBy: MigrationActor;
 }
 
-/** A template's approval, delivered to the run's driver. */
+/**
+ * A template's approval, delivered to the run's driver: a wake-up only. Who approved it is read
+ * from the template (`approvedBy`), which `approveTemplate` writes; the event's word is not taken.
+ */
 export interface MigrationTemplateApproved {
-  /** Who approved it: its pages are loaded as them. */
-  readonly approvedBy: MigrationActor;
+  readonly approvedBy?: MigrationActor;
 }
 
 /** The go-ahead to publish a run, delivered to its driver. */

@@ -29,14 +29,16 @@ import { MIGRATION_SOURCE_URL_FIELD } from './migration';
  * - has a URL pattern, so each migrated page's old path can redirect to its entry's new one.
  *
  * What only a person should decide is left out: a preview URL (where preview tokens are sent),
- * agent instructions (read by every later agent as guidance) and the editor layout.
+ * agent instructions (read by every later agent as guidance), the editor layout, and each field's
+ * guidance and defaults (`help`, `description`, `placeholder`, `defaultValue`), which a proposal
+ * steered by a page's text would otherwise put in front of every editor and agent.
  */
 export function checkTemplateModel(
   draft: ContentTypeDraft,
   options: ContentTypeOptions = {},
 ): ContentTypeDraft {
   const issues: FieldIssue[] = [];
-  const given = Array.isArray(draft?.fields) ? draft.fields : [];
+  const given = Array.isArray(draft?.fields) ? draft.fields.map(withoutGuidance) : [];
   const existing = given.find((f) => f?.apiId === MIGRATION_SOURCE_URL_FIELD);
   if (
     existing &&
@@ -96,4 +98,31 @@ export function checkTemplateModel(
   // throws a ValidationError naming the field.
   defineContentType(model, options);
   return model;
+}
+
+/** A field, and the fields nested in it, without the text and defaults a person writes. */
+function withoutGuidance(field: FieldDefinition): FieldDefinition {
+  if (typeof field !== 'object' || field === null) return field;
+  const { help: _h, description: _d, placeholder: _p, defaultValue: _v, ...rest } = field;
+  const items = rest.items;
+  return {
+    ...rest,
+    ...(rest.fields ? { fields: rest.fields.map(withoutGuidance) } : {}),
+    ...(items
+      ? {
+          items: {
+            ...items,
+            ...(items.fields ? { fields: items.fields.map(withoutGuidance) } : {}),
+            ...(items.variants
+              ? {
+                  variants: items.variants.map((v) => ({
+                    ...v,
+                    fields: Array.isArray(v.fields) ? v.fields.map(withoutGuidance) : v.fields,
+                  })),
+                }
+              : {}),
+          },
+        }
+      : {}),
+  };
 }

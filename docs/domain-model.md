@@ -1743,8 +1743,9 @@ it as a `MigrationArtifact` (`{ key, sha256, bytes }`).
   and the `fingerprint` the pages matched. It also holds the `contentTypeId` and import `script`
   artifact once they are chosen, the `proposal` (the content type its pages are proposed to
   become, a `ContentTypeDraft`) and `lastTry` (`MigrationTrySummary`: the script tried, pages
-  tried, ok, passed and the mean score, with the first problems). Migration
-  `0050_site_migration_authoring` adds `proposal`, `last_try` and the page's `output_script`.
+  tried, ok, passed and the mean score, with the first problems) and `approvedBy`. Migration
+  `0050_site_migration_authoring` adds `proposal`, `last_try`, `approved_by` and the page's
+  `output_script`.
 
 Clustering is pure. `structureFingerprint` (or `readPageFacts`, which also reads the title and
 links) parses a page with the same lenient reader as `richTextFromHtml`. It hashes the
@@ -1803,7 +1804,8 @@ two at a time.
 - `proposeTemplateModel` records the proposal, checked by `checkTemplateModel`: a `sourceUrl`
   field (`MIGRATION_SOURCE_URL_FIELD`; `Symbol` or `Text`, `unique`, not localized; added when left
   out), exactly one top-level blocks field for the body, a URL pattern, and the content type's own
-  rules. A preview URL, agent instructions and the layout are left out. The template moves to
+  rules. A preview URL, agent instructions, the layout, and each field's `help`, `description`,
+  `placeholder` and `defaultValue` are left out. The template moves to
   `authoring`, so clustering again is refused. Nothing in the model changes.
 - `setImportScript` stores a script version (at most 256 KiB) and moves the template to
   `authoring`; `getImportScript` reads it back.
@@ -1811,14 +1813,18 @@ two at a time.
   pages of the template), checks each output's shape and its fit to the template's type (the
   approved one, else the proposal: no unknown fields, blocks of the blocks field's variants), and
   scores it. Only the summary is kept, as `lastTry`.
-- `approveTemplate` needs `content:manage`. It claims the proposal's apiId on the template,
-  creates (or revises) the content type as the caller and publishes it, then moves the template to
-  `approved`. A type of that apiId that no template of the run holds is refused (`ConflictError`).
-  An approved template's model and script can't be changed.
+- `approveTemplate` needs `content:manage` and `reviewed`, the `templateReviewDigest` (SHA-256 of
+  the proposal and the script version) of the template as the reviewer read it: a template whose
+  proposal or script changed since is refused (`ConflictError`). It claims the proposal's apiId on
+  the template, creates (or revises) the content type as the caller, held to the type's version as
+  read, and publishes it, then moves the template to `approved` with `approvedBy`, the caller as a
+  `MigrationActor` (`jobStarterOf`). A type of that apiId that no template of the run holds is
+  refused (`ConflictError`). An approved template's model and script can't be changed.
 - `transformTemplatePages` runs an approved template's script on up to 50 of its pages after a
   cursor. Each output's JSON is stored as it came back, with `output.sha256` its hash, scored, and
   the page moves to `validated` or `needs-fix` with its error cleared. A script failure or an
-  output that doesn't fit goes to `needs-fix` with the reason. Pages already transformed by this
+  output that doesn't fit, or a page the sandbox refuses (over its size limit), goes to `needs-fix`
+  with the reason. Pages already transformed by this
   script version, loaded or published, or without HTML are skipped; it reports `next` and `more`.
 
 `runSiteMigration` (`site-migration-run.ts`) is the body of `MigrationWorkflow`, one Workflows
@@ -1828,10 +1834,14 @@ per step → `clusterPages` → one template agent per template not approved →
 `waitForEvent` on `template-approved-<templateId>` (14 days; Workflows event types take only
 letters, digits, `-` and `_`) → its transforms a batch per step, then its load and redirects → one
 relink pass → `waitForEvent` on `publish-approved` → publish. Approved templates are processed one
-at a time. The load, relink, redirect and publish steps are behind `MigrationLoadSteps`, and the
-engine doesn't bind them yet, so a run ends `transformed`. Each event carries who decided
-(`MigrationActor`: a key, a team member or the deployment); the step resolves them again before it
-acts. A step's `DomainError` fails its template (or the run, which is then `failed`), and a lost
+at a time. Agents start for the 20 largest templates (`MIGRATION_AGENTS_PER_RUN`) and the driver
+takes the 50 largest through (`MIGRATION_DRIVEN_TEMPLATES`); the rest end `not-driven`. The load, relink, redirect and publish steps are behind `MigrationLoadSteps`, and the
+engine doesn't bind them yet, so a run ends `transformed`. An approval event is a
+wake-up only: who approved a template is read from its `approvedBy`, and a template the store
+doesn't hold as approved fails. The go-ahead to publish names its approver (`MigrationActor`: a key,
+a team member or the deployment), and one that names none fails the run. Each actor, and whoever
+started the run, is resolved again before each step that acts for them; a run whose starter no
+longer acts in the space fails, and so does that starter's agent. A step's `DomainError` fails its template (or the run, which is then `failed`), and a lost
 compare-and-set is read again. `MigrationRunner` (`CloudflareMigrationRunner` over `MIGRATION_WF`)
 starts a run's driver and delivers its events.
 
@@ -1843,8 +1853,10 @@ and template. It can't approve, load or publish. Page HTML (comments, scripts an
 clipped) and script outputs reach the model fenced by `wrapUntrusted`. Each turn is metered through
 `generateWithBudget` on the background AI window, starting on the `balanced` tier and moving to
 `flagship` after three tries that don't all pass. A run stops at 30 turns or 600,000 tokens. The
-object takes three turns per alarm, keeps each message under its own storage key, and stops after
-five failed alarms in a row.
+object takes up to three turns per alarm (none started past five minutes), keeps each message
+under its own storage key, stops after five failed alarms in a row, and deletes its storage 30 days
+after it finishes. A try's problems, the page URL and every output reach the model inside the
+fence; only a try's counts are outside it.
 
 ## Domain events
 

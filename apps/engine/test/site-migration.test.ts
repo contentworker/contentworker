@@ -8,6 +8,7 @@ import {
   inventorySite,
   proposeTemplateModel,
   setImportScript,
+  templateReviewDigest,
 } from '@contentworker/application';
 import { type ContentTypeDraft, scopesForKind } from '@contentworker/domain';
 import {
@@ -154,15 +155,14 @@ describe('MigrationWorkflow on Cloudflare Workflows', () => {
     const blob = migrationTestState.blob as FakeBlobStore;
     await proposeTemplateModel(ctx, scope, { ...ref, model: MODEL });
     await setImportScript(ctx, { blob }, scope, { ...ref, script: 'export default () => ({})' });
+    const authored = await ctx.store.migrations.getTemplate(scope, run.id, templateId);
     await approveTemplate(
       ctx,
-      { spaceId: scope.spaceId, kind: 'cma', scopes: scopesForKind('cma') },
+      { spaceId: scope.spaceId, kind: 'admin', scopes: scopesForKind('cma') },
       scope,
-      ref,
+      { ...ref, reviewed: templateReviewDigest(authored as never) },
     );
-    await runner.templateApproved(scope, run.id, templateId, {
-      approvedBy: { kind: 'deployment' },
-    });
+    await runner.templateApproved(scope, run.id, templateId, {});
 
     await instance.waitForStatus('complete');
     expect(await instance.getOutput()).toMatchObject({
@@ -232,7 +232,9 @@ describe('MigrationTemplateAgent', () => {
     expect(authored?.lastTry).toMatchObject({ pages: 2, ok: 2, passed: 2 });
     // Each turn after the first carried the conversation, read back from storage across alarms.
     expect(ai.requests.at(-1)?.messages?.filter((m) => m.role === 'tool')).toHaveLength(4);
-    // Done: a later alarm does nothing.
+    // Done: its one remaining alarm is the retention one, which deletes the conversation.
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(await stub.status()).toBeNull();
     expect(await runDurableObjectAlarm(stub)).toBe(false);
   });
 });

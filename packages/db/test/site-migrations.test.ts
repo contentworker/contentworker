@@ -80,6 +80,7 @@ const template = (runId: string, over: Partial<MigrationTemplate> = {}): Migrati
   script: null,
   proposal: null,
   lastTry: null,
+  approvedBy: null,
   version: 1,
   createdAt: AT,
   updatedAt: AT,
@@ -401,6 +402,7 @@ describe('site migrations on D1', () => {
         meanScore: 0.5,
         problems: ['text coverage 50%'],
       },
+      approvedBy: { kind: 'member', memberId: 'm-1' },
       version: 2,
       updatedAt: LATER,
     };

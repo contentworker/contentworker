@@ -182,10 +182,21 @@ export interface MigrationTemplate {
   readonly proposal: ContentTypeDraft | null;
   /** How its script did the last time it was tried on the sample pages. */
   readonly lastTry: MigrationTrySummary | null;
+  /** Who approved it: its pages are loaded as them. Null until approved. */
+  readonly approvedBy: MigrationActor | null;
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+
+/**
+ * Who a migration's background steps act as, by reference, resolved again before each step that
+ * writes content: an API key, a team member, or the deployment's own authority. Never a credential.
+ */
+export type MigrationActor =
+  | { readonly kind: 'key'; readonly keyId: string }
+  | { readonly kind: 'member'; readonly memberId: string }
+  | { readonly kind: 'deployment' };
 
 /** A try of a template's script on its sample pages, as the template keeps it. */
 export interface MigrationTrySummary {

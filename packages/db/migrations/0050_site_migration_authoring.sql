@@ -1,8 +1,9 @@
 -- 0050_site_migration_authoring: what authoring a site migration's templates keeps. Mirrors
--- `migrationTemplates.proposal`, `migrationTemplates.lastTry` and `migrationPages.outputScript`
+-- `migrationTemplates.proposal`, `migrationTemplates.lastTry`, `migrationTemplates.approvedBy` and
+-- `migrationPages.outputScript`
 -- in packages/db/src/schema.ts.
 --
--- Expand-only: three nullable columns, which the code deployed before them never names. Existing
+-- Expand-only: four nullable columns, which the code deployed before them never names. Existing
 -- templates read as having no proposal and no try; existing pages as never transformed by a
 -- script version, so the next transform pass takes them again. Nothing is backfilled.
 
@@ -11,5 +12,8 @@
 ALTER TABLE `migration_templates` ADD `proposal` text;
 -- The last try of the template's script on its sample pages, as summary JSON.
 ALTER TABLE `migration_templates` ADD `last_try` text;
+-- Who approved the template, as actor JSON (`{ kind: 'key' | 'member' | 'deployment', … }`): the
+-- one its pages are loaded as.
+ALTER TABLE `migration_templates` ADD `approved_by` text;
 -- SHA-256 of the script version the page's last transform ran.
 ALTER TABLE `migration_pages` ADD `output_script` text;

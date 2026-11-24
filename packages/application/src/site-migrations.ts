@@ -393,6 +393,7 @@ export async function clusterPages(
       script: null,
       proposal: null,
       lastTry: null,
+      approvedBy: null,
       version: 1,
       createdAt: at,
       updatedAt: at,
