@@ -91,9 +91,38 @@ export interface ImportRunOptions {
    * an import that overwrites by default destroys edits made since the last run.
    */
   readonly conflicts?: ImportConflictPolicy;
+  /**
+   * Told the entry each record became, as it is written: for an in-process caller that keeps its
+   * own record of what became what (a site migration's pages). Not accepted over the API.
+   */
+  readonly onWritten?: (written: ImportWritten) => void;
   // Nothing here publishes. Imported entries arrive as drafts, and publishing
   // them is the existing bulk job — which is resumable, cancellable and
   // reportable, none of which a flag on this call would be.
+}
+
+/** A record the run wrote, and the entry it is. */
+export interface ImportWritten {
+  readonly externalId: string;
+  readonly entryId: string;
+  readonly action: 'create' | 'update';
+}
+
+/**
+ * A source over records already read: for an in-process caller that builds them itself (a site
+ * migration's pages, from their import scripts' output) and hands over values already of the
+ * field types (documents, blocks, links), which the planner takes as they are. The payload is
+ * not read.
+ */
+export function recordsImportSource(records: readonly SourceRecord[]): ImportSource {
+  const fields = [...new Set(records.flatMap((r) => Object.keys(r.values)))];
+  return {
+    id: 'records',
+    name: 'Records',
+    async read() {
+      return { records, fields, warnings: [] };
+    },
+  };
 }
 
 /** One record's fate, decided identically by analyze and execute. */
@@ -215,14 +244,20 @@ export async function executeImport(
       if (record.action === 'update' && record.entryId) {
         await updateImportedEntry(ctx, scope, record.entryId, record.fields, blockedFields);
         updated += 1;
+        options.onWritten?.({
+          externalId: record.externalId,
+          entryId: record.entryId,
+          action: 'update',
+        });
       } else {
-        await createEntry(
+        const { entry } = await createEntry(
           ctx,
           scope,
           { contentTypeApiId: contentType.apiId, fields: record.fields },
           { copy: true, imported: true },
         );
         created += 1;
+        options.onWritten?.({ externalId: record.externalId, entryId: entry.id, action: 'create' });
       }
     } catch (err) {
       // One bad record does not abandon the other nine thousand — the report

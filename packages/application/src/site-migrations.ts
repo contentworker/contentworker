@@ -202,6 +202,7 @@ function newPage(
     output: null,
     score: null,
     entryId: null,
+    unresolvedLinks: 0,
     error: null,
     createdAt: at,
     updatedAt: at,

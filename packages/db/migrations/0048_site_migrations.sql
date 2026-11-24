@@ -1,8 +1,8 @@
 -- 0048_site_migrations: site migrations (`MigrationRun`, `MigrationTemplate`, `MigrationPage` in
--- @contentworker/domain). Mirrors `migrationRuns`, `migrationTemplates` and `migrationPages` in
--- packages/db/src/schema.ts.
+-- @contentworker/domain). Mirrors `migrationRuns`, `migrationTemplates`, `migrationPages` and
+-- `migrationAssets` in packages/db/src/schema.ts.
 --
--- Three new tables, which the code already deployed never reads or writes. Nothing is backfilled.
+-- Four new tables, which the code already deployed never reads or writes. Nothing is backfilled.
 -- Environment-scoped (the environment purge clears them). Page HTML and script outputs are not
 -- stored here: they are objects under `migrations/<space>/<environment>/<run>/` in the bucket, and
 -- these rows hold their key, SHA-256 and size as `{ key, sha256, bytes }` JSON.
@@ -50,7 +50,8 @@ CREATE TABLE `migration_templates` (
 -- A run's pages, one per URL. `depth` is links from a crawl's start page (0 for a sitemap's pages):
 -- a crawl's pages are its frontier, so it resumes from them. `html` and `output` are artifact JSON
 -- or NULL; `fingerprint` a JSON list of structure shingles (at most 256 short hashes); `score` the
--- output's score JSON.
+-- output's score JSON. `unresolved_links` counts the links in the loaded entry to pages that had
+-- no entry yet, which the relink pass looks for.
 CREATE TABLE `migration_pages` (
 	`space_id` text NOT NULL,
 	`environment_id` text NOT NULL,
@@ -69,6 +70,7 @@ CREATE TABLE `migration_pages` (
 	`output` text,
 	`score` text,
 	`entry_id` text,
+	`unresolved_links` integer DEFAULT 0 NOT NULL,
 	`error` text,
 	`created_at` integer NOT NULL,
 	`updated_at` integer NOT NULL,
@@ -79,3 +81,15 @@ CREATE UNIQUE INDEX `migration_pages_by_url` ON `migration_pages` (`space_id`, `
 -- A run's pages by stage (triage, the next step's work) and by template.
 CREATE INDEX `migration_pages_by_stage` ON `migration_pages` (`space_id`, `environment_id`, `run_id`, `stage`);
 CREATE INDEX `migration_pages_by_template` ON `migration_pages` (`space_id`, `environment_id`, `run_id`, `template_id`);
+
+-- The assets a run created from URLs, one per URL: a file the run has brought in is not downloaded
+-- again for another page or a second load.
+CREATE TABLE `migration_assets` (
+	`space_id` text NOT NULL,
+	`environment_id` text NOT NULL,
+	`run_id` text NOT NULL,
+	`url` text NOT NULL,
+	`asset_id` text NOT NULL,
+	`created_at` integer NOT NULL,
+	PRIMARY KEY(`space_id`, `environment_id`, `run_id`, `url`)
+);

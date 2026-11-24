@@ -1596,6 +1596,7 @@ export const migrationPages = sqliteTable(
     output: text('output', { mode: 'json' }).$type<MigrationArtifact>(),
     score: text('score', { mode: 'json' }).$type<MigrationScore>(),
     entryId: text('entry_id'),
+    unresolvedLinks: integer('unresolved_links').notNull().default(0),
     error: text('error'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
@@ -1606,6 +1607,20 @@ export const migrationPages = sqliteTable(
     index('migration_pages_by_stage').on(t.spaceId, t.environmentId, t.runId, t.stage),
     index('migration_pages_by_template').on(t.spaceId, t.environmentId, t.runId, t.templateId),
   ],
+);
+
+/** The assets a run created from URLs (0048_site_migrations), one per URL. */
+export const migrationAssets = sqliteTable(
+  'migration_assets',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    runId: text('run_id').notNull(),
+    url: text('url').notNull(),
+    assetId: text('asset_id').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.runId, t.url] })],
 );
 
 /** Navigation menus, each a JSON tree of items written whole at its revision (0020_menus). */

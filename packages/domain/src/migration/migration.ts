@@ -43,6 +43,12 @@ export const MIGRATION_MAX_GLOBS = 50;
 export const MIGRATION_MAX_GLOB_LENGTH = 512;
 export const MIGRATION_MAX_URL_LENGTH = 2048;
 export const MIGRATION_MAX_NAME_LENGTH = 200;
+/**
+ * The field a migrated page's entry holds its source URL in: the identity a load matches on, so
+ * loading a page again updates its entry rather than adding a second. Every template's content
+ * type has it (`Symbol` or `Text`, not localized).
+ */
+export const MIGRATION_SOURCE_URL_FIELD = 'sourceUrl';
 /** Score at or above which a page's output counts as validated, unless the run sets its own. */
 export const MIGRATION_DEFAULT_THRESHOLD = 0.8;
 
@@ -139,6 +145,11 @@ export interface MigrationPage {
   readonly score: MigrationScore | null;
   /** The entry it was loaded as. */
   readonly entryId: string | null;
+  /**
+   * Links in its entry to pages of the run that had no entry when it was loaded, left as
+   * hyperlinks for the relink pass to point at their entries; 0 when there are none.
+   */
+  readonly unresolvedLinks: number;
   /** Why its last step failed (a fetch that answered 404, a script that threw). */
   readonly error: string | null;
   readonly createdAt: string;

@@ -1714,8 +1714,8 @@ strand the AI actions and agent schedules naming it: both carry an optional `pro
 
 A site migration brings a published website into an environment as structured content
 (`packages/domain/src/migration/`). Its records are environment-scoped (`MigrationStore`, D1
-tables `migration_runs`, `migration_templates` and `migration_pages`), and the environment purge
-clears them. Page HTML is not stored in D1: it is an object in the media bucket under
+tables `migration_runs`, `migration_templates`, `migration_pages` and `migration_assets`), and the
+environment purge clears them. Page HTML is not stored in D1: it is an object in the media bucket under
 `migrations/<space>/<environment>/<run>/html/<sha256>.html`, content-addressed, and a page names
 it as a `MigrationArtifact` (`{ key, sha256, bytes }`).
 
@@ -1736,7 +1736,8 @@ it as a `MigrationArtifact` (`{ key, sha256, bytes }`).
   last fetch's `httpStatus` or `error`, its `html` artifact and its structure `fingerprint`. Its
   `stage` is one of `MIGRATION_PAGE_STAGES`: `discovered` → `clustered` → `transformed` →
   `validated` or `needs-fix` (by `stageForScore` at the run's threshold) → `loaded` → `published`.
-  `output`, `score` and `entryId` are filled by the later stages.
+  `output`, `score` and `entryId` are filled by the later stages, and `unresolvedLinks` counts
+  the links in its entry left as hyperlinks for the relink pass.
 - `MigrationTemplate`: pages that share a structure. It holds a `label`, a `status` (`pending`,
   `authoring` or `approved`), a `pageCount`, up to three `samplePageIds` spread across its pages,
   and the `fingerprint` the pages matched. It also holds the `contentTypeId` and import `script`
@@ -1750,9 +1751,22 @@ is greedy leader clustering on the Jaccard similarity of fingerprints (`MIGRATIO
 0.6). It returns the largest template first.
 
 `ImportScriptOutput` is what a template's import script returns for a page: `fields`,
-`blocks` (`{ variant, fields }`), `assets` (`{ url, alt? }`) and `links` (`{ href }`). It is
-structured, never markup. `importScriptOutputIssues` checks its shape. `scoreImportOutput` scores
-it against the source page (`MigrationScore`):
+`blocks` (`{ variant, fields }`), `assets` (`{ url, alt? }`) and `links` (`{ href }`).
+`importScriptOutputIssues` checks its shape. Field values are the field types' own values, with
+two markers for what a script can't know inside the sandbox:
+
+- `{ $html: "<p>…</p>" }` for a rich-text value, as the page's HTML fragment. A `RichTextDocument`
+  is also taken as it is.
+- `{ $asset: "https://…/a.png" }` for an asset link, or an element of a list of them.
+
+`resolveImportScriptOutput` turns every `$html` into a `RichTextDocument` (`richTextFromHtml`) and
+every `$asset` into an asset link, however deep they sit. Without resolvers it is what a score or
+a preview reads; at load it gets the run's assets and entries. The fragments stay in the stored
+output artifact, the script's return value in the bucket, because only the load knows the ids
+they resolve to. Nothing read out of it carries markup. `importScriptAssetUrls` lists the asset
+URLs an output names: its `assets` and its `$asset` values. An image in a fragment becomes an
+embedded asset only when its URL is one of them. `scoreImportOutput` scores an output (resolved
+first) against the source page (`MigrationScore`):
 
 - Text coverage: the share of the source's content words found in the output's field values and
   rich-text documents. Header, footer and navigation outside `main`/`article` are left out of the
@@ -1775,9 +1789,10 @@ sites, and its adapter (`@contentworker/adapters/site-source`) works over `Remot
 - Requests go a few at a time. When robots.txt asks a crawl delay, every request to the origin
   after the first waits that long after the one before, across batches and calls.
 
-The use-cases (`packages/application/src/site-migrations.ts`) are `createMigrationRun`,
-`inventorySite`, `fetchSourcePages`, `clusterPages` and `getMigrationRun`. They aren't on the HTTP
-API or MCP yet.
+The use-cases (`packages/application/src/site-migrations.ts` and `site-migration-load.ts`) are
+`createMigrationRun`, `inventorySite`, `fetchSourcePages`, `clusterPages`, `getMigrationRun`,
+`loadTemplatePages`, `relinkMigratedPages`, `importMigrationRedirects` and `publishMigration`.
+They aren't on the HTTP API or MCP yet.
 
 - `inventorySite` adds the pages a sitemap lists, or a crawl's start page, skipping URLs the run
   already holds. It throws `SiteUnavailableError` (`site_unavailable`), with nothing written,
@@ -1789,6 +1804,44 @@ API or MCP yet.
     and a crawl resumes where it stopped.
   - It reports `more` while pages are waiting. When the site is unavailable it reports
     `unavailable`, writes nothing, and the batch waits.
+
+Loading, relinking, redirecting and publishing each take the caller's `Principal` and go through
+the path a person's writes do. Pages move at a compare-and-set on their `updatedAt`
+(`movePages`). A step that finds a page written since it read it runs its batch again from a fresh
+read, up to three times in all, then the `TransactionConflictError` surfaces.
+
+- `loadTemplatePages` loads up to 50 `validated` pages of an approved template (and `needs-fix`
+  ones with `includeNeedsFix`) whose last step didn't fail. It refuses a template whose content
+  type is missing, or lacks a `sourceUrl` field (`MIGRATION_SOURCE_URL_FIELD`: `Symbol` or `Text`,
+  `unique`, not localized). For each page it:
+  - reads the output artifact, checked against the hash the page holds;
+  - creates each asset the output names with `createAssetFromUrl`, relative URLs resolved against
+    the page's. Each file is fetched once per run: `migration_assets` records the asset made from
+    each URL. A download that fails is reported, and the page loads without that file;
+  - resolves the output, so a link to a page of the run that already has an entry becomes an
+    `entry-hyperlink`. A link to a page not loaded yet stays a hyperlink and is counted in the
+    page's `unresolvedLinks`;
+  - writes the entries through the import planner (`executeImport` over `recordsImportSource`),
+    with `sourceUrl` as the `identityField` and `conflicts: 'update'`. Blocks go into the type's
+    one top-level blocks field as `{ _type, …fields }`. A rerun updates the same entries, and the
+    unique field keeps two racing loads from both creating.
+
+  Each page moves to `loaded` with its `entryId`. A page the output or the planner refuses moves
+  to `needs-fix` with the reason as its `error`, and isn't taken again until it is transformed
+  again.
+- `relinkMigratedPages` walks the loaded pages that still have `unresolvedLinks`, with an
+  `after`/`next` cursor. It turns hyperlinks to pages that now have an entry into
+  `entry-hyperlink`s and saves only the entries that changed, at the version it read. An entry
+  edited in between is skipped and keeps its count.
+- `importMigrationRedirects` (`content:manage`) redirects each loaded or published page's old
+  path to its entry's path by the type's `urlPattern` (`urlPath`, default locale), through
+  `importRedirects`: a 301 upsert by source with origin `import`. A page whose path didn't move,
+  a type with no pattern, and an old path that would read as a pattern are skipped.
+- `publishMigration` (`content:publish`, and `publish` on each entry's type) publishes a batch of
+  loaded entries with `bulkEntryAction` and moves their pages to `published`. An entry already
+  published at its current version moves without a second publish. With `viaRelease` it adds
+  every loaded entry to one release (new, or `releaseId`) instead. The pages stay `loaded` until
+  the release ships and a publish pass finds their entries live.
 
 ## Domain events
 

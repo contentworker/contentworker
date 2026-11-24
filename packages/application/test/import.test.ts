@@ -20,6 +20,7 @@ import {
   listPreviewEntries,
   planImport,
   publishContentType,
+  recordsImportSource,
   SYSTEM_CALLER,
   trashEntry,
 } from '../src/index';
@@ -725,5 +726,47 @@ describe('importing as a role', () => {
       created: 1,
       skipped: 0,
     });
+  });
+});
+
+describe('records built in process', () => {
+  it('are taken as the field types’ own values, and each written entry is reported', async () => {
+    const body = {
+      nodeType: 'document',
+      data: {},
+      content: [
+        {
+          nodeType: 'paragraph',
+          data: {},
+          content: [{ nodeType: 'text', value: 'Already a document', marks: [], data: {} }],
+        },
+      ],
+    };
+    const source = recordsImportSource([
+      { externalId: 'https://site.test/a', values: { title: 'A', sku: 'a', body } },
+    ]);
+    const mapping = {
+      contentTypeApiId: 'article',
+      fields: { title: 'title', sku: 'sku', body: 'body' },
+      identityField: 'sku',
+    };
+    const written: unknown[] = [];
+    const run = () =>
+      executeImport(
+        ctx,
+        admin,
+        scope,
+        source,
+        { payload: '', mapping },
+        { conflicts: 'update', onWritten: (w) => written.push(w) },
+      );
+    await run();
+    await run();
+    const [created, updated] = written as { entryId: string; action: string }[];
+    expect(created).toMatchObject({ externalId: 'https://site.test/a', action: 'create' });
+    expect(updated).toEqual({ ...created, action: 'update' });
+    const entries = await listPreviewEntries(ctx, scope, {});
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.fields.body).toEqual({ 'en-US': body });
   });
 });
