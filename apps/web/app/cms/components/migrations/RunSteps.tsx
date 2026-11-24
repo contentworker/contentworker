@@ -295,7 +295,8 @@ export function RunSteps({
                 {`Reads ${FETCH_BATCH} pages a request, keeping to the site’s robots.txt and its crawl delay.`}
                 {run.source.kind === 'crawl' ? ' Each page’s links join the run.' : ''}
               </span>
-              {pages.total > 0 ? (
+              {/* When nothing waits, the step's own reason already says so to whoever can run it. */}
+              {pages.total > 0 && (pending > 0 || canRun !== true || looping) ? (
                 <span>
                   {pending > 0 ? `${plural(pending, 'page')} to fetch` : 'Every page fetched'}
                 </span>
