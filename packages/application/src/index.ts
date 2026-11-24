@@ -81,6 +81,7 @@ export * from './locales';
 export * from './media-ai';
 export * from './menus';
 export * from './moderation';
+export * from './moderation-holds';
 export * from './oauth';
 export * from './plugin-hooks';
 export * from './plugin-packages';

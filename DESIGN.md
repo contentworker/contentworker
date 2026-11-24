@@ -310,7 +310,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   scope, the theme, the install hint and Sign out. It closes when a page is chosen.
 - **Approvals count:** a filled `wait` pill, 99+ past two digits, in the sidebar and on the tab
   bar's Approvals tab (a `wait` dot on the rail): the shell's one call for attention. It counts
-  the inbox's own two lists (`cms/lib/approvals.ts`), so deciding an item updates it; it also
+  the inbox's own three lists (`cms/lib/approvals.ts`), so deciding an item updates it; it also
   refreshes every minute while the tab is visible. The link's name carries it for screen readers
   ("Approvals, 3 waiting"); on the tab the pill follows the label in reading order, a space
   between (it is drawn over the icon), so the visible "Approvals 3" sits inside that name for
@@ -499,8 +499,15 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   coming up, waiting on a decision, live activity), then search. Coming up puts a pending action
   past its time (two minutes' grace for the minute sweep) under Overdue, a `bad` "Overdue" stamp
   where the time would be, as Approvals stamps a step past its deadline. Waiting on a decision
-  lists Approvals' own two lists and shows the shell's count, so the card, the inbox and the badge
-  give one number; the agent-run ledger is history and never counts. AI usage and recent agent
+  lists Approvals' own three lists and shows the shell's count, so the card, the inbox and the badge
+  give one number; the agent-run ledger is history and never counts.
+- **Approvals** (`cms/routes/Approvals.tsx`): Workflow steps, Agent proposals, then Held by
+  moderation, each a `Section` with a one-line muted sentence saying what its state means; a
+  section with nothing waiting moves after the ones that have something. A held entry's row names
+  the entry, its type, when it was held and what was flagged ("Flagged for Harassment"), under a
+  `bad` "Held" stamp: the entry was taken offline, which is a failure state, not the model's
+  pending work the `ai` tone marks. Republish (ink) asks in place first, with an optional reason,
+  because it overrides the agent; Keep unpublished (outline) acts in one press. AI usage and recent agent
   runs sit under the capabilities in Settings → AI.
 - **Content:** the content types as a catalog (`PageHeader` with New content type): each type's
   icon as its tile (its own, else the one its name suggests, else its initials), its name linked to its entries (a singleton's to its one entry, `/entry`, as the

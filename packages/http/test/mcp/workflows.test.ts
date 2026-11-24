@@ -175,6 +175,7 @@ describe('MCP workflow tools', () => {
     expect(await call('approvals_count')).toEqual({
       workflowTasks: 1,
       agentReviews: 1,
+      moderationHolds: 0,
       total: 2,
     });
 
@@ -186,6 +187,7 @@ describe('MCP workflow tools', () => {
     expect(await elsewhere.call('approvals_count')).toEqual({
       workflowTasks: 0,
       agentReviews: 0,
+      moderationHolds: 0,
       total: 0,
     });
     expect(await elsewhere.call('agent_review_list', { status: 'pending' })).toEqual({

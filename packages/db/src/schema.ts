@@ -1045,6 +1045,36 @@ export const agentReviews = sqliteTable(
   ],
 );
 
+// Entries the moderation agent took offline, and what a person decided about each.
+export const moderationHolds = sqliteTable(
+  'moderation_holds',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    entryId: text('entry_id').notNull(),
+    contentTypeApiId: text('content_type_api_id').notNull(),
+    entryVersion: integer('entry_version').notNull(),
+    flags: text('flags', { mode: 'json' }).$type<string[]>().notNull(),
+    status: text('status').$type<'open' | 'republished' | 'kept' | 'cleared'>().notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    decidedAt: integer('decided_at', { mode: 'timestamp_ms' }),
+    decidedBy: text('decided_by'),
+    note: text('note'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    // Approvals lists and counts open holds per scope, oldest first.
+    index('moderation_holds_by_status').on(t.spaceId, t.environmentId, t.status, t.createdAt),
+    // At most one open hold per entry: a second flag refreshes the open one instead.
+    uniqueIndex('moderation_holds_open_entry')
+      .on(t.spaceId, t.environmentId, t.entryId)
+      .where(sql`${t.status} = 'open'`),
+    // An entry's holds, newest first: a flag on a version a person republished leaves it live.
+    index('moderation_holds_by_entry').on(t.spaceId, t.environmentId, t.entryId, t.createdAt),
+  ],
+);
+
 export const agentSchedules = sqliteTable(
   'agent_schedules',
   {

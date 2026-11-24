@@ -1,4 +1,4 @@
-import type { Principal, Scope, WorkflowTask } from '@contentworker/domain';
+import type { ModerationHold, Principal, Scope, WorkflowTask } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -9,6 +9,7 @@ import {
   createEntry,
   createSpace,
   listAgentReviews,
+  listModerationHolds,
   SYSTEM_CALLER,
 } from '../src/index';
 
@@ -71,6 +72,18 @@ async function review(s: Scope, entryId: string) {
   });
 }
 
+async function hold(s: Scope, contentTypeApiId: string, status: ModerationHold['status'] = 'open') {
+  await store.moderationHolds.create(s, {
+    id: `hold-${++seq}`,
+    entryId: `held-${seq}`,
+    contentTypeApiId,
+    entryVersion: 1,
+    flags: ['hate'],
+    status,
+    createdAt: '2026-11-01T00:00:00.000Z',
+  });
+}
+
 async function task(
   s: Scope,
   contentTypeApiId: string,
@@ -120,7 +133,20 @@ describe('countPendingApprovals', () => {
     expect(await countPendingApprovals(ctx, scope)).toEqual({
       workflowTasks: 2,
       agentReviews: 1,
+      moderationHolds: 0,
       total: 3,
+    });
+  });
+
+  it('adds open moderation holds, leaving decided ones out', async () => {
+    await hold(scope, 'post');
+    await hold(scope, 'page');
+    await hold(scope, 'post', 'kept');
+    expect(await countPendingApprovals(ctx, scope)).toEqual({
+      workflowTasks: 0,
+      agentReviews: 0,
+      moderationHolds: 2,
+      total: 2,
     });
   });
 
@@ -135,7 +161,14 @@ describe('countPendingApprovals', () => {
     await review(scope, await entry(scope, 'post'));
     await review(scope, await entry(scope, 'page'));
     const count = await countPendingApprovals(ctx, scope, postsOnly);
-    expect(count).toEqual({ workflowTasks: 1, agentReviews: 1, total: 2 });
+    await hold(scope, 'post');
+    await hold(scope, 'page');
+    expect(count).toEqual({ workflowTasks: 1, agentReviews: 1, moderationHolds: 0, total: 2 });
+    const withHolds = await countPendingApprovals(ctx, scope, postsOnly);
+    expect(withHolds).toEqual({ workflowTasks: 1, agentReviews: 1, moderationHolds: 1, total: 3 });
+    expect(withHolds.moderationHolds).toBe(
+      (await listModerationHolds(ctx, scope, { status: 'open' }, postsOnly)).length,
+    );
     expect(count.agentReviews).toBe(
       (await listAgentReviews(ctx, scope, { status: 'pending' }, postsOnly)).length,
     );
@@ -151,10 +184,12 @@ describe('countPendingApprovals', () => {
     await type(other, 'post');
     await task(other, 'post');
     await review(other, await entry(other, 'post'));
+    await hold(other, 'post');
     await task(scope, 'post');
     expect(await countPendingApprovals(ctx, scope)).toEqual({
       workflowTasks: 1,
       agentReviews: 0,
+      moderationHolds: 0,
       total: 1,
     });
   });

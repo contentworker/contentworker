@@ -15,7 +15,11 @@ import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { aiCapability, requireAiCapability } from './ai-settings';
 import { type EntryAiOptions, readEntryForAi } from './content-ai';
 import type { AppContext } from './context';
-import { unpublishEntry } from './publishing';
+import {
+  clearModerationHold,
+  holdEntryForModeration,
+  type ModerationHoldOutcome,
+} from './moderation-holds';
 import { createTask } from './tasks';
 
 /**
@@ -70,6 +74,8 @@ export interface AgentRunOutcome {
   readonly usage: { inputTokens: number; outputTokens: number };
   /** Persisted review awaiting a human decision (when needs_review). */
   readonly reviewId?: string;
+  /** The categories moderation flagged (when held). */
+  readonly flags?: readonly string[];
 }
 
 export type FindingSeverity = 'info' | 'warning' | 'error';
@@ -300,7 +306,19 @@ export interface PublishAgentRunSummary {
   readonly status: AgentRunOutcome['status'];
   readonly decisions: readonly string[];
   readonly usage: { inputTokens: number; outputTokens: number };
+  readonly flags?: readonly string[];
 }
+
+/**
+ * The ledger line after a held verdict, by what the hold did; none when the entry was already out
+ * of delivery or gone. Shared with the durable pass (`@contentworker/agent-runtime`).
+ */
+export const HOLD_NOTES: Readonly<Record<ModerationHoldOutcome, string | null>> = {
+  held: 'retracted from delivery pending review',
+  overridden: 'left published: a person republished this version over moderation',
+  not_published: null,
+  gone: null,
+};
 
 /**
  * Runs the configured agents against a newly published entry and records each
@@ -338,25 +356,35 @@ export async function runPublishAgents(
       decisions: r.decisions,
       usage: r.usage,
     });
-    runs.push({ workflow, status: r.status, decisions: r.decisions, usage: r.usage });
+    runs.push({
+      workflow,
+      status: r.status,
+      decisions: r.decisions,
+      usage: r.usage,
+      ...(r.flags ? { flags: r.flags } : {}),
+    });
   }
 
-  // Moderation runs post-publish (agents dispatch off entry.published), so a
-  // flagged entry is briefly live. Retract it from the delivery read model as
-  // soon as the classifier holds it, instead of only recording an advisory note,
-  // so unsafe content does not stay published. (A synchronous pre-publish gate
-  // remains a follow-up.)
-  if (runs.some((r) => r.workflow === 'moderate' && r.status === 'held')) {
-    await unpublishEntry(ctx, scope, entryId).catch(() => {
-      /* already unpublished or gone — nothing to retract */
+  // Moderation runs post-publish (agents dispatch off entry.published), so a flagged entry is
+  // briefly live. Take it out of delivery as soon as the classifier holds it and open a hold in
+  // Approvals for a person to decide; a clean verdict on a later version closes an open one.
+  const moderated = runs.find((r) => r.workflow === 'moderate');
+  if (moderated?.status === 'held') {
+    const outcome = await holdEntryForModeration(ctx, scope, entryId, {
+      flags: moderated.flags ?? [],
     });
-    await recordAgentRun(ctx, scope, {
-      workflow: 'moderate',
-      entryId,
-      status: 'held',
-      decisions: ['retracted from delivery pending review'],
-      usage: { inputTokens: 0, outputTokens: 0 },
-    });
+    const note = HOLD_NOTES[outcome];
+    if (note) {
+      await recordAgentRun(ctx, scope, {
+        workflow: 'moderate',
+        entryId,
+        status: 'held',
+        decisions: [note],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      });
+    }
+  } else if (moderated?.status === 'completed') {
+    await clearModerationHold(ctx, scope, entryId);
   }
   return runs;
 }

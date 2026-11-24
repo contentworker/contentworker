@@ -2,11 +2,13 @@ import {
   type AppContext,
   aiCapability,
   applyProposedFields,
+  clearModerationHold,
   createAgentReview,
   DEFAULT_MODERATION_THRESHOLD,
   decideWithBudget,
   describeFieldForModel,
   generateWithBudget,
+  holdEntryForModeration,
   moderationQuestions,
   moderationVerdict,
   projectDecisions,
@@ -15,7 +17,6 @@ import {
   SYSTEM_CALLER,
   settleReviewOutcome,
   UNTRUSTED_CONTENT_GUARD,
-  unpublishEntry,
   withActor,
   wrapUntrusted,
 } from '@contentworker/application';
@@ -23,7 +24,6 @@ import {
   agentActor,
   type EntryFields,
   fieldStates,
-  InvalidStateError,
   NotFoundError,
   openProposals,
   type Scope,
@@ -70,19 +70,16 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
     async recordRun(scope, run) {
       await recordAgentRun(ctx, scope, run);
     },
-    async retractEntry(scope, entryId, agent) {
-      try {
-        await unpublishEntry(withActor(ctx, agentActor(agent)), scope, entryId);
-      } catch (err) {
-        // "Already gone / not published" means the entry is ALREADY out of
-        // delivery — the desired end state, so a no-op. Anything else (store
-        // or connection failure) must propagate: this runs as a durable step,
-        // and swallowing it would resolve the step successfully, skip its
-        // retries, and let the ledger record a retraction that never happened
-        // while flagged content stayed live.
-        if (err instanceof NotFoundError || err instanceof InvalidStateError) return;
-        throw err;
-      }
+    async retractEntry(scope, entryId, _agent, flags = []) {
+      // One unit: the unpublish, its outbox row and the hold. "Already unpublished / gone" is
+      // the desired end state and answers as such; anything else (store or connection failure,
+      // a lost race) propagates: this runs as a durable step, and swallowing it would resolve the
+      // step successfully, skip its retries, and let the ledger record a retraction that never
+      // happened while flagged content stayed live.
+      return holdEntryForModeration(ctx, scope, entryId, { flags });
+    },
+    async clearHold(scope, entryId) {
+      await clearModerationHold(ctx, scope, entryId);
     },
     async loadEntry(scope, entryId): Promise<LoadedEntry | null> {
       const found = await ctx.store.entries.get(scope, entryId);

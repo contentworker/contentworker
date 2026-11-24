@@ -886,6 +886,18 @@ Human-in-the-loop decisions on agent proposals; see
 | POST   | `…/agent-reviews/:id/approve` | `content:write` | Approve: applies the proposal exactly once (or signals the durable watcher) |
 | POST   | `…/agent-reviews/:id/reject`  | `content:write` | Reject: nothing is applied                                                  |
 
+### Moderation holds
+
+Entries the on-publish moderation pass unpublished, waiting on a person; see
+[AI, agents & search](./ai-agents-and-search.md#moderation-holds). A role also needs publish on the
+held entry's type to decide.
+
+| Method | Path                               | Scope             | Description                                                                                                      |
+| ------ | ---------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| GET    | `…/moderation-holds`               | `preview:read`    | List holds, newest first (`?status=open\|republished\|kept\|cleared`, `?entryId=`)                               |
+| POST   | `…/moderation-holds/:id/republish` | `content:publish` | `{ note? }`: publish the held version again, closing the hold; 409 if decided, or the entry was edited since     |
+| POST   | `…/moderation-holds/:id/keep`      | `content:publish` | `{ note? }`: close the hold, the entry stays unpublished; 409 if decided, or the entry was published again since |
+
 ### Collaboration
 
 | Method | Path                     | Scope           | Description                 |
@@ -937,7 +949,7 @@ caller can't read. A run never exposes its starter's resolved principal, only `s
 | GET    | `…/workflow-tasks`              | `preview:read`  | Approvals, event waits and agent reviews; `status`, `runId`, `entryId`, `kind`, `limit`                                                                                                                                             |
 | GET    | `…/workflow-tasks/:id`          | `preview:read`  | One task                                                                                                                                                                                                                            |
 | POST   | `…/workflow-tasks/:id/decide`   | `preview:read`  | `{ decision: approved\|rejected, note? }`. Also needs the task's `requiredScope` (default `workflow:approve`) and content-type grant; with separation of duties the starter can't decide and an API token can't decide at all (403) |
-| GET    | `…/approvals/count`             | `preview:read`  | `{ workflowTasks, agentReviews, total }`: what waits in Approvals, counted uncapped; items on content types the caller can't read are left out                                                                                      |
+| GET    | `…/approvals/count`             | `preview:read`  | `{ workflowTasks, agentReviews, moderationHolds, total }`: what waits in Approvals, counted uncapped; items on content types the caller can't read are left out                                                                     |
 | GET    | `…/workflow-settings`           | `preview:read`  | `{ separateDuties }`                                                                                                                                                                                                                |
 | PUT    | `…/workflow-settings`           | `space:admin`   | Set the space default for approvals that leave `separateDuties` unset                                                                                                                                                               |
 

@@ -38,6 +38,7 @@ import {
   type LocaleSettings,
   type MemberInvite,
   type Menu,
+  type ModerationHold,
   matchesTopic,
   type OAuthClient,
   type OutboxEntry,
@@ -127,6 +128,7 @@ import type {
   MemberRepo,
   MenuRead,
   MenuRepo,
+  ModerationHoldRepo,
   OAuthClientRepo,
   OAuthGrantRecord,
   OAuthGrantRepo,
@@ -5067,6 +5069,7 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.releaseItems,
   schema.scheduledActions,
   schema.agentReviews,
+  schema.moderationHolds,
   schema.agentSchedules,
   schema.comments,
   schema.tasks,
@@ -5470,6 +5473,129 @@ function makeAgentReviewRepo(x: Exec): AgentReviewRepo {
           .set({ appliedAt: null })
           .where(and(scopeFilter(schema.agentReviews, scope), eq(schema.agentReviews.id, id))),
       );
+    },
+  };
+}
+
+function makeModerationHoldRepo(x: Exec): ModerationHoldRepo {
+  const db = x.db;
+  const t = schema.moderationHolds;
+  type Row = typeof t.$inferSelect;
+  const toHold = (r: Row): ModerationHold => ({
+    id: r.id,
+    entryId: r.entryId,
+    contentTypeApiId: r.contentTypeApiId,
+    entryVersion: r.entryVersion,
+    flags: r.flags,
+    status: r.status,
+    createdAt: r.createdAt.toISOString(),
+    ...(r.decidedAt ? { decidedAt: r.decidedAt.toISOString() } : {}),
+    ...(r.decidedBy ? { decidedBy: r.decidedBy } : {}),
+    ...(r.note ? { note: r.note } : {}),
+  });
+  const statusOf = async (scope: Scope, id: string) =>
+    (
+      await db
+        .select({ status: t.status })
+        .from(t)
+        .where(and(scopeFilter(t, scope), eq(t.id, id)))
+    )[0]?.status;
+  return {
+    async create(scope, hold) {
+      // DO NOTHING on the open-entry index: an entry already held reports false, never a throw.
+      const insert = db
+        .insert(t)
+        .values({
+          spaceId: scope.spaceId,
+          environmentId: scope.environmentId,
+          id: hold.id,
+          entryId: hold.entryId,
+          contentTypeApiId: hold.contentTypeApiId,
+          entryVersion: hold.entryVersion,
+          flags: [...hold.flags],
+          status: hold.status,
+          createdAt: new Date(hold.createdAt),
+          decidedAt: hold.decidedAt ? new Date(hold.decidedAt) : null,
+          decidedBy: hold.decidedBy ?? null,
+          note: hold.note ?? null,
+        })
+        .onConflictDoNothing();
+      if (x.inUnit) {
+        // Decided from committed state; a hold another writer opens first aborts the unit.
+        const [open] = await db
+          .select({ id: t.id })
+          .from(t)
+          .where(and(scopeFilter(t, scope), eq(t.entryId, hold.entryId), eq(t.status, 'open')))
+          .limit(1);
+        if (open) return false;
+        await x.write(insert);
+        x.expectChanged(1);
+        return true;
+      }
+      return (await insert.returning({ id: t.id })).length === 1;
+    },
+    async get(scope, id) {
+      const [row] = await db
+        .select()
+        .from(t)
+        .where(and(scopeFilter(t, scope), eq(t.id, id)));
+      return row ? toHold(row) : null;
+    },
+    async list(scope, query = {}) {
+      const conds: SQL[] = [scopeFilter(t, scope) as SQL];
+      if (query.status) conds.push(eq(t.status, query.status));
+      if (query.entryId) conds.push(eq(t.entryId, query.entryId));
+      const rows = await db
+        .select()
+        .from(t)
+        .where(and(...conds))
+        .orderBy(desc(t.createdAt), desc(t.id))
+        .limit(Math.min(Math.max(query.limit ?? 100, 1), 200));
+      return rows.map(toHold);
+    },
+    async countOpen(scope) {
+      // Grouped on moderation_holds_by_status: uncapped, one read, no join (the hold keeps its type).
+      return db
+        .select({ contentTypeApiId: t.contentTypeApiId, count: count() })
+        .from(t)
+        .where(and(scopeFilter(t, scope), eq(t.status, 'open')))
+        .groupBy(t.contentTypeApiId);
+    },
+    async refresh(scope, id, to) {
+      const update = db
+        .update(t)
+        .set({
+          entryVersion: to.entryVersion,
+          flags: [...to.flags],
+          contentTypeApiId: to.contentTypeApiId,
+        })
+        .where(and(scopeFilter(t, scope), eq(t.id, id), eq(t.status, 'open')));
+      if (x.inUnit) {
+        if ((await statusOf(scope, id)) !== 'open') return false;
+        await x.write(update);
+        x.expectChanged(1);
+        return true;
+      }
+      return (await update.returning({ id: t.id })).length === 1;
+    },
+    async decide(scope, id, decision) {
+      const update = db
+        .update(t)
+        .set({
+          status: decision.status,
+          decidedAt: new Date(decision.decidedAt),
+          decidedBy: decision.decidedBy,
+          note: decision.note ?? null,
+        })
+        .where(and(scopeFilter(t, scope), eq(t.id, id), eq(t.status, 'open')));
+      if (x.inUnit) {
+        // Same pattern as `create`: decide from committed state, guard at commit.
+        if ((await statusOf(scope, id)) !== 'open') return false;
+        await x.write(update);
+        x.expectChanged(1);
+        return true;
+      }
+      return (await update.returning({ id: t.id })).length === 1;
     },
   };
 }
@@ -8073,6 +8199,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     bulkJobs: makeBulkJobRepo(x),
     workflowRuns: makeWorkflowRunRepo(x),
     workflowTasks: makeWorkflowTaskRepo(x),
+    moderationHolds: makeModerationHoldRepo(x),
     workflowGraphs: { listPublishGates: makeWorkflowGraphRepo(x).listPublishGates },
     outbox: makeOutboxRepo(x),
     invites: makeInviteRepo(x),
@@ -8127,6 +8254,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     scheduledActions: makeScheduledActionRepo(x),
     agentSchedules: makeAgentScheduleRepo(x),
     agentReviews: makeAgentReviewRepo(x),
+    moderationHolds: makeModerationHoldRepo(x),
     comments: makeCommentRepo(x),
     tasks: makeTaskRepo(x),
     workflows: makeWorkflowRepo(x),
