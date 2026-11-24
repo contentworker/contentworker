@@ -1,15 +1,21 @@
-import type {
-  MigrationPageStage,
-  MigrationRunStatus,
-  MigrationSourceKind,
+import {
+  holdsScope,
+  type MigrationPageStage,
+  type MigrationRunStatus,
+  type MigrationSourceKind,
+  type MigrationTemplateStatus,
+  SCOPES,
 } from '@contentworker/domain';
 import type { Tone } from './format';
 import {
   ApiError,
   apiIssues,
+  type MigrationApproval,
   type MigrationFetchResult,
   type MigrationPageCounts,
+  type MigrationPageFailure,
   type MigrationRunView,
+  type MigrationTemplateView,
 } from './management';
 
 /*
@@ -54,9 +60,34 @@ export const stageOf = (id: string) => STAGES.find((s) => s.id === id);
 export const isStage = (id: string | null | undefined): id is MigrationPageStage =>
   !!id && STAGES.some((s) => s.id === id);
 
+/**
+ * Where a template is on its way to a content type: waiting, being written, being approved (its
+ * content type being created), or approved.
+ */
+export const TEMPLATE_STATUS: Readonly<
+  Record<MigrationTemplateStatus, { tone: Tone; label: string }>
+> = {
+  pending: { tone: 'idle', label: 'Not authored' },
+  // An agent drafts its model and script: a model's work, for someone to review.
+  authoring: { tone: 'ai', label: 'Authoring' },
+  approving: { tone: 'run', label: 'Approving' },
+  approved: { tone: 'ok', label: 'Approved' },
+};
+
+/**
+ * Pages whose fetch failed. The API counts every page whose last step failed, a transform's and a
+ * load's too; those have their HTML, so the ones that don't are at most the pages without it.
+ */
+export const fetchFailures = (counts: MigrationPageCounts) =>
+  Math.min(
+    counts.failed,
+    Math.max(0, counts.total - counts.fetched),
+    counts.byStage.discovered ?? Number.POSITIVE_INFINITY,
+  );
+
 /** Pages not fetched yet: a page that failed keeps its error and is not tried again. */
 export const pendingPages = (counts: MigrationPageCounts) =>
-  Math.max(0, counts.total - counts.fetched - counts.failed);
+  Math.max(0, counts.total - counts.fetched - fetchFailures(counts));
 
 export type StepId = 'inventory' | 'fetch' | 'cluster';
 
@@ -238,4 +269,176 @@ export async function fetchUntilDone(
     if (!result.more) return { kind: 'done', totals };
     if (result.fetched + result.failed + result.added === 0) return { kind: 'stalled', totals };
   }
+}
+
+// --- authoring, loading and publishing ----------------------------------------
+
+/** Pages one request of each step takes: the API's most for a request. */
+export const TRANSFORM_BATCH = 10;
+export const LOAD_BATCH = 10;
+export const RELINK_BATCH = 50;
+export const PUBLISH_BATCH = 50;
+/** The largest import script a template keeps, as UTF-8 bytes: the API's `MIGRATION_SCRIPT_MAX`. */
+export const SCRIPT_MAX_BYTES = 256 * 1024;
+
+export const utf8Bytes = (text: string) => new TextEncoder().encode(text).byteLength;
+
+export const migrationTemplateKey = (run: string, template: string) =>
+  ['migrations', 'run', run, 'template', template] as const;
+export const templatePath = (run: string, template: string) =>
+  `/migrations/${encodeURIComponent(run)}/templates/${encodeURIComponent(template)}`;
+
+/** What a person's role in the space lets them do with a run, step for step as the API checks it. */
+export interface MigrationRights {
+  /** Propose, script, try, transform, start: `migration:run`. */
+  readonly run: boolean;
+  /** Approve a template, write redirects: `content:manage`. */
+  readonly manage: boolean;
+  readonly load: boolean;
+  readonly relink: boolean;
+  readonly publish: boolean;
+  readonly publishViaRelease: boolean;
+}
+
+/** Undefined until the role is known: an action is then drawn as a skeleton, never offered. */
+export function migrationRights(scopes: readonly string[] | undefined) {
+  if (scopes === undefined) return undefined;
+  const has = (scope: string) => holdsScope(scopes, scope);
+  const run = has(SCOPES.migrationRun);
+  const write = has(SCOPES.contentWrite);
+  const publish = has(SCOPES.contentPublish);
+  const rights: MigrationRights = {
+    run,
+    manage: has(SCOPES.contentManage),
+    load: run && write && has(SCOPES.assetsWrite),
+    relink: run && write,
+    publish,
+    publishViaRelease: publish && write,
+  };
+  return rights;
+}
+
+/** Why a template's model and script can't be changed now, in words; undefined when they can. */
+export function lockedReason(
+  template: Pick<MigrationTemplateView, 'status'>,
+  run: MigrationRunView['run'] | undefined,
+): string | undefined {
+  if (template.status === 'approved')
+    return 'This template is approved, so its model and script are settled: its pages are transformed and loaded with what was approved.';
+  if (template.status === 'approving')
+    return 'This template is being approved, so its model and script are held until that finishes.';
+  if (run?.status === 'failed') return 'The run failed, so its templates can’t be changed.';
+  return undefined;
+}
+
+/** What an approval told the run's background driver, in plain words. */
+export function approvalLine(a: MigrationApproval): string {
+  if (a.signalled) return 'Approved. Its background run was told and takes its pages from here.';
+  switch (a.reason) {
+    case 'driver-finished':
+      return 'Approved. The run’s background run has already finished, so take its pages on here: transform them, then load them.';
+    case 'unreachable':
+      return 'Approved, but its background run couldn’t be reached. Tell it again, or take its pages on here.';
+    default:
+      return 'Approved. Nothing is running this in the background, so take its pages on here: transform them, then load them.';
+  }
+}
+
+/** Up to this many of a step's failures are listed; the rest are counted. */
+export const FAILURES_KEPT = 100;
+
+export interface Failures {
+  readonly items: readonly MigrationPageFailure[];
+  readonly total: number;
+}
+export const NO_FAILURES: Failures = { items: [], total: 0 };
+export const addFailures = (f: Failures, more: readonly MigrationPageFailure[]): Failures =>
+  more.length === 0
+    ? f
+    : { items: [...f.items, ...more].slice(0, FAILURES_KEPT), total: f.total + more.length };
+
+export type BatchOutcome<T> = { readonly batches: number; readonly totals: T } & (
+  | { readonly kind: 'done' | 'stopped' | 'stalled' }
+  /** A batch was refused or didn't answer; the ones before it stand. */
+  | { readonly kind: 'failed'; readonly error: unknown }
+);
+
+/**
+ * Sends batch after batch while the API says there is more, as {@link fetchUntilDone} does: each is
+ * one bounded request, a lost race is sent again quietly, and `signal` stops it (the server may
+ * still finish the batch in flight). A batch that moved nothing on, or a cursor that stands still,
+ * stops it rather than asking forever. What the batches before a failure did is kept.
+ */
+export async function batchUntilDone<R, T>(
+  batch: (after: string | undefined, signal: AbortSignal) => Promise<R>,
+  opts: {
+    readonly signal: AbortSignal;
+    readonly start: T;
+    readonly add: (totals: T, result: R) => T;
+    /** Whether to ask again, from where, and whether this batch moved nothing on. */
+    readonly next: (result: R) => {
+      readonly more: boolean;
+      readonly after?: string | undefined;
+      readonly stalled?: boolean;
+    };
+    readonly onBatch?: (totals: T) => void | Promise<unknown>;
+    /** Where a batch before this call left off. */
+    readonly from?: string | undefined;
+  },
+): Promise<BatchOutcome<T>> {
+  const { signal } = opts;
+  let totals = opts.start;
+  let batches = 0;
+  let after = opts.from;
+  while (true) {
+    if (signal.aborted) return { kind: 'stopped', batches, totals };
+    let result: R;
+    try {
+      const from = after;
+      result = await retryingConflicts(() => batch(from, signal));
+    } catch (error) {
+      return signal.aborted
+        ? { kind: 'stopped', batches, totals }
+        : { kind: 'failed', batches, totals, error };
+    }
+    totals = opts.add(totals, result);
+    batches += 1;
+    await opts.onBatch?.(totals);
+    const n = opts.next(result);
+    if (!n.more) return { kind: 'done', batches, totals };
+    if (n.stalled || (n.after !== undefined && n.after === after)) {
+      return { kind: 'stalled', batches, totals };
+    }
+    after = n.after;
+  }
+}
+
+/**
+ * Answers worth asking again: none at all, one only time changes (too many, too slow, a server
+ * fault) or a race still lost after the quiet resends. Not 501: an install that can't do a step
+ * won't on a second try.
+ */
+export const worthRetrying = (err: unknown) =>
+  !(err instanceof ApiError) ||
+  (err.status >= 500 && err.status !== 501) ||
+  err.status === 408 ||
+  err.status === 429 ||
+  isRetryableConflict(err);
+
+/** Why the run's driver didn't take a start or a go-ahead, in plain words, when that is the answer. */
+export function driverRefusal(err: unknown): string | undefined {
+  if (!(err instanceof ApiError)) return;
+  if (err.status === 501)
+    return 'Running migrations in the background isn’t set up on this install.';
+  if (err.status === 404 && err.code === 'not_found')
+    return 'Nothing is running this in the background. Start it, or publish its entries step by step.';
+  if (err.status !== 400 || err.code !== 'invalid_state') return;
+  const message = (err.body as { error?: { message?: string } } | undefined)?.error?.message ?? '';
+  if (/driver that has finished/.test(message))
+    return 'Its background run has already finished and can’t be started or told anything again. Take the run on step by step.';
+  if (/^The run has stopped/.test(message))
+    return 'Its background run stopped, so it can’t be started again. Take the run on step by step.';
+  if (/^The run has failed/.test(message))
+    return 'The run failed, so it can’t go on in the background.';
+  return;
 }

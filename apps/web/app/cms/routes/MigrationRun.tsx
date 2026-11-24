@@ -1,10 +1,9 @@
-import { holdsScope, SCOPES } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useRef } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { LoadingStatus } from '~/cms/components/loading';
 import {
@@ -12,6 +11,8 @@ import {
   type PageFilter,
 } from '~/cms/components/migrations/MigrationPagesTable';
 import { MigrationTemplates } from '~/cms/components/migrations/MigrationTemplates';
+import { RunBackground } from '~/cms/components/migrations/RunBackground';
+import { RunFinish } from '~/cms/components/migrations/RunFinish';
 import { RunSteps } from '~/cms/components/migrations/RunSteps';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { ToneBadge } from '~/cms/components/status';
@@ -23,7 +24,7 @@ import {
   isForbidden,
   type MigrationRunView,
 } from '~/cms/lib/management';
-import { isStage, KIND_LABEL, RUN_STATUS, STAGES } from '~/cms/lib/migrations';
+import { isStage, KIND_LABEL, migrationRights, RUN_STATUS, STAGES } from '~/cms/lib/migrations';
 import { useInvalidate, useScopedQuery } from '~/cms/lib/queries';
 import { useSpaceScopes } from '~/cms/lib/space-access';
 import { MIGRATIONS_KEY, migrationRunKey } from './Migrations';
@@ -31,9 +32,9 @@ import { MIGRATIONS_KEY, migrationRunKey } from './Migrations';
 /*
  * One migration run: its source and status, its pages counted by stage, its steps (inventory,
  * fetch, cluster), its templates and its pages. Every count is the run's own read
- * (`GET …/migrations/runs/:id`), read again after each step. Template authoring, approving,
- * loading and publishing come after clustering; their sections join this page once the API
- * offers them.
+ * (`GET …/migrations/runs/:id`), read again after each step. Each template is authored, approved
+ * and loaded on its own page; what follows for the whole run (relink, redirects, publish, or all of
+ * it in the background) is here.
  */
 export function MigrationRunPage() {
   const runId = decodeURIComponent(useParams().runId ?? '');
@@ -42,10 +43,14 @@ export function MigrationRunPage() {
   const invalidate = useInvalidate();
   const scopes = useSpaceScopes();
   // Undefined until the role is known: the steps draw their actions as skeletons meanwhile.
-  const canRun = scopes === undefined ? undefined : holdsScope(scopes, SCOPES.migrationRun);
+  const rights = migrationRights(scopes);
+  const canRun = rights?.run;
+  // Started (or told to publish) from here: its driver writes the run meanwhile, so follow it.
+  const [following, setFollowing] = useState(false);
   const view = useScopedQuery(migrationRunKey(runId), () => client.getMigrationRun(runId), {
     silent: true,
     staleTime: 0,
+    ...(following ? { refetchInterval: 15_000 } : {}),
   });
   const [search, setSearch] = useSearchParams();
   const stage = search.get('stage');
@@ -77,12 +82,25 @@ export function MigrationRunPage() {
         view.refetch(),
         lists ? invalidate(['migrations', 'run', runId, 'pages'], MIGRATIONS_KEY) : undefined,
       ]);
-      return read.data;
+      // A read that failed keeps the last one on screen, and is no fresh count.
+      return read.isError ? undefined : read.data;
     },
     [view.refetch, invalidate, runId],
   );
   const onUpdated = (next: MigrationRunView) =>
     queryClient.setQueryData([conn.space, conn.environment, ...migrationRunKey(runId)], next);
+
+  const ended = view.data?.run.status === 'stopped' || view.data?.run.status === 'failed';
+  useEffect(() => {
+    if (ended) setFollowing(false);
+  }, [ended]);
+
+  // A link to #pages lands once the section is there.
+  const here = view.data !== undefined;
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (here && hash === '#pages') document.getElementById('pages')?.scrollIntoView?.();
+  }, [here, hash]);
 
   if (view.isPending) return <RunSkeleton />;
   // Only a first read that failed takes the page: a refresh that fails (after a fetch batch, or on
@@ -150,10 +168,15 @@ export function MigrationRunPage() {
         actions={<ToneBadge tone={status.tone} label={status.label} />}
       />
       {run.error ? (
-        <Alert variant="destructive">
-          <AlertTitle>The run failed</AlertTitle>
+        <Alert variant={run.status === 'stopped' ? 'warning' : 'destructive'}>
+          <AlertTitle>
+            {run.status === 'stopped' ? 'Its background run stopped' : 'The run failed'}
+          </AlertTitle>
           <AlertDescription>
-            <p>{run.error}</p>
+            <p className="wrap-anywhere">{run.error}</p>
+            {run.status === 'stopped' ? (
+              <p>Its templates can still be approved, loaded and published step by step.</p>
+            ) : null}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -205,6 +228,20 @@ export function MigrationRunPage() {
             document.getElementById('pages')?.scrollIntoView({ block: 'start' });
             pagesHeading.current?.focus({ preventScroll: true });
           }}
+        />
+      </Section>
+      {templates.length > 0 ? (
+        <Section title="Finish the run">
+          <RunFinish key={run.id} view={view.data} rights={rights} refresh={refresh} />
+        </Section>
+      ) : null}
+      <Section title="Run in the background">
+        <RunBackground
+          key={run.id}
+          view={view.data}
+          rights={rights}
+          refresh={refresh}
+          onStarted={() => setFollowing(true)}
         />
       </Section>
       <Section

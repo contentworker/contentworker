@@ -110,6 +110,7 @@ describe('a run’s steps', () => {
           proposal: null,
           lastTry: null,
           approvedBy: null,
+          reviewDigest: 'd'.repeat(64),
           version: 1,
           createdAt: '',
           updatedAt: '',

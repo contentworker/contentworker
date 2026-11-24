@@ -1,4 +1,3 @@
-import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Catalog, CatalogFigure, CatalogRow, CatalogTile } from '@contentworker/ui/catalog';
 import { Progress } from '@contentworker/ui/progress';
@@ -6,25 +5,21 @@ import { SkeletonPill } from '@contentworker/ui/skeleton';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useClient } from '~/cms/lib/client-context';
 import { count, plural } from '~/cms/lib/format';
-import {
-  ApiError,
-  apiErrorMessage,
-  type MigrationRunView,
-  RequestTimeoutError,
-} from '~/cms/lib/management';
+import { apiErrorMessage, type MigrationRunView, RequestTimeoutError } from '~/cms/lib/management';
 import {
   type FetchOutcome,
   type FetchTotals,
+  fetchFailures,
   fetchUntilDone,
-  isRetryableConflict,
   pendingPages,
   retryingConflicts,
   runSteps,
   type StepId,
-  type StepState,
   siteUnavailableOf,
+  worthRetrying,
 } from '~/cms/lib/migrations';
 import { useStoppable } from '~/cms/lib/use-stoppable';
+import { StepButton, StepNotice, sentence, Why } from './step-parts';
 
 /** Pages one Fetch pages request takes: the API's most for a request. */
 export const FETCH_BATCH = 10;
@@ -43,21 +38,6 @@ type Notice = { readonly step: StepId; readonly loop?: boolean } & (
   | { readonly kind: 'unavailable'; readonly reason: string }
   | { readonly kind: 'failed'; readonly message: string; readonly retry: boolean }
 );
-
-/**
- * Answers worth asking again: none at all, one only time changes (too many, too slow, a server
- * fault) or a race still lost after the quiet resends. Not 501: an install that can't read source
- * sites won't on a second try.
- */
-const retryable = (err: unknown) =>
-  !(err instanceof ApiError) ||
-  (err.status >= 500 && err.status !== 501) ||
-  err.status === 408 ||
-  err.status === 429 ||
-  isRetryableConflict(err);
-
-/** Held while another step runs: drawn as waiting, so a press that does nothing never looks live. */
-const HELD = 'aria-disabled:cursor-not-allowed aria-disabled:opacity-50';
 
 const FAILED_TITLE: Readonly<Record<StepId, string>> = {
   inventory: 'The inventory didn’t finish',
@@ -140,7 +120,7 @@ export function RunSteps({
         ? 'The step didn’t answer in time. It may still be running: the counts below show what it did.'
         : apiErrorMessage(err);
     // A refusal (the run moved on meanwhile) won't change on a second try; most else may.
-    return { kind: 'failed', step, loop, message, retry: retryable(err) };
+    return { kind: 'failed', step, loop, message, retry: worthRetrying(err) };
   };
 
   /** Runs one step, its lost races sent again, then reads the run so every count is current. */
@@ -241,14 +221,30 @@ export function RunSteps({
           ? fetchAll()
           : fetchOnce();
 
-  const done = pages.fetched + pages.failed;
+  const unread = fetchFailures(pages);
+  const done = pages.fetched + unread;
   const pending = pendingPages(pages);
   const describe = (step: StepId) => `${id}-${step}-why`;
 
   return (
     <div className="space-y-3 p-4 pt-0">
       {notice ? (
-        <StepNotice notice={notice} busy={busy} onRetry={() => void again(notice)} />
+        <StepNotice
+          tone={notice.kind === 'unavailable' ? 'calm' : 'bad'}
+          title={
+            notice.kind === 'unavailable'
+              ? 'The site can’t be read right now'
+              : FAILED_TITLE[notice.step]
+          }
+          busy={busy}
+          {...(notice.kind === 'unavailable' || notice.retry
+            ? { onRetry: () => void again(notice) }
+            : {})}
+        >
+          {notice.kind === 'unavailable'
+            ? `${sentence(notice.reason)}Nothing was written. Try again in a few minutes.`
+            : notice.message}
+        </StepNotice>
       ) : null}
       <Catalog aria-label="Steps" className="p-0">
         <CatalogRow
@@ -310,9 +306,7 @@ export function RunSteps({
                 {count(pages.fetched)}
                 <span className="font-normal text-muted-foreground"> of {count(pages.total)}</span>
               </CatalogFigure>
-              {pages.failed > 0 ? (
-                <CatalogFigure label="Failed">{count(pages.failed)}</CatalogFigure>
-              ) : null}
+              {unread > 0 ? <CatalogFigure label="Failed">{count(unread)}</CatalogFigure> : null}
             </>
           }
           actions={
@@ -413,7 +407,7 @@ export function RunSteps({
       >
         {looping
           ? `Fetching… ${count(done)} of ${count(pages.total)} pages${
-              pages.failed ? `, ${count(pages.failed)} failed` : ''
+              unread ? `, ${count(unread)} failed` : ''
             }${progress ? ` (${plural(progress.batches, 'batch', 'batches')} this time)` : ''}`
           : said}
       </p>
@@ -423,58 +417,6 @@ export function RunSteps({
         </p>
       ) : null}
     </div>
-  );
-}
-
-/** A step's button: disabled, with its reason, when the run can't take it; held while one runs. */
-function StepButton({
-  ref,
-  step,
-  primary,
-  busy,
-  doing,
-  describedBy,
-  label,
-  doingLabel,
-  onClick,
-}: {
-  ref: React.Ref<HTMLButtonElement>;
-  step: StepState;
-  primary?: boolean;
-  busy: boolean;
-  doing?: boolean;
-  describedBy: string;
-  label: string;
-  doingLabel?: string;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      ref={ref}
-      type="button"
-      size="sm"
-      variant={primary ? 'default' : 'outline'}
-      disabled={!step.available}
-      // Held, not disabled, while a step runs: the one pressed keeps focus.
-      aria-disabled={busy || undefined}
-      className={HELD}
-      aria-describedby={step.available ? undefined : describedBy}
-      onClick={() => {
-        if (!busy) onClick();
-      }}
-    >
-      {doing && doingLabel ? doingLabel : label}
-    </Button>
-  );
-}
-
-/** Why a step waits, under its description; nothing while it can run. */
-function Why({ id, step, show }: { id: string; step: StepState; show: boolean }) {
-  if (!show || step.available || !step.reason) return null;
-  return (
-    <span id={id} className="w-full">
-      {step.reason}
-    </span>
   );
 }
 
@@ -514,59 +456,6 @@ function InventoryReport({
     </>
   );
 }
-
-/**
- * What stopped a step. A site that can't be read now is no fault of the run: a plain Alert, calm,
- * with Try again. Anything else is a destructive Alert, with Try again only where trying again can
- * change the answer.
- */
-function StepNotice({
-  notice,
-  busy,
-  onRetry,
-}: {
-  notice: Notice;
-  busy: boolean;
-  onRetry: () => void;
-}) {
-  const retry = notice.kind === 'unavailable' || notice.retry;
-  return (
-    <Alert variant={notice.kind === 'unavailable' ? 'default' : 'destructive'}>
-      <AlertTitle>
-        {notice.kind === 'unavailable'
-          ? 'The site can’t be read right now'
-          : FAILED_TITLE[notice.step]}
-      </AlertTitle>
-      <AlertDescription>
-        <p>
-          {notice.kind === 'unavailable'
-            ? `${sentence(notice.reason)}Nothing was written. Try again in a few minutes.`
-            : notice.message}
-        </p>
-        {retry ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={`mt-2 ${HELD}`}
-            aria-disabled={busy || undefined}
-            onClick={() => {
-              if (!busy) onRetry();
-            }}
-          >
-            Try again
-          </Button>
-        ) : null}
-      </AlertDescription>
-    </Alert>
-  );
-}
-
-/** A reason as a sentence, with one full stop and a space after it; nothing when there's none. */
-const sentence = (reason: string) => {
-  const r = reason.trim();
-  return r ? `${/[.!?]$/.test(r) ? r : `${r}.`} ` : '';
-};
 
 const batchLine = (fetched: number, failed: number, added: number) =>
   [

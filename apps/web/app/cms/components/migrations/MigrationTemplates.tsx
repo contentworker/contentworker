@@ -1,30 +1,18 @@
-import type { MigrationTemplateStatus } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Catalog, CatalogFigure, CatalogRow, CatalogTile } from '@contentworker/ui/catalog';
 import { LayoutTemplate } from 'lucide-react';
+import { Link } from 'react-router';
 import { ToneBadge } from '~/cms/components/status';
-import { count, type Tone } from '~/cms/lib/format';
+import { count, plural } from '~/cms/lib/format';
 import type { MigrationTemplateView } from '~/cms/lib/management';
+import { TEMPLATE_STATUS, templatePath } from '~/cms/lib/migrations';
 import { Empty } from '../page';
 
 /**
- * Where a template is on its way to a content type: waiting, being written, being approved (its
- * content type being created), or approved.
- */
-const TEMPLATE_STATUS: Readonly<Record<MigrationTemplateStatus, { tone: Tone; label: string }>> = {
-  pending: { tone: 'idle', label: 'Not authored' },
-  // An agent drafts its model and script: a model's work, for someone to review.
-  authoring: { tone: 'ai', label: 'Authoring' },
-  approving: { tone: 'run', label: 'Approving' },
-  approved: { tone: 'ok', label: 'Approved' },
-};
-
-/**
  * A run's templates, largest first: each one a group of pages that share a structure, and so one
- * content type and one import script to come. A row names it, counts its pages and narrows the
- * Pages table to it, where each page is its URL (never its HTML). Authoring a template (its
- * model, its script, trying and approving it) is a later step: its controls join this row's
- * actions once the API offers them.
+ * content type and one import script. A row's name opens its review (its model, its script, trying
+ * and approving it, taking its pages in); it counts its pages and narrows the Pages table to them,
+ * where each page is its URL (never its HTML).
  */
 export function MigrationTemplates({
   templates,
@@ -64,7 +52,21 @@ function TemplateRow({
           <LayoutTemplate aria-hidden="true" />
         </CatalogTile>
       }
-      title={<span className="font-medium text-foreground">{t.label}</span>}
+      title={
+        <Link
+          to={templatePath(t.runId, t.id)}
+          className="hit-area font-medium text-foreground hover:underline"
+        >
+          {t.label}
+        </Link>
+      }
+      meta={
+        t.lastTry ? (
+          <span>
+            {`Last try: ${count(t.lastTry.passed)} of ${plural(t.lastTry.pages, 'sample page')} passed`}
+          </span>
+        ) : undefined
+      }
       aside={
         <>
           <ToneBadge tone={status.tone} label={status.label} />

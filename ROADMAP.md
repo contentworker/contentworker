@@ -70,6 +70,11 @@ Everything below is built and tested on v2.
 - **Site migration: the admin screen.** **Migrations** under Build, for roles holding
   `migration:run` or `content:manage`: the environment's runs, a form to start one, and each run's
   steps, templates and pages, with **Fetch until done** to fetch every waiting batch.
+- **Site migration: admin authoring, approve, load and publish actions.** Each template's review page
+  in **Migrations**: its proposed model and import script, read and edited, a try on the sample
+  pages with its output, the approval held to the version that was read, then transforming and
+  loading its pages. The run's page relinks, writes redirects, publishes (or adds to a release) and
+  runs it all in the background, with the go-ahead to publish.
 - **Assets.** Signed uploads to object storage, creating an asset from a public URL (REST, MCP and
   the management SDK: fetched through the SSRF guard, reused when the bytes are already in the
   environment), edge image transforms, streamed video, localized alt text and focal point, AI alt
@@ -283,9 +288,6 @@ Everything below is built and tested on v2.
   Agents may draft, test and install a generated plugin disabled, but only a signed-in person
   can enable one whose `source` is `generated`: a deliberate, documented exception to both
   surfaces, because prompt-injected code must not go live without a human.
-- [ ] **Site migration: admin authoring, approve, load and publish actions.** Proposing a model,
-  writing and trying a script, approving a template, loading, publishing and the go-ahead from the
-  admin's Migrations screen. They have shipped on the API, MCP, the SDK and the command line.
 
 ### Recovery
 

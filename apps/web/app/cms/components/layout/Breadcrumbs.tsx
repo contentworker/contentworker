@@ -9,6 +9,7 @@ import {
 import { Fragment } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useClient } from '../../lib/client-context';
+import { migrationTemplateKey } from '../../lib/migrations';
 import { useContentTypesQuery, useEntryQuery, useScopedQuery } from '../../lib/queries';
 import { navItemFor, SETTINGS_SECTIONS } from './nav';
 
@@ -74,6 +75,20 @@ export function Breadcrumbs({
     () => client.getMigrationRun(decodeURIComponent(runId ?? '')),
     { enabled: false },
   ).data?.run;
+  // And so does one of its templates.
+  const templateId = runId && segments[2] === 'templates' ? segments[3] : undefined;
+  const template = useScopedQuery(
+    migrationTemplateKey(
+      decodeURIComponent(runId ?? ''),
+      templateId ? decodeURIComponent(templateId) : '',
+    ),
+    () =>
+      client.getMigrationTemplate(
+        decodeURIComponent(runId ?? ''),
+        decodeURIComponent(templateId ?? ''),
+      ),
+    { enabled: false },
+  ).data;
 
   if (segments.length === 0) return null;
 
@@ -89,6 +104,7 @@ export function Breadcrumbs({
     if (isContent && i === 1) return type?.name ?? seg;
     if (workflowId && i === 1) return workflow?.name || 'Workflow';
     if (runId && i === 1) return run?.name || 'Run';
+    if (templateId && i === 3) return template?.label || 'Template';
     if (isContent && i === 2) {
       if (!entryId) return CONTENT_CHILD[seg] ?? sentence(seg);
       const title = entry && entryTitle(entry.fields, type?.displayField, conn.locale);
@@ -101,6 +117,8 @@ export function Breadcrumbs({
     <Breadcrumb className="min-w-0">
       <BreadcrumbList className="flex-nowrap">
         {segments.map((_seg, i) => {
+          // A run's templates are a section of its page, not a page between.
+          if (templateId && i === 2) return null;
           const href = `/${segments.slice(0, i + 1).join('/')}`;
           const isLast = i === segments.length - 1;
           const label = labelAt(i);

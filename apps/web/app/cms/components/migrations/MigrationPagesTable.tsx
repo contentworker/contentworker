@@ -17,6 +17,7 @@ import {
 } from '@contentworker/ui/table';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef } from 'react';
+import { Link } from 'react-router';
 import { LoadingStatus, Refreshing } from '~/cms/components/loading';
 import { ToneBadge } from '~/cms/components/status';
 import { useClient } from '~/cms/lib/client-context';
@@ -27,7 +28,7 @@ import {
   type MigrationPageView,
   type MigrationTemplateView,
 } from '~/cms/lib/management';
-import { STAGES, stageOf } from '~/cms/lib/migrations';
+import { STAGES, stageOf, templatePath } from '~/cms/lib/migrations';
 import { Empty } from '../page';
 import { SourceLink } from './SourceLink';
 
@@ -155,6 +156,13 @@ export function MigrationPagesTable({
           </div>
         ) : null}
       </ListToolbar>
+      {filter.stage === 'needs-fix' ? (
+        <p className="max-w-measure px-4 pb-3 text-muted-foreground text-xs">
+          Only an approved template’s pages are transformed, and its script can’t change after that,
+          so these can’t be transformed again. On the template, Load with “Include needs-fix pages”
+          takes the ones that only scored low; one with an error is left to bring in by hand.
+        </p>
+      ) : null}
       {pages.isError && rows.length === 0 ? (
         <div className="px-4 pb-4">
           <Alert variant="destructive">
@@ -271,9 +279,24 @@ export function MigrationPagesTable({
 
 /** Whether a page was read: waiting, read, or failed with what the site said. */
 function FetchState({ page }: { page: MigrationPageView }) {
-  if (page.error !== null) return <ToneBadge tone="bad" label="Failed" />;
+  // Its HTML first: a later step's failure (a transform's, a load's) leaves the fetch as it was.
   if (page.html !== null) return <ToneBadge tone="ok" label="Fetched" />;
+  if (page.error !== null) return <ToneBadge tone="bad" label="Failed" />;
   return <ToneBadge tone="idle" label="Waiting" />;
+}
+
+/** A page that scored low: its score, and what the score found (words only). */
+function PageScore({ page }: { page: MigrationPageView }) {
+  if (!page.score) return null;
+  return (
+    <span className="wrap-anywhere text-muted-foreground text-xs">
+      {[
+        `Score ${page.score.overall.toFixed(2)}`,
+        `${Math.round(page.score.textCoverage * 100)}% of its text`,
+        ...page.score.issues.slice(0, 3),
+      ].join(' · ')}
+    </span>
+  );
 }
 
 function PageRow({ page, template }: { page: MigrationPageView; template: string | undefined }) {
@@ -288,14 +311,26 @@ function PageRow({ page, template }: { page: MigrationPageView; template: string
               {page.title}
             </span>
           ) : null}
-          {page.error ? <span className="text-muted-foreground text-xs">{page.error}</span> : null}
+          {page.error ? (
+            <span className="wrap-anywhere text-muted-foreground text-xs">{page.error}</span>
+          ) : null}
+          {page.stage === 'needs-fix' && page.score ? <PageScore page={page} /> : null}
         </span>
       </Td>
       <Td label="Stage">
         <ToneBadge tone={stage?.tone ?? 'idle'} label={stage?.label ?? page.stage} />
       </Td>
       <Td label="Template" className="text-muted-foreground">
-        {template ?? '—'}
+        {template && page.templateId ? (
+          <Link
+            to={templatePath(page.runId, page.templateId)}
+            className="hit-area text-link hover:underline"
+          >
+            {template}
+          </Link>
+        ) : (
+          '—'
+        )}
       </Td>
       <Td label="Fetch">
         <FetchState page={page} />

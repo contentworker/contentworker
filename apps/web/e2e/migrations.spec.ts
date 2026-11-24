@@ -52,7 +52,7 @@ interface FakePage {
  * the API made it, then this script's site. Creating and listing runs stay real.
  */
 async function stubRun(page: Page) {
-  const calls = { inventory: 0, fetch: 0 };
+  const calls = { inventory: 0, fetch: 0, approve: 0, publish: 0 };
   let run: Record<string, unknown> | null = null;
   const pages: FakePage[] = [];
   let templates: Record<string, unknown>[] = [];
@@ -170,6 +170,7 @@ async function stubRun(page: Page) {
           proposal: null,
           lastTry: null,
           approvedBy: null,
+          reviewDigest: 'a'.repeat(64),
           version: 1,
           createdAt: now,
           updatedAt: now,
@@ -223,6 +224,136 @@ async function stubRun(page: Page) {
         );
       }
       return json(route, view());
+    },
+  );
+  // A template's authoring, approval and loading, and the run's last steps. The first approval
+  // finds the template changed under the reviewer (409), as another author's save would make it.
+  let script = '';
+  let digests = 0;
+  await page.route(
+    /\/migrations\/runs\/[^/?]+\/(templates\/[^?]+|relink|redirects|publish)(\?.*)?$/,
+    async (route) => {
+      const url = new URL(route.request().url());
+      const [, , step] = /\/runs\/[^/]+\/(templates\/[^/]+\/?)?(\w*)$/.exec(url.pathname) ?? [];
+      const id = /templates\/([^/]+)/.exec(url.pathname)?.[1];
+      const method = route.request().method();
+      const body = (method === 'GET' ? {} : (route.request().postDataJSON() ?? {})) as {
+        model?: unknown;
+        script?: string;
+        reviewed?: string;
+      };
+      const t = templates.find((x) => x.id === id);
+      const write = (change: Record<string, unknown>, authored = true) => {
+        Object.assign(t ?? {}, change);
+        if (authored && t) t.reviewDigest = String(++digests).repeat(64).slice(0, 64);
+      };
+      const mine = (stage: string) => pages.filter((p) => p.templateId === id && p.stage === stage);
+      switch (step) {
+        case '':
+          return json(route, t);
+        case 'proposal':
+          write({ proposal: body.model, status: 'authoring' });
+          return json(route, t);
+        case 'script':
+          if (method === 'PUT') {
+            script = body.script ?? '';
+            write({ script: { sha256: 'feed', bytes: 120 }, status: 'authoring' });
+            return json(route, t);
+          }
+          return json(route, { script, sha256: 'feed' });
+        case 'try': {
+          const summary = {
+            at: new Date().toISOString(),
+            scriptSha256: 'feed',
+            pages: 1,
+            ok: 1,
+            passed: 1,
+            meanScore: 0.94,
+            problems: [],
+          };
+          write({ lastTry: summary }, false);
+          const text = (value: string) => ({
+            nodeType: 'document',
+            content: [{ nodeType: 'paragraph', content: [{ nodeType: 'text', value }] }],
+          });
+          return json(route, {
+            summary,
+            results: [
+              {
+                pageId: pages[0]?.id,
+                url: pages[0]?.url,
+                ok: true,
+                score: {
+                  overall: 0.94,
+                  textCoverage: 0.98,
+                  imagesMissing: 0,
+                  imagesLost: 0,
+                  sourceLinks: 0,
+                  outputLinks: 0,
+                  issues: [],
+                },
+                output: {
+                  fields: { title: '<b>Page 0</b>' },
+                  blocks: [{ variant: 'text', fields: { content: text('A migrated paragraph') } }],
+                  assets: [],
+                  links: [],
+                },
+                issues: [],
+                logs: ['<img src=x onerror=alert(1)>'],
+              },
+            ],
+          });
+        }
+        case 'approve':
+          if (++calls.approve === 1) {
+            write({});
+            return json(route, { error: { code: 'conflict', message: 'It changed' } }, 409);
+          }
+          if (body.reviewed !== t?.reviewDigest) return json(route, {}, 409);
+          write({ status: 'approved', contentTypeId: 'page' }, false);
+          return json(route, { template: t, signalled: false, reason: 'no-driver' });
+        case 'transform': {
+          const batch = mine('clustered').slice(0, 10);
+          for (const p of batch) p.stage = 'validated';
+          const more = mine('clustered').length > 0;
+          return json(route, {
+            transformed: batch.length,
+            validated: batch.length,
+            needsFix: 0,
+            failed: [],
+            more,
+            ...(more ? { next: batch.at(-1)?.id } : {}),
+          });
+        }
+        case 'load': {
+          const batch = mine('validated').slice(0, 10);
+          for (const p of batch) p.stage = 'loaded';
+          return json(route, {
+            loaded: batch.length,
+            failed: [],
+            assetFailures: [],
+            unresolvedLinks: 0,
+            deferred: [],
+            more: mine('validated').length > 0,
+          });
+        }
+        case 'relink':
+          return json(route, { checked: 20, relinked: 4, unresolvedLinks: 0, skipped: [] });
+        case 'redirects':
+          return json(route, {
+            created: 18,
+            updated: 0,
+            unchanged: 0,
+            skipped: { identity: 2, noUrlPattern: 0, unresolved: 0 },
+            chains: [],
+          });
+        default: {
+          calls.publish++;
+          const batch = pages.filter((p) => p.stage === 'loaded');
+          for (const p of batch) p.stage = 'published';
+          return json(route, { published: batch.length, added: 0, failed: [] });
+        }
+      }
     },
   );
   return calls;
@@ -302,6 +433,59 @@ test('a website migration: list, a new run, and its steps', async ({ page }, tes
   await expect(failedRow.getByText('Failed')).toBeVisible();
   await page.getByLabel('Stage', { exact: true }).selectOption('');
   await scan(page, testInfo);
+
+  // A template's review: its model and script, written here, then tried on a sample page.
+  await templates.getByRole('link', { name: 'Blog post' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Blog post' })).toBeVisible();
+  await page.getByRole('button', { name: 'Write model' }).click();
+  await page.getByRole('button', { name: 'Propose model' }).click();
+  await expect(page.getByRole('list', { name: 'Blocks of Body' })).toBeVisible();
+  await page.getByRole('button', { name: 'Write script' }).click();
+  await scan(page, testInfo);
+  await page.getByRole('button', { name: 'Save script' }).click();
+  await expect(page.getByRole('textbox', { name: 'Import script' })).toContainText('transform');
+  await page.getByRole('button', { name: 'Try on sample pages' }).click();
+  await expect(page.getByText('Tried 1 sample page: 1 passed, mean score 0.94.')).toBeVisible();
+  await page.getByRole('button', { name: /^Show output of/ }).click();
+  await expect(page.getByText('A migrated paragraph')).toBeVisible();
+  await expect(page.getByText('<b>Page 0</b>')).toBeVisible();
+  await expect(page.getByText('<img src=x onerror=alert(1)>')).toBeVisible();
+  await scan(page, testInfo);
+
+  // Approving: confirmed on the page, refused over a version nobody read, then at the new one.
+  await page.getByRole('button', { name: 'Approve…' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('publishes the content type Page');
+  await page.getByRole('button', { name: 'Approve template' }).click();
+  await expect(page.getByText('This template changed since you read it')).toBeVisible();
+  await page.getByRole('button', { name: 'I’ve read this version' }).click();
+  await page.getByRole('button', { name: 'Approve…' }).click();
+  await scan(page, testInfo);
+  await page.getByRole('button', { name: 'Approve template' }).click();
+  await expect(page.getByText(/^Approved\. Nothing is running this/)).toBeVisible();
+  expect(calls.approve).toBe(2);
+  await expect(page.getByRole('button', { name: 'Edit script' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Transform until done' }).click();
+  await expect(page.getByText('Transformed 20 pages: 20 validated, 0 need a fix.')).toBeVisible();
+  await page.getByRole('button', { name: 'Load until done' }).click();
+  await expect(page.getByText('Loaded 20 pages.')).toBeVisible();
+
+  // Back on the run: its links, its redirects, and publishing, which only its own answer starts.
+  await page
+    .getByRole('link', { name: `E2E site ${stamp}` })
+    .last()
+    .click();
+  await page.getByRole('button', { name: 'Relink' }).click();
+  await expect(page.getByText(/^Relinked 4 entries of 20 read/)).toBeVisible();
+  await page.getByRole('button', { name: 'Write redirects' }).click();
+  await expect(page.getByText(/2 skipped: the path didn’t move/)).toBeVisible();
+  await page.getByRole('button', { name: 'Publish…', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Not now' })).toBeFocused();
+  expect(calls.publish).toBe(0);
+  await scan(page, testInfo);
+  await page.getByRole('button', { name: 'Publish 20 entries' }).click();
+  await expect(page.getByText('Published 20 entries.')).toBeVisible();
+  expect(calls.publish).toBe(1);
 
   // Back on the list, the run is there with its pages by stage.
   await page

@@ -145,6 +145,7 @@ const client = {
         proposal: null,
         lastTry: null,
         approvedBy: null,
+        reviewDigest: 'd'.repeat(64),
         version: 1,
         createdAt: T0,
         updatedAt: T0,
