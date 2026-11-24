@@ -193,6 +193,19 @@ export async function listMigrationTemplates(
   return { items: await ctx.store.migrations.listTemplates(scope, runId) };
 }
 
+/** One template of a run: its proposal, script version, last try and status. */
+export async function getMigrationTemplate(
+  ctx: AppContext,
+  scope: Scope,
+  runId: string,
+  templateId: string,
+): Promise<MigrationTemplate> {
+  await requireRun(ctx, scope, runId);
+  const template = await ctx.store.migrations.getTemplate(scope, runId, templateId);
+  if (!template) throw new NotFoundError('Migration template', templateId);
+  return template;
+}
+
 function clampLimit(limit: number | undefined, fallback: number, max: number): number {
   if (limit === undefined || !Number.isFinite(limit)) return fallback;
   return Math.max(1, Math.min(Math.trunc(limit), max));

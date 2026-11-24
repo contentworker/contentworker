@@ -15,7 +15,7 @@ import {
   setImportScript,
   templateReviewDigest,
 } from '@contentworker/application';
-import { type ContentTypeDraft, scopesForKind } from '@contentworker/domain';
+import { type ContentTypeDraft, NotFoundError, scopesForKind } from '@contentworker/domain';
 import {
   CloudflareMigrationRunner,
   migrationInstanceId,
@@ -184,6 +184,19 @@ describe('MigrationWorkflow on Cloudflare Workflows', () => {
     expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({
       published: 2,
     });
+  });
+});
+
+describe('CloudflareMigrationRunner', () => {
+  it('answers a run with no driver as not found, for either signal', async () => {
+    const runner = new CloudflareMigrationRunner(env.MIGRATION_WF);
+    const scope = { spaceId: 'mig-none', environmentId: 'main' };
+    await expect(
+      runner.publishApproved(scope, 'never-started', { approvedBy: { kind: 'deployment' } }),
+    ).rejects.toThrow(NotFoundError);
+    await expect(runner.templateApproved(scope, 'never-started', 't', {})).rejects.toThrow(
+      NotFoundError,
+    );
   });
 });
 

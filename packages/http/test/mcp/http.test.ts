@@ -73,8 +73,11 @@ describe.each(['legacy', 'auto'] as const)('MCP over HTTP (%s negotiation)', (mo
     expect(listed.map((s) => s.frontmatter.name).sort()).toEqual([
       'author-and-publish',
       'import-content',
+      'migration-triage',
       'model-content',
       'site-migration',
+      'template-content-model',
+      'template-import-script',
     ]);
     for (const skill of listed) {
       expect(skill.uri).toMatch(/^skill:\/\/contentworker\//);

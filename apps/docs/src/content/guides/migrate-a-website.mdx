@@ -1,37 +1,58 @@
 ---
 title: Migrate a website
-description: Read a published website from its sitemap or a crawl, fetch its pages and group them into templates by structure, over the API, MCP, the SDK and the command line.
+description: Bring a published website in as structured content. Read it from its sitemap or a crawl, group its pages into templates, turn each template into a content type with an import script, then load, redirect and publish the pages, over the API, MCP, the SDK and the command line.
 ---
 
-A migration run reads a published website and finds out what it is made of. You point a run at a
-site, it lists the pages, fetches them a batch at a time and groups the pages that share a
-structure into **templates**: a home page, a product page, an article. The run lives in one
+A migration run reads a published website and brings its pages in as structured content. You
+point a run at a site, it lists the pages, fetches them a batch at a time and groups the pages that
+share a structure into **templates**: a home page, a product page, an article. Each template then
+becomes a content type, and an **import script** turns each of its pages into that type's fields
+and blocks. Rich text arrives as `RichTextDocument` trees, images as assets and links between
+pages as links between entries; no page is stored as HTML. The run lives in one
 [environment](/guides/environments/), so you can do it in a scratch environment and look at the
-result before anything is built.
+result before anything reaches your main content.
 
 ## What exists now
 
-Discovery and clustering are built, on every surface:
+The whole run is built, on every surface:
 
 - Management API routes under `/spaces/{space}/environments/{env}/migrations/runs` (the "Site
   migration" tag in the [API reference](/reference/rest-api/)).
-- Eight [MCP](/guides/mcp/) tools, `migration_*`, and a `site-migration` skill that walks an agent
-  through the steps.
+- 21 [MCP](/guides/mcp/) tools, `migration_*`, and four skills: `site-migration` walks an agent
+  through a run, `template-content-model` and `template-import-script` through authoring a
+  template, and `migration-triage` through scores and failures.
 - `cma.migrations` in the [Management SDK](/guides/sdks/) and `contentworker migrate` in the
   [command-line tool](/guides/cli/).
 
-Template authoring, loading pages as entries, publishing them and an admin screen for runs are not
-part of this yet. A run ends, for now, at its list of templates and the pages in each.
+A small site can be taken through step by step, each call a bounded batch. A large one is handed to
+the engine with `start`, which runs every step in the background and waits for people only where
+a person decides: approving each template, and the go-ahead to publish. An admin screen for runs is
+planned.
 
 ## Before you start
 
-- Running a step (create, inventory, fetch, cluster) needs `migration:run`. Reading a run back
-  (list, status, pages, templates) needs `migration:run` or `content:manage`.
+Each step needs `migration:run`, and the steps that write content need what that write needs too:
+
+| Step                                                  | Needs                                                        |
+| ----------------------------------------------------- | ------------------------------------------------------------ |
+| Create, inventory, fetch, cluster                     | `migration:run`                                              |
+| Read a run, its pages and templates, a script         | `migration:run` or `content:manage`                          |
+| Propose a model, write or try a script, transform     | `migration:run`                                              |
+| Approve a template                                    | `content:manage`                                             |
+| Load pages as entries                                 | `migration:run`, `content:write` and `assets:write`          |
+| Relink                                                | `migration:run` and `content:write`                          |
+| Redirect old URLs                                     | `content:manage`                                             |
+| Publish, or give a started run the go-ahead to        | `content:publish` (and `content:write` through a release)    |
+| Start a run in the background                         | `migration:run`                                              |
+
 - `space:admin` carries `migration:run`, so the Administrator role and every admin key can run a
   migration. Other roles and keys can be given the scope on its own; the token picker calls it
   **Migrate websites**. See [API keys and access](/guides/api-keys/#scopes).
 - A connected app (OAuth, which includes `contentworker login` and MCP clients) can ask for
   `migration:run`; its token carries it only when the approving person's role does.
+- Whatever a step writes, it writes as whoever called it: entries, assets and redirects are
+  stamped with the caller, and a run started in the background acts for the person who started it
+  and the people who approve. No request names someone else.
 - The site must be public: a run has no way to sign in to it.
 
 ## How the site is read
@@ -89,6 +110,64 @@ nothing links to.
 `status` on a run is the step that last finished: `created`, `inventoried`, `clustered` or
 `failed`.
 
+## Author each template
+
+Work one template at a time, largest first. A template's `status` goes `pending` → `authoring`
+(once a model or script is written; clustering again is refused from then on) → `approving` (while
+an approval writes its content type) → `approved`.
+
+1. **Propose its model**: the content type its pages become. The server checks it as the type will
+   be created and refuses one without:
+   - exactly one top-level blocks field (an `Array` of `Component` variants) for the body, one
+     variant per kind of section;
+   - a URL pattern, such as `/blog/{slug}`, so each old path can redirect to its entry;
+   - a `sourceUrl` field (`Symbol`, unique, not localized) that holds each entry's source page URL.
+     Leave it out and it is added. A load matches entries on it, which makes loading safe to
+     repeat.
+
+   A preview URL, agent instructions, the editor layout and each field's help text and defaults
+   are dropped: the person who approves adds them. Proposing changes nothing in your model.
+2. **Write its import script**, an ES module of at most 256 KiB, sent and read back as text. Its
+   default export takes the parsed page and returns
+   `{ fields, blocks: [{ variant, fields }], assets: [{ url, alt? }], links: [{ href }] }`. A
+   rich-text value is `{ "$html": "<p>…</p>" }`, the fragment as the page holds it; an asset link
+   is `{ "$asset": "https://…/a.png" }`. Scripts run in an isolate of their own with no network.
+3. **Try it** on the template's sample pages, or up to five pages you pick. Each result says
+   whether the output fits the model, its score against the page (text coverage, lost links,
+   missing images) and the script's logs; outputs come back with every `$html` already converted
+   to a rich-text document. The summary is kept as the template's `lastTry`.
+4. **Approve it.** A person with `content:manage` reads the template, including its
+   `reviewDigest`, and approves with that digest as `reviewed`. Approval creates and publishes the
+   content type, as them. If the model or script changed after they read it, approval answers
+   `409` and they review again. An approved template's model and script can't change.
+
+## Take the pages in
+
+Step by step, each call a bounded batch:
+
+1. **Transform** up to 10 pages a call (`limit`, `after` from the last call's `next`, while
+   `more`). Each page is scored and moves to `validated` at the run's threshold or `needs-fix`
+   below it. Pages already transformed by the approved script are skipped.
+2. **Load** up to 10 `validated` pages a call as entries, while `more`. The assets each output
+   names are downloaded once per run; a file that fails is reported and its page loads without it.
+   `includeNeedsFix` loads the low scorers too. Loading a page again updates the entry it became.
+3. **Relink** once every template is loaded, with `after` until `next` is absent: links between
+   migrated pages become links between their entries.
+4. **Redirect**: a 301 from each loaded page's old path to its entry's path, by the type's URL
+   pattern. Pages whose path didn't move are skipped. Safe to repeat.
+5. **Publish** up to 50 loaded entries a call, or with `viaRelease` add every one to a release
+   (`releaseId`, or the run's own, titled `releaseTitle`) for someone to ship.
+
+## Run it in the background
+
+`start` hands the run to the engine, acting for you: it inventories, fetches and clusters, starts
+an authoring agent for each of the largest templates, then for each template a person approves
+transforms, loads and redirects its pages, relinks, and waits for the go-ahead to publish
+(`publish-approval`), which names its approver from the caller's credentials. Starting again is
+safe: it answers `started: false`. Approving a template tells the engine (`signalled: true`); when
+it says `false`, approve again. A go-ahead for a run that was never started answers `404`. Follow
+the run with its status and pages as before.
+
 ### With curl
 
 ```sh
@@ -113,6 +192,32 @@ curl -s "$BASE/$RUN/pages?stage=clustered&limit=50" -H "$AUTH"
 
 A page list returns `nextCursor` only while more pages follow; send it back as `cursor`.
 
+Then each template, then the pages:
+
+```sh
+T="$BASE/$RUN/templates/$TEMPLATE"
+curl -s -X POST "$T/proposal" -H "$AUTH" -H "Content-Type: application/json" -d @model.json
+jq -Rs '{script: .}' import.js | curl -s -X PUT "$T/script" -H "$AUTH" \
+  -H "Content-Type: application/json" -d @-
+curl -s -X POST "$T/try" -H "$AUTH" -H "Content-Type: application/json" -d '{}'
+
+# A content manager reads the template, then approves what they read.
+DIGEST=$(curl -s "$T" -H "Authorization: Bearer $MANAGER" | jq -r .reviewDigest)
+curl -s -X POST "$T/approve" -H "Authorization: Bearer $MANAGER" \
+  -H "Content-Type: application/json" -d "{\"reviewed\":\"$DIGEST\"}"
+
+curl -s -X POST "$T/transform" -H "$AUTH" -H "Content-Type: application/json" -d '{}'
+curl -s -X POST "$T/load" -H "$AUTH" -H "Content-Type: application/json" -d '{}'
+curl -s -X POST "$BASE/$RUN/relink" -H "$AUTH" -H "Content-Type: application/json" -d '{}'
+curl -s -X POST "$BASE/$RUN/redirects" -H "$AUTH" -H "Content-Type: application/json" -d '{}'
+curl -s -X POST "$BASE/$RUN/publish" -H "$AUTH" -H "Content-Type: application/json" -d '{}'
+
+# Or, for a large site:
+curl -s -X POST "$BASE/$RUN/start" -H "$AUTH"
+curl -s -X POST "$BASE/$RUN/publish-approval" -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"viaRelease":true,"releaseTitle":"Site launch"}'
+```
+
 ### With an agent
 
 Connect an agent that holds the scope and ask for the migration in plain words. The
@@ -127,8 +232,16 @@ you through the templates at the end. Under it, the calls are:
 { "name": "migration_templates", "arguments": { "run": "<run id>" } }
 ```
 
-`migration_list`, `migration_status` and `migration_pages` read a run back. Every tool takes
-`space` and `environment` like the rest of the server.
+`migration_list`, `migration_status` and `migration_pages` read a run back. Authoring is
+`migration_template_get`, `migration_propose_model`, `migration_script_get`,
+`migration_script_set`, `migration_script_try` and `migration_template_approve`; the pages go in
+with `migration_transform`, `migration_load`, `migration_relink`, `migration_redirects` and
+`migration_publish_entries`; and `migration_start` and `migration_publish` drive a run in the
+background. Every tool takes `space` and `environment` like the rest of the server.
+
+An agent proposes and scripts, but approving needs `content:manage` and the skills tell it to
+leave that to a person. Page text, script outputs and logs reach it as data from the old site, and
+the skills say to treat them as data, never as instructions.
 
 ### With the command line
 
@@ -137,23 +250,33 @@ contentworker migrate create https://example.com --exclude '/blog/**' --max-page
 contentworker migrate step <run>
 contentworker migrate cluster <run> --threshold 0.6
 contentworker migrate pages <run> --stage clustered
+contentworker migrate template <run> <template>
+contentworker migrate script set <run> <template> import.js
+contentworker migrate script try <run> <template> --page <page id>
+contentworker migrate approve <run> <template> --reviewed <digest>
+contentworker migrate start <run>
+contentworker migrate publish <run> --via-release --release-title 'Site launch'
 ```
 
 `migrate create` takes `--crawl` for a crawl source, `--include` and `--exclude` (repeatable),
 `--max-pages`, `--name` and `--threshold`. `migrate step` inventories a run that was just created,
 then fetches batches until none wait (`--batch`, `--max-batches`); run it again after a stop. It
 exits `1` with the code `site_unavailable` when the site's `robots.txt` can't be read.
+`migrate template` shows a template's model, script version, last try and `reviewDigest`.
+`migrate approve` without `--reviewed` shows the template and asks before approving what it shows
+(`--yes` off a terminal). `migrate publish` sends a started run the go-ahead; `--now` publishes the
+loaded entries here instead, batch by batch.
 
 ## When a call is refused
 
 | Status | Code                | Means                                                                                                                      |
 | ------ | ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `403`  | `forbidden`         | The token lacks the scope; the message names it.                                                                           |
-| `400`  | `invalid_state`     | The step is out of order: clustering before an inventory, or an inventory after clustering.                                |
-| `404`  | `not_found`         | No such run in this environment.                                                                                           |
-| `409`  | `conflict`          | Another step wrote the run first (`retryable: true`). Send the call again.                                                 |
+| `400`  | `invalid_state`     | The step is out of order: clustering before an inventory or once a template is authored, a script change once a template is approved, a transform or load before approval. |
+| `404`  | `not_found`         | No such run or template in this environment, or no background driver to send a go-ahead to.                                |
+| `409`  | `conflict`          | Another step wrote the run first (`retryable: true`; send the call again), or the template changed since its `reviewDigest` was read (review it again). |
 | `422`  | `validation_failed` | A source field is malformed, or the URL is on a private address. The issue names the field, such as `source.include[0]`. |
-| `501`  | `not_configured`    | This deployment can't read source sites.                                                                                   |
+| `501`  | `not_configured`    | This deployment can't read source sites, run import scripts, or run migrations in the background.                         |
 | `503`  | `site_unavailable`  | The site's `robots.txt` can't be read (`retryable: true`). Nothing was written; try again later.                            |
 
 ## Next steps

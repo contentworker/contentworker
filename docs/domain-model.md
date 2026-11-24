@@ -1812,9 +1812,15 @@ API ([Site migration](./api-reference.md#site-migration)) and MCP (`migration_*`
 [MCP server](./mcp.md#tools)), and in the management SDK and `contentworker migrate`; the guide for
 people is [Migrate a website](https://docs.contentworker.app/guides/migrate-a-website/). The scope is
 `migration:run` ([Auth & RBAC](./auth-and-rbac.md#permission-scopes)). Responses never carry a
-page's HTML, its object key or its fingerprint: an artifact is `{ sha256, bytes }`. The load,
-relink, redirect and publish use-cases, and the authoring use-cases below, aren't on the HTTP API
-or MCP yet.
+page's HTML, its object key or its fingerprint: an artifact is `{ sha256, bytes }`. The
+authoring, load, relink, redirect and publish use-cases below are on both surfaces too, as is
+`site-migration-driver.ts`: `startMigration` (starts the run's driver as the caller,
+`migration:run`), `approveMigrationTemplate` (`approveTemplate`, then `templateApproved` only once
+it has committed; `signalled` says whether a driver heard) and `approveMigrationPublish` (the
+go-ahead, `content:publish` and `content:write` through a release, naming the caller). Each reads
+the run in the caller's scope before the runner, which ignores scope, is called;
+`CloudflareMigrationRunner` reports a run with no Workflow instance as `NotFoundError`.
+`getMigrationTemplate` reads one template; its responses carry `reviewDigest`.
 
 - `inventorySite` adds the pages a sitemap lists, or a crawl's start page, skipping URLs the run
   already holds. It throws `SiteUnavailableError` (`site_unavailable`), with nothing written,

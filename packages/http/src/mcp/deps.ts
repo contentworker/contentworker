@@ -12,7 +12,9 @@ import type {
   AssetIngestQueue,
   BlobStore,
   Hasher,
+  ImportScriptSandbox,
   ImportSource,
+  MigrationRunner,
   RemoteFetcher,
   SiteSource,
   SpaceExportReader,
@@ -59,6 +61,10 @@ export interface McpDeps {
   readonly remoteFetcher?: RemoteFetcher;
   /** Reads a site for a migration (as AuthDeps'); absent, the steps that fetch refuse. */
   readonly siteSource?: SiteSource;
+  /** Runs migration import scripts (as AuthDeps'); absent, the try and transform tools refuse. */
+  readonly importScriptSandbox?: ImportScriptSandbox;
+  /** Starts and signals migration drivers (as AuthDeps'); absent, start and publish refuse. */
+  readonly migrationRunner?: MigrationRunner;
   /** Whether people sign in through SSO (for the last-administrator rule). Absent: no SSO. */
   readonly accessPolicy?: AccessPolicy;
   /** The admin's origin, where invitation links open (as AuthDeps' `inviteOrigin`). */

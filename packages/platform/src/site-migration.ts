@@ -17,7 +17,7 @@ import {
   type TemplateAgentState,
   templateAgentTurn,
 } from '@contentworker/application';
-import { InvalidStateError, type Scope } from '@contentworker/domain';
+import { InvalidStateError, NotFoundError, type Scope } from '@contentworker/domain';
 import type {
   ChatMessage,
   ImportScriptSandbox,
@@ -68,7 +68,7 @@ export class CloudflareMigrationRunner implements MigrationRunner {
     templateId: string,
     event: MigrationTemplateApproved,
   ): Promise<void> {
-    const instance = await this.wf.get(migrationInstanceId(runId));
+    const instance = await this.driver(runId);
     await instance.sendEvent({ type: migrationTemplateApprovedEvent(templateId), payload: event });
   }
 
@@ -77,8 +77,21 @@ export class CloudflareMigrationRunner implements MigrationRunner {
     runId: string,
     event: MigrationPublishApproved,
   ): Promise<void> {
-    const instance = await this.wf.get(migrationInstanceId(runId));
+    const instance = await this.driver(runId);
     await instance.sendEvent({ type: MIGRATION_PUBLISH_EVENT, payload: event });
+  }
+
+  /**
+   * The run's instance. `get` throws for an id with no instance (a run driven by hand, never
+   * started, or one past its retention), and the binding gives that no code: it is a
+   * `NotFoundError` here, so a caller can tell "nothing to signal" from a refusal.
+   */
+  private async driver(runId: string) {
+    try {
+      return await this.wf.get(migrationInstanceId(runId));
+    } catch {
+      throw new NotFoundError('Migration driver', runId);
+    }
   }
 }
 

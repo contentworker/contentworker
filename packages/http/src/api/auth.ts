@@ -41,7 +41,9 @@ import type {
   BlobStore,
   EventBus,
   Hasher,
+  ImportScriptSandbox,
   ImportSource,
+  MigrationRunner,
   RemoteFetcher,
   SiteSource,
   SpaceExportReader,
@@ -113,6 +115,14 @@ export interface AuthDeps {
    * inventory and fetch steps answer 501.
    */
   readonly siteSource?: SiteSource;
+  /**
+   * Runs a migration template's import script in its own isolate (Worker Loader). Absent: trying
+   * and transforming answer 501.
+   */
+  readonly importScriptSandbox?: ImportScriptSandbox;
+  /** Starts and signals a migration run's driver (the engine's Workflow). Absent: `…/start` and
+   *  `…/publish-approval` answer 501, and an approval tells no driver. */
+  readonly migrationRunner?: MigrationRunner;
   /** Deployment policy for where plugin packages may come from. */
   readonly pluginSources?: PluginSourcePolicy;
   /** Delivers review decisions to a durable HITL watcher (optional). */

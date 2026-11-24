@@ -55,7 +55,9 @@ Scopes are what a key may do: `content:write` to edit drafts, `content:publish` 
 on. `assets:read` and `assets:write` cover assets alone; `preview:read` and `content:write` carry
 them, so an existing key or role keeps its asset access. `migration:run` lets a key run
 [site migrations](/guides/migrate-a-website/); `space:admin` carries it, and reading a run back
-needs it or `content:manage`. Every route checks one, against the space in its path. The full list, with what each allows,
+needs it or `content:manage`. The migration steps that write content also need that write's scope
+(`content:manage` to approve a template, `content:write` and `assets:write` to load,
+`content:publish` to publish). Every route checks one, against the space in its path. The full list, with what each allows,
 is in [Permission scopes](/reference/scopes/).
 
 ## Roles

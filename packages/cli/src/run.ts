@@ -82,12 +82,20 @@ export async function run(argv: readonly string[], io: Io): Promise<number> {
 
 /** Command names are the leading words: two (`entries list`) before one (`spaces`). */
 function findCommand(argv: readonly string[]): { command: Command; rest: readonly string[] } {
+  // Longest name first: `migrate script set` before `migrate script`.
+  const three = `${argv[0]} ${argv[1]} ${argv[2]}`;
+  const byThree = COMMANDS.find((c) => c.name === three);
+  if (byThree) return { command: byThree, rest: argv.slice(3) };
   const two = `${argv[0]} ${argv[1]}`;
   const byTwo = COMMANDS.find((c) => c.name === two);
   if (byTwo) return { command: byTwo, rest: argv.slice(2) };
   const byOne = COMMANDS.find((c) => c.name === argv[0]);
   if (byOne) return { command: byOne, rest: argv.slice(1) };
-  const group = COMMANDS.filter((c) => c.name.startsWith(`${argv[0]} `));
+  const group = COMMANDS.filter((c) =>
+    c.name.startsWith(
+      argv[1] && COMMANDS.some((d) => d.name.startsWith(`${two} `)) ? `${two} ` : `${argv[0]} `,
+    ),
+  );
   if (group.length) {
     throw usageError(
       `${argv[1] ? `Unknown command "${two}"` : `"${argv[0]}" needs a subcommand`}. Try:\n${group

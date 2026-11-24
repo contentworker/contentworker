@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { EXIT } from '../src/output.js';
 import { harness, status, URL_ } from './harness.js';
@@ -227,5 +230,211 @@ describe('migrate', () => {
     const missing = await h.run('migrate');
     expect(missing.code).toBe(EXIT.usage);
     expect(missing.stderr).toMatch(/contentworker migrate step <run>/);
+  });
+});
+
+const T = `${R}/r1/templates/t1`;
+const DIGEST = 'a'.repeat(64);
+const template = (status = 'authoring') => ({
+  id: 't1',
+  runId: 'r1',
+  label: 'Template 1',
+  status,
+  pageCount: 2,
+  samplePageIds: ['p1'],
+  contentTypeId: status === 'approved' ? 'article' : null,
+  script: { sha256: 'b'.repeat(64), bytes: 120 },
+  proposal: { apiId: 'article', name: 'Article', displayField: 'title', fields: [{}, {}] },
+  lastTry: {
+    at: '2026-11-01T12:00:00.000Z',
+    scriptSha256: 'b'.repeat(64),
+    pages: 2,
+    ok: 2,
+    passed: 1,
+    meanScore: 0.85,
+    problems: ['https://old.test/b: lost 1 link'],
+  },
+  approvedBy: null,
+  reviewDigest: DIGEST,
+  version: 3,
+  createdAt: '2026-11-01T12:00:00.000Z',
+  updatedAt: '2026-11-01T12:00:00.000Z',
+});
+
+describe('migrate, authoring and publishing', () => {
+  it('shows a template with its review digest', async () => {
+    const h = await harness({ [`GET ${T}`]: () => template() }, { env: ENV });
+    const shown = await h.run('migrate', 'template', 'r1', 't1');
+    expect(shown.code).toBe(EXIT.ok);
+    expect(shown.stdout).toMatch(/model:\s+article \(2 fields\)/);
+    expect(shown.stdout).toMatch(/lastTry:\s+2\/2 ok, 1 passed, mean 0\.85/);
+    expect(shown.stdout).toContain(DIGEST);
+    expect(shown.stdout).toMatch(/problem: https:\/\/old\.test\/b: lost 1 link/);
+  });
+
+  it('stores a script from a file, and tries one without storing it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cw-script-'));
+    const file = join(dir, 'import.js');
+    await writeFile(
+      file,
+      'export default () => ({ fields: {}, blocks: [], assets: [], links: [] });',
+    );
+    const h = await harness(
+      {
+        [`PUT ${T}/script`]: () => template(),
+        [`POST ${T}/try`]: () => ({
+          summary: { pages: 1, ok: 0, passed: 0, meanScore: 0, problems: [] },
+          results: [
+            {
+              pageId: 'p1',
+              url: 'https://old.test/a',
+              ok: false,
+              issues: [],
+              error: 'threw: x',
+              logs: [],
+            },
+          ],
+        }),
+      },
+      { env: ENV },
+    );
+    const set = await h.run('migrate', 'script', 'set', 'r1', 't1', file);
+    expect(set.code).toBe(EXIT.ok);
+    expect(JSON.parse(h.calls[0]?.body ?? '')).toEqual({
+      script: 'export default () => ({ fields: {}, blocks: [], assets: [], links: [] });',
+    });
+    expect(set.stdout).toMatch(/Next: contentworker migrate script try r1 t1/);
+
+    const tried = await h.run(
+      'migrate',
+      'script',
+      'try',
+      'r1',
+      't1',
+      '--file',
+      file,
+      '--page',
+      'p1',
+    );
+    expect(tried.code).toBe(EXIT.ok);
+    expect(JSON.parse(h.calls[1]?.body ?? '')).toMatchObject({ pageIds: ['p1'] });
+    expect(tried.stdout).toMatch(/Tried 1: 0 ok/);
+    expect(tried.stdout).toMatch(/threw: x/);
+    const many = await h.run(
+      'migrate',
+      'script',
+      'try',
+      'r1',
+      't1',
+      ...['1', '2', '3', '4', '5', '6'].flatMap((p) => ['--page', p]),
+    );
+    expect(many.code).toBe(EXIT.usage);
+    expect(h.calls).toHaveLength(2);
+  });
+
+  it('refuses a script over 256 KiB before sending it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cw-script-'));
+    const file = join(dir, 'big.js');
+    await writeFile(file, 'x'.repeat(256 * 1024 + 1));
+    const h = await harness({}, { env: ENV });
+    const res = await h.run('migrate', 'script', 'set', 'r1', 't1', file);
+    expect(res.code).toBe(EXIT.usage);
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('approves with the digest given, or the one read now once confirmed', async () => {
+    const approved = () => ({ template: template('approved'), signalled: true });
+    const h = await harness(
+      { [`GET ${T}`]: () => template(), [`POST ${T}/approve`]: approved },
+      { env: ENV },
+    );
+    const given = await h.run('migrate', 'approve', 'r1', 't1', '--reviewed', DIGEST);
+    expect(given.code).toBe(EXIT.ok);
+    expect(given.stdout).toMatch(/Approved Template 1 as article\. The run’s driver goes on/);
+    expect(JSON.parse(h.calls[0]?.body ?? '')).toEqual({ reviewed: DIGEST });
+
+    // Off a terminal, nothing can be confirmed: nothing is approved.
+    const unconfirmed = await h.run('migrate', 'approve', 'r1', 't1');
+    expect(unconfirmed.code).toBe(EXIT.usage);
+    expect(h.calls.map((c) => c.method)).toEqual(['POST', 'GET']);
+
+    const asked = await harness(
+      { [`GET ${T}`]: () => template(), [`POST ${T}/approve`]: approved },
+      { env: ENV, interactive: true, answers: ['y'] },
+    );
+    expect((await asked.run('migrate', 'approve', 'r1', 't1')).code).toBe(EXIT.ok);
+    expect(JSON.parse(asked.calls[1]?.body ?? '')).toEqual({ reviewed: DIGEST });
+  });
+
+  it('surfaces a stale review as the api’s conflict', async () => {
+    const h = await harness(
+      {
+        [`POST ${T}/approve`]: () =>
+          status(409, {
+            error: { code: 'conflict', message: 'The template’s model or script changed' },
+          }),
+      },
+      { env: ENV },
+    );
+    const res = await h.run('migrate', 'approve', 'r1', 't1', '--reviewed', DIGEST);
+    expect(res.code).toBe(EXIT.failure);
+    expect(res.stderr).toMatch(/changed/);
+  });
+
+  it('starts a run, and says when it was running', async () => {
+    let started = true;
+    const h = await harness(
+      {
+        [`POST ${R}/r1/start`]: () => ({
+          started: (() => {
+            const s = started;
+            started = false;
+            return s;
+          })(),
+        }),
+      },
+      { env: ENV },
+    );
+    expect((await h.run('migrate', 'start', 'r1')).stdout).toMatch(/Started run r1/);
+    expect((await h.run('migrate', 'start', 'r1')).stdout).toMatch(/running already/);
+  });
+
+  it('sends the go-ahead, or publishes batch by batch with --now', async () => {
+    let page = 0;
+    const h = await harness(
+      {
+        [`POST ${R}/r1/publish-approval`]: () => ({ accepted: true }),
+        [`POST ${R}/r1/publish`]: () =>
+          ++page === 1
+            ? { published: 50, added: 0, failed: [], next: 'p50' }
+            : {
+                published: 3,
+                added: 0,
+                failed: [{ pageId: 'p9', url: 'https://old.test/x', error: 'no' }],
+              },
+      },
+      { env: ENV },
+    );
+    const ahead = await h.run(
+      'migrate',
+      'publish',
+      'r1',
+      '--via-release',
+      '--release-title',
+      'Launch',
+    );
+    expect(ahead.code).toBe(EXIT.ok);
+    expect(JSON.parse(h.calls[0]?.body ?? '')).toEqual({
+      viaRelease: true,
+      releaseTitle: 'Launch',
+    });
+
+    const now = await h.run('migrate', 'publish', 'r1', '--now');
+    expect(now.code).toBe(EXIT.failure);
+    expect(now.stdout).toMatch(/Published 53, 1 failed/);
+    expect(JSON.parse(h.calls[2]?.body ?? '')).toEqual({ after: 'p50' });
+
+    const bad = await h.run('migrate', 'publish', 'r1', '--release', 'rel1');
+    expect(bad.code).toBe(EXIT.usage);
   });
 });

@@ -123,19 +123,19 @@ The three key kinds (`ApiKeyKind`):
 
 `SCOPES` (`PermissionScope`):
 
-| Scope              | Grants                                                                          |
-| ------------------ | ------------------------------------------------------------------------------- |
-| `content:write`    | Create/update draft entries; AI draft generation (+ `assets:write`)             |
-| `content:publish`  | Publish/unpublish entries, assets, and content types                            |
-| `content:manage`   | Define/revise content-type schemas                                              |
-| `preview:read`     | Read draft/current entries and content-type definitions (+ `assets:read`)       |
-| `assets:read`      | Read assets, drafts included: files, metadata, folders, collections, renditions |
-| `assets:write`     | Upload, replace, edit, organize and restore assets                              |
-| `delivery:read`    | Read published entries and assets                                               |
-| `search:read`      | Semantic search over published content                                          |
-| `space:admin`      | Manage API keys, create spaces/environments, manage webhooks                    |
-| `migration:run`    | Run site migrations: create a run, inventory, fetch, cluster (+ read its runs)  |
-| `workflow:approve` | Decide workflow approvals (the Approver preset)                                 |
+| Scope              | Grants                                                                              |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `content:write`    | Create/update draft entries; AI draft generation (+ `assets:write`)                 |
+| `content:publish`  | Publish/unpublish entries, assets, and content types                                |
+| `content:manage`   | Define/revise content-type schemas                                                  |
+| `preview:read`     | Read draft/current entries and content-type definitions (+ `assets:read`)           |
+| `assets:read`      | Read assets, drafts included: files, metadata, folders, collections, renditions     |
+| `assets:write`     | Upload, replace, edit, organize and restore assets                                  |
+| `delivery:read`    | Read published entries and assets                                                   |
+| `search:read`      | Semantic search over published content                                              |
+| `space:admin`      | Manage API keys, create spaces/environments, manage webhooks                        |
+| `migration:run`    | Run site migrations: discover, cluster, author templates, transform, start (+ read) |
+| `workflow:approve` | Decide workflow approvals (the Approver preset)                                     |
 
 ### Default scopes per kind
 
@@ -995,19 +995,19 @@ entry holding it.
 
 ## Scope → operation map
 
-| Scope              | Use-cases / endpoints (representative)                                                                 |
-| ------------------ | ------------------------------------------------------------------------------------------------------ |
-| `content:write`    | Entry CRUD, AI generation endpoints, bulk writes, comments/tasks, metadata (+ `assets:write`)          |
-| `content:publish`  | Publish/unpublish entries, assets, content types, releases; scheduled actions                          |
-| `content:manage`   | Content types, workflows, taxonomy, functions, app-extensions, ai-actions, merge                       |
-| `preview:read`     | Preview entries, content types, releases, workflows, collaboration reads (+ `assets:read`)             |
-| `assets:read`      | Asset reads: list, search, files, metadata, folders, collections, renditions, versions, zips           |
-| `assets:write`     | Asset upload, replace, edit, organize, restore; folders, collections, alt text, auto-tag, video        |
-| `delivery:read`    | Published entries/assets, Live Content SSE, GraphQL                                                    |
-| `search:read`      | Hybrid/semantic search, related/duplicates/embedding                                                   |
-| `space:admin`      | Spaces, environments, aliases, API keys, roles, team, access settings, webhooks, audit log, agent runs |
-| `workflow:approve` | Deciding workflow approvals whose node asks for it (the default)                                       |
-| `migration:run`    | Site migration steps: create, inventory, fetch, cluster; its reads also accept `content:manage`        |
+| Scope              | Use-cases / endpoints (representative)                                                                                                                                                                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `content:write`    | Entry CRUD, AI generation endpoints, bulk writes, comments/tasks, metadata (+ `assets:write`)                                                                                                                                                                                                          |
+| `content:publish`  | Publish/unpublish entries, assets, content types, releases; scheduled actions                                                                                                                                                                                                                          |
+| `content:manage`   | Content types, workflows, taxonomy, functions, app-extensions, ai-actions, merge                                                                                                                                                                                                                       |
+| `preview:read`     | Preview entries, content types, releases, workflows, collaboration reads (+ `assets:read`)                                                                                                                                                                                                             |
+| `assets:read`      | Asset reads: list, search, files, metadata, folders, collections, renditions, versions, zips                                                                                                                                                                                                           |
+| `assets:write`     | Asset upload, replace, edit, organize, restore; folders, collections, alt text, auto-tag, video                                                                                                                                                                                                        |
+| `delivery:read`    | Published entries/assets, Live Content SSE, GraphQL                                                                                                                                                                                                                                                    |
+| `search:read`      | Hybrid/semantic search, related/duplicates/embedding                                                                                                                                                                                                                                                   |
+| `space:admin`      | Spaces, environments, aliases, API keys, roles, team, access settings, webhooks, audit log, agent runs                                                                                                                                                                                                 |
+| `workflow:approve` | Deciding workflow approvals whose node asks for it (the default)                                                                                                                                                                                                                                       |
+| `migration:run`    | Site migration steps: create, inventory, fetch, cluster, propose, script, try, transform, start; with `content:write` (and `assets:write` to load) the load and relink; its reads also accept `content:manage`. Approving a template and redirects need `content:manage`, publishing `content:publish` |
 
 `GET /spaces` returns all spaces for an admin principal (`spaceId: '*'`) or only the key's own
 space for scoped keys.

@@ -410,18 +410,133 @@ export interface MigrationArtifact {
   readonly bytes: number;
 }
 
+/** Who acts, by reference: an API key, a team member, or the deployment. */
+export type MigrationActor =
+  | { readonly kind: 'key'; readonly keyId: string }
+  | { readonly kind: 'member'; readonly memberId: string }
+  | { readonly kind: 'deployment' };
+
+/** How a template's script did the last time it was tried. */
+export interface MigrationTrySummary {
+  readonly at: string;
+  readonly scriptSha256: string;
+  readonly pages: number;
+  /** Pages whose output had the right shape for the model. */
+  readonly ok: number;
+  /** Pages scored at or above the run's threshold. */
+  readonly passed: number;
+  readonly meanScore: number;
+  readonly problems: readonly string[];
+}
+
 export interface MigrationTemplate {
   readonly id: string;
   readonly runId: string;
   readonly label: string;
-  readonly status: 'pending' | 'authoring' | 'approved';
+  /** `approving` while an approval writes its content type. */
+  readonly status: 'pending' | 'authoring' | 'approving' | 'approved';
   readonly pageCount: number;
   readonly samplePageIds: readonly string[];
   readonly contentTypeId: string | null;
   readonly script: MigrationArtifact | null;
+  /** The content type its pages are proposed to become. */
+  readonly proposal: ContentTypeDraft | null;
+  readonly lastTry: MigrationTrySummary | null;
+  /** Who approved it: its pages are loaded as them. */
+  readonly approvedBy: MigrationActor | null;
+  /** What `approve` takes as `reviewed`: the proposal and script version as you read them. */
+  readonly reviewDigest: string;
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/** A page's output from a try, rich text resolved to documents. */
+export interface MigrationOutput {
+  readonly fields: Readonly<Record<string, unknown>>;
+  readonly blocks: readonly {
+    readonly variant: string;
+    readonly fields: Readonly<Record<string, unknown>>;
+  }[];
+  readonly assets: readonly { readonly url: string; readonly alt?: string }[];
+  readonly links: readonly { readonly href: string }[];
+}
+
+export interface MigrationTryResult {
+  readonly summary: MigrationTrySummary;
+  readonly results: readonly {
+    readonly pageId: string;
+    readonly url: string;
+    readonly ok: boolean;
+    readonly output?: MigrationOutput;
+    readonly score?: NonNullable<MigrationPage['score']>;
+    readonly issues: readonly string[];
+    readonly error?: string;
+    /** What the script logged: untrusted page text. */
+    readonly logs: readonly string[];
+  }[];
+}
+
+/** A page a step couldn't take through, and why. */
+export interface MigrationPageFailure {
+  readonly pageId: string;
+  readonly url: string;
+  readonly error: string;
+}
+
+export interface MigrationTransformResult {
+  readonly transformed: number;
+  readonly validated: number;
+  readonly needsFix: number;
+  readonly failed: readonly MigrationPageFailure[];
+  /** Pass as `after` to go on; absent at the end. */
+  readonly next?: string;
+  readonly more: boolean;
+}
+
+export interface MigrationLoadResult {
+  readonly loaded: number;
+  readonly failed: readonly MigrationPageFailure[];
+  readonly assetFailures: readonly MigrationPageFailure[];
+  readonly unresolvedLinks: number;
+  readonly deferred: readonly MigrationPageFailure[];
+  readonly more: boolean;
+}
+
+export interface MigrationRelinkResult {
+  readonly checked: number;
+  readonly relinked: number;
+  readonly unresolvedLinks: number;
+  readonly skipped: readonly MigrationPageFailure[];
+  readonly next?: string;
+}
+
+export interface MigrationRedirectsResult {
+  readonly created: number;
+  readonly updated: number;
+  readonly unchanged: number;
+  readonly skipped: {
+    readonly identity: number;
+    readonly noUrlPattern: number;
+    readonly unresolved: number;
+  };
+  readonly chains: readonly RedirectChain[];
+}
+
+export interface MigrationPublishResult {
+  readonly published: number;
+  /** Entries added to the release. */
+  readonly added: number;
+  readonly releaseId?: string;
+  readonly failed: readonly MigrationPageFailure[];
+  readonly next?: string;
+}
+
+/** Publish through a release instead (needs `content:write` too). */
+export interface MigrationPublishTarget {
+  readonly viaRelease?: boolean;
+  readonly releaseId?: string;
+  readonly releaseTitle?: string;
 }
 
 export interface MigrationPage {
@@ -2272,6 +2387,8 @@ export function createManagementClient(opts: ManagementClientOptions) {
   const bookmarks = bookmarkTracker(opts.baseUrl, opts.bookmark, opts.readYourWrites !== false);
   const spaceBase = `${root}/spaces/${encodeURIComponent(opts.space)}`;
   const envBase = `${spaceBase}/environments/${encodeURIComponent(opts.environment)}`;
+  const tplBase = (run: string, template: string) =>
+    `${envBase}/migrations/runs/${encodeURIComponent(run)}/templates/${encodeURIComponent(template)}`;
 
   async function request<T>(
     method: Method,
@@ -2819,6 +2936,67 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** Largest first. */
       templates: (id: string) =>
         get<{ items: MigrationTemplate[] }>(`${envBase}/migrations/runs/${e(id)}/templates`),
+      /** One template, with the `reviewDigest` that `approve` takes. */
+      template: (run: string, template: string) =>
+        get<MigrationTemplate>(`${tplBase(run, template)}`),
+      /** The content type its pages become; nothing is created until it is approved. */
+      proposeModel: (run: string, template: string, model: ContentTypeDraft) =>
+        post<MigrationTemplate>(`${tplBase(run, template)}/proposal`, { model }),
+      /** The import script as text (null before one is written). */
+      script: (run: string, template: string) =>
+        get<{ script: string | null; sha256: string | null }>(`${tplBase(run, template)}/script`),
+      /** Stores a new version (at most 256 KiB); it isn't run here. */
+      setScript: (run: string, template: string, script: string) =>
+        put<MigrationTemplate>(`${tplBase(run, template)}/script`, { script }),
+      /** Runs the script (or `script`) on the samples or up to five pages; outputs resolved. */
+      tryScript: (
+        run: string,
+        template: string,
+        o: { readonly script?: string; readonly pageIds?: readonly string[] } = {},
+      ) => post<MigrationTryResult>(`${tplBase(run, template)}/try`, o),
+      /**
+       * Needs `content:manage`: creates the content type and approves the template. `reviewed` is
+       * the `reviewDigest` you read; a template changed since is a 409. `signalled` says whether
+       * the run's driver was told.
+       */
+      approve: (run: string, template: string, reviewed: string) =>
+        post<{ template: MigrationTemplate; signalled: boolean }>(
+          `${tplBase(run, template)}/approve`,
+          { reviewed },
+        ),
+      /** At most 10 pages a call; go on with `after: next` while `more`. */
+      transform: (
+        run: string,
+        template: string,
+        o: { readonly limit?: number; readonly after?: string } = {},
+      ) => post<MigrationTransformResult>(`${tplBase(run, template)}/transform`, o),
+      /** Needs `content:write` and `assets:write` too. At most 10 pages a call; again while `more`. */
+      load: (
+        run: string,
+        template: string,
+        o: { readonly limit?: number; readonly includeNeedsFix?: boolean } = {},
+      ) => post<MigrationLoadResult>(`${tplBase(run, template)}/load`, o),
+      /** Needs `content:write` too. Go on with `after: next` until it is absent. */
+      relink: (run: string, o: { readonly limit?: number; readonly after?: string } = {}) =>
+        post<MigrationRelinkResult>(`${envBase}/migrations/runs/${e(run)}/relink`, o),
+      /** Needs `content:manage`. Old paths to new, safe to repeat. */
+      redirects: (run: string, o: { readonly template?: string } = {}) =>
+        post<MigrationRedirectsResult>(`${envBase}/migrations/runs/${e(run)}/redirects`, o),
+      /** Needs `content:publish`. Publishes a batch now; for a started run, use `approvePublish`. */
+      publish: (
+        run: string,
+        o: MigrationPublishTarget & {
+          readonly template?: string;
+          readonly limit?: number;
+          readonly after?: string;
+        } = {},
+      ) => post<MigrationPublishResult>(`${envBase}/migrations/runs/${e(run)}/publish`, o),
+      /** Runs the whole migration in the engine, acting for you. `started` is false when it was. */
+      start: (run: string) =>
+        post<{ started: boolean }>(`${envBase}/migrations/runs/${e(run)}/start`),
+      /** Needs `content:publish`: the started run's driver publishes once its pages are loaded. */
+      approvePublish: (run: string, o: MigrationPublishTarget = {}) =>
+        post<{ accepted: true }>(`${envBase}/migrations/runs/${e(run)}/publish-approval`, o),
     },
     /** Redirects: delivery data a front end applies (content:manage to change them). */
     redirects: {
