@@ -225,3 +225,19 @@ describe('iterators', () => {
     expect(seen).toEqual(['a0']);
   });
 });
+
+describe('assets.createFromUrl', () => {
+  it('posts the URL and its details to …/assets/from-url and returns what the api answers', async () => {
+    const answer = { asset: { id: 'a1' }, deduplicated: true };
+    const { client, calls } = api(() => answer);
+    const input = {
+      url: 'https://files.example.com/logo.png',
+      title: 'Logo',
+      alt: 'The mark',
+      locale: 'en-US',
+    };
+    expect(await client.assets.createFromUrl(input)).toEqual(answer);
+    expect(calls.map(route)).toEqual(['POST /assets/from-url']);
+    expect(calls[0]?.body).toEqual(input);
+  });
+});

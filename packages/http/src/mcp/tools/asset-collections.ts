@@ -1,10 +1,12 @@
 import {
+  ASSET_FROM_URL_MAX_BYTES,
   abortMultipartAssetUpload,
   addToAssetCollection,
   auditActor,
   completeMultipartAssetUpload,
   createAsset,
   createAssetCollection,
+  createAssetFromUrl,
   createAssetRendition,
   createAssetShareLink,
   deleteAssetCollection,
@@ -43,7 +45,11 @@ import {
 } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { assetMetadataPatchShape, createAssetBody } from '../../api/validation';
+import {
+  assetMetadataPatchShape,
+  createAssetBody,
+  createAssetFromUrlBody,
+} from '../../api/validation';
 import { ok, scopeArgs, scopeOf, signedAssets, type ToolContext, toolSchema } from './shared';
 
 export function registerAssetCollectionTools(server: McpServer, t: ToolContext): void {
@@ -384,6 +390,42 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
         createdBy: collectionAuthor,
         ...(folderId ? { folderId } : {}),
       });
+      return ok({ ...created, asset: await signedOne(scopeOf(args), created.asset) });
+    },
+  );
+
+  server.registerTool(
+    'assets_create_from_url',
+    {
+      description:
+        'Create a draft asset from a file at a public http(s) URL: the server downloads it ' +
+        `(no redirects, at most ${ASSET_FROM_URL_MAX_BYTES / 1024 / 1024} MiB) and ingest runs ` +
+        'as for an upload (hash, dimensions, alt text where none is given, tags, search). ' +
+        'Loopback, link-local and private addresses are refused, as is anything but a 2xx. ' +
+        'When an asset here already holds exactly these bytes, it is returned with ' +
+        'deduplicated: true and nothing is created. title and alt go under locale (default: ' +
+        'the space’s default locale). Then asset_publish.',
+      inputSchema: toolSchema('assets_create_from_url', () =>
+        z.object({ ...createAssetFromUrlBody.shape, ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.assetsWrite, scopeOf(args));
+      if (!deps.remoteFetcher) {
+        throw new NotConfiguredError('outbound fetch', 'This deployment cannot download files');
+      }
+      const { space: _space, environment: _environment, ...input } = args;
+      const created = await createAssetFromUrl(
+        ctx,
+        {
+          blob: uploadBlob(),
+          fetcher: deps.remoteFetcher,
+          ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}),
+        },
+        scopeOf(args),
+        input,
+        { createdBy: collectionAuthor },
+      );
       return ok({ ...created, asset: await signedOne(scopeOf(args), created.asset) });
     },
   );

@@ -650,6 +650,7 @@ cma.assets.transformUrl(id, { width?, height?, fit?, format?, quality? }) → { 
 // Assets: uploading and replacing
 cma.assets.upload({ fileName, contentType, body, title?, description?, folderId? }, opts?) → Asset
 cma.assets.create({ fileName, contentType, … }) → { asset, upload }   // one signed PUT, by hand
+cma.assets.createFromUrl({ url, fileName?, title?, alt?, locale?, folderId? }) → { asset, deduplicated }
 cma.assets.replaceFile(id, { fileName, contentType, body }, opts?) → Asset   // any size; the new version
 cma.assets.startReplace(id, { fileName, contentType }) → { asset, upload, commit }
 cma.assets.commitFile(id, commit) → Asset
