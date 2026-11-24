@@ -186,4 +186,16 @@ describe('the import script output shape', () => {
       'links[0].href: must be a URL',
     ]);
   });
+
+  it('scores a page with a huge run-together word in bounded time', () => {
+    const word = 'a'.repeat(250_000);
+    const started = performance.now();
+    scoreImportOutput(`<main><p>${word}</p><p>${word}</p></main>`, {
+      fields: { body: word + word },
+      blocks: [],
+      assets: [],
+      links: [],
+    });
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
 });

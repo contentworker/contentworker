@@ -13,10 +13,12 @@ import { createD1Store } from '../src/store';
 import { testDb } from './env';
 
 /**
- * Site migrations on D1 (0048_site_migrations, 0049_site_migration_load): a run rewritten whole at its version's
+ * Site migrations on D1 (0048_site_migrations, 0049_site_migration_load): a run rewritten whole at
+ * its version's
  * compare-and-set, pages added past the 100-parameter cap with one page per URL, pages listed by
  * fetch state and stage, a clustering's templates and assignments replaced in one batch, scope
- * isolation, and the tables cleared with their environment. The file shares one database: each
+ * isolation, a template rewritten whole at the run's compare-and-set (0050_site_migration_authoring),
+ * and the tables cleared with their environment. The file shares one database: each
  * test uses its own scope.
  */
 const store = createD1Store(testDb);
@@ -59,6 +61,7 @@ const page = (runId: string, n: number, over: Partial<MigrationPage> = {}): Migr
   html: null,
   fingerprint: null,
   output: null,
+  outputScript: null,
   score: null,
   entryId: null,
   unresolvedLinks: 0,
@@ -78,6 +81,9 @@ const template = (runId: string, over: Partial<MigrationTemplate> = {}): Migrati
   fingerprint: ['0a0b0c0d'],
   contentTypeId: null,
   script: null,
+  proposal: null,
+  lastTry: null,
+  approvedBy: null,
   version: 1,
   createdAt: AT,
   updatedAt: AT,
@@ -372,6 +378,75 @@ describe('site migrations on D1', () => {
     // The guard leaves nothing behind.
     const left = await testDb.prepare('SELECT count(*) AS n FROM _guard').first<{ n: number }>();
     expect(left?.n).toBe(0);
+  });
+
+  it("rewrites a template whole, riding the run's compare-and-set, in its scope only", async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    await store.migrations.addPages(scope, r.id, [page(r.id, 1)]);
+    const t = template(r.id, { pageCount: 1, samplePageIds: ['p-00001'] });
+    await store.migrations.replaceTemplates(
+      scope,
+      r.id,
+      [{ template: t, pageIds: ['p-00001'] }],
+      AT,
+    );
+    const authored: MigrationTemplate = {
+      ...t,
+      status: 'authoring',
+      proposal: {
+        apiId: 'article',
+        name: 'Article',
+        displayField: 'title',
+        urlPattern: '/blog/{slug}',
+        fields: [
+          {
+            apiId: 'title',
+            name: 'Title',
+            type: 'Symbol',
+            localized: false,
+            required: true,
+            position: 0,
+          },
+        ],
+      },
+      script: { key: 'migrations/x/script/abc.js', sha256: 'abc', bytes: 10 },
+      lastTry: {
+        at: LATER,
+        scriptSha256: 'abc',
+        pages: 1,
+        ok: 1,
+        passed: 0,
+        meanScore: 0.5,
+        problems: ['text coverage 50%'],
+      },
+      approvedBy: { kind: 'member', memberId: 'm-1' },
+      version: 2,
+      updatedAt: LATER,
+    };
+    await store.withTransaction(async (tx) => {
+      await tx.migrations.saveTemplate(scope, r.id, authored);
+      await tx.migrations.saveRun(scope, { ...r, version: 2, updatedAt: LATER }, 1);
+    });
+    expect(await store.migrations.getTemplate(scope, r.id, t.id)).toEqual(authored);
+    // A stale writer's template write goes with its run write: neither lands.
+    await expect(
+      store.withTransaction(async (tx) => {
+        await tx.migrations.saveTemplate(scope, r.id, { ...authored, status: 'approved' });
+        await tx.migrations.saveRun(scope, { ...r, version: 2 }, 1);
+      }),
+    ).rejects.toThrow(TransactionConflictError);
+    expect((await store.migrations.getTemplate(scope, r.id, t.id))?.status).toBe('authoring');
+    // Another environment's write of the same ids changes nothing here.
+    const other = { ...scope, environmentId: 'staging' };
+    await store.migrations.saveTemplate(other, r.id, { ...authored, label: 'elsewhere' });
+    expect((await store.migrations.getTemplate(scope, r.id, t.id))?.label).toBe('Template 1');
+    // A page keeps the script its last transform ran.
+    await store.migrations.savePages(scope, r.id, [
+      page(r.id, 1, { templateId: t.id, stage: 'needs-fix', outputScript: 'abc', error: 'threw' }),
+    ]);
+    expect((await store.migrations.getPage(scope, r.id, 'p-00001'))?.outputScript).toBe('abc');
   });
 
   it('moves pages only while each is as it was read, directly and in a unit', async () => {

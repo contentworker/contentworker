@@ -467,6 +467,13 @@ reading a reference's text, claimed on its primary key; and the nullable `projec
 tables and nullable columns: code deployed before it never names them, and an existing action or
 schedule reads as "the default project", which is none until one is set.
 
+`0050_site_migration_authoring.sql` adds `migration_templates.proposal` (the proposed content
+type, JSON) and `migration_templates.last_try` (the last script try's summary, JSON),
+`migration_templates.approved_by` (who approved it, actor JSON), and
+`migration_pages.output_script` (the SHA-256 of the script version a page's last transform ran).
+Nullable columns, which code deployed before them never names; an existing page reads as never
+transformed. See [Site migrations](./domain-model.md#site-migrations).
+
 `0049_site_migration_load.sql` adds `migration_runs.release_id` (nullable: the release a run's
 entries were added to), `migration_pages.unresolved_links` (integer, default 0, not
 null: the links in a loaded page's entry still waiting for their page's entry) and

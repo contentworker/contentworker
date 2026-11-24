@@ -35,7 +35,8 @@ import { assertSafeExternalUrl } from './url-safety';
  * clustering replaces the run's templates whole at the run's compare-and-set.
  *
  * Page HTML goes to the blob store, content-addressed under the run
- * (`migrations/<space>/<environment>/<run>/html/<sha256>.html`): a step repeated with the same
+ * (`migrations/<space>/<environment>/<run>/html/<sha256>.html`, and `script/<sha256>.js` and
+ * `output/<sha256>.json` for import scripts and their outputs): a step repeated with the same
  * page writes the same object, and a record never names an object that holds other bytes.
  */
 
@@ -59,14 +60,23 @@ export interface SiteMigrationDeps {
   readonly blob: BlobStore;
 }
 
-/** Where a run's artifact lives in the blob store. */
+/** What a run keeps in the blob store: page HTML, import script versions, and their outputs. */
+export type MigrationArtifactKind = 'html' | 'script' | 'output';
+
+const ARTIFACT_EXTENSION: Record<MigrationArtifactKind, string> = {
+  html: 'html',
+  script: 'js',
+  output: 'json',
+};
+
+/** Where a run's artifact lives in the blob store, by its content's SHA-256. */
 export function migrationArtifactKey(
   scope: Scope,
   runId: string,
-  kind: 'html',
+  kind: MigrationArtifactKind,
   sha256: string,
 ): string {
-  return `migrations/${scope.spaceId}/${scope.environmentId}/${runId}/${kind}/${sha256}.${kind}`;
+  return `migrations/${scope.spaceId}/${scope.environmentId}/${runId}/${kind}/${sha256}.${ARTIFACT_EXTENSION[kind]}`;
 }
 
 export async function createMigrationRun(
@@ -201,6 +211,7 @@ function newPage(
     html: null,
     fingerprint: null,
     output: null,
+    outputScript: null,
     score: null,
     entryId: null,
     unresolvedLinks: 0,
@@ -382,6 +393,9 @@ export async function clusterPages(
       fingerprint: c.fingerprint,
       contentTypeId: null,
       script: null,
+      proposal: null,
+      lastTry: null,
+      approvedBy: null,
       version: 1,
       createdAt: at,
       updatedAt: at,
