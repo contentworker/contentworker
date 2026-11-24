@@ -1,6 +1,7 @@
 import {
   type ApproveMigrationTemplateResult,
   type MigrationRunView,
+  type MigrationTemplateDetail,
   sha256Hex,
   type TryImportScriptResult,
   templateReviewDigest,
@@ -35,6 +36,8 @@ export type MigrationTemplateResponse = Omit<MigrationTemplate, 'script' | 'fing
   readonly script: MigrationArtifactResponse | null;
   /** What `reviewed` names when approving: SHA-256 of the proposal and the script version. */
   readonly reviewDigest: string;
+  /** On a read of one template. */
+  readonly pageVersions?: MigrationTemplateDetail['pageVersions'];
 };
 
 const artifact = (a: MigrationArtifact | null): MigrationArtifactResponse | null =>
@@ -45,7 +48,9 @@ export function migrationPageResponse(page: MigrationPage): MigrationPageRespons
   return { ...rest, html: artifact(html), output: artifact(output) };
 }
 
-export function migrationTemplateResponse(template: MigrationTemplate): MigrationTemplateResponse {
+export function migrationTemplateResponse(
+  template: MigrationTemplate | MigrationTemplateDetail,
+): MigrationTemplateResponse {
   const { script, fingerprint: _fingerprint, ...rest } = template;
   return { ...rest, script: artifact(script), reviewDigest: templateReviewDigest(template) };
 }

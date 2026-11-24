@@ -158,9 +158,9 @@ export function MigrationPagesTable({
       </ListToolbar>
       {filter.stage === 'needs-fix' ? (
         <p className="max-w-measure px-4 pb-3 text-muted-foreground text-xs">
-          Only an approved template’s pages are transformed, and its script can’t change after that,
-          so these can’t be transformed again. On the template, Load with “Include needs-fix pages”
-          takes the ones that only scored low; one with an error is left to bring in by hand.
+          To fix these, reopen their template, change its script or model and approve it again:
+          Transform then takes them again. On the template, Load with “Include needs-fix pages” also
+          takes the ones that only scored low.
         </p>
       ) : null}
       {pages.isError && rows.length === 0 ? (

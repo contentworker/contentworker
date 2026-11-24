@@ -270,6 +270,39 @@ describe('site migration authoring tools', () => {
     expect(sandbox.runs).toHaveLength(5);
   });
 
+  it('reopen an approved template, as the route does', async () => {
+    const { deps } = await setup();
+    const { call, ref, digest } = await authored(deps);
+    const asManager = await connect(deps, manager);
+    const early = await asManager('migration_template_reopen', { ...ref, reviewed: digest });
+    expect(early.isError).toBe(true);
+    expect(early.text).toMatch(/Only an approved template is reopened/);
+    await asManager('migration_template_approve', { ...ref, reviewed: digest });
+    const stale = await asManager('migration_template_reopen', {
+      ...ref,
+      reviewed: '0'.repeat(64),
+    });
+    expect(stale.isError).toBe(true);
+    expect(stale.text).toMatch(/read it again/);
+    expect(
+      (await asManager('migration_template_reopen', { ...ref, reviewed: digest })).body,
+    ).toMatchObject({ status: 'authoring', contentTypeId: 'article', approvedBy: null });
+    const renamed = await call('migration_propose_model', {
+      ...ref,
+      model: { ...MODEL, apiId: 'other' },
+    });
+    expect(renamed.isError).toBe(true);
+    expect(renamed.text).toMatch(/must stay/);
+    await call('migration_script_set', { ...ref, script: `${SCRIPT}\n// v2` });
+    const read = (await call('migration_template_get', ref)).body as { reviewDigest: string };
+    expect(
+      (await asManager('migration_template_approve', { ...ref, reviewed: read.reviewDigest })).body,
+    ).toMatchObject({ template: { status: 'approved' } });
+    expect((await call('migration_template_get', ref)).body).toMatchObject({
+      pageVersions: { toTransform: 12, loadedEarlier: 0 },
+    });
+  });
+
   it('start the driver once as the caller, and send it the go-ahead', async () => {
     const { deps, driver } = await setup();
     const { call, ref } = await authored(deps);
@@ -308,6 +341,8 @@ describe('site migration authoring tools', () => {
       [manager, 'migration_script_try', ref],
       [editor, 'migration_template_approve', { ...ref, reviewed: digest }],
       [runner, 'migration_template_approve', { ...ref, reviewed: digest }],
+      [editor, 'migration_template_reopen', { ...ref, reviewed: digest }],
+      [runner, 'migration_template_reopen', { ...ref, reviewed: digest }],
       [manager, 'migration_transform', ref],
       [runner, 'migration_load', ref],
       [editor, 'migration_load', ref],
@@ -346,6 +381,7 @@ describe('site migration authoring tools', () => {
       ['migration_script_set', { ...ref, script: SCRIPT }],
       ['migration_script_try', ref],
       ['migration_template_approve', { ...ref, reviewed: digest }],
+      ['migration_template_reopen', { ...ref, reviewed: digest }],
       ['migration_transform', ref],
       ['migration_load', ref],
       ['migration_relink', { run: ref.run }],

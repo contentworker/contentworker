@@ -65,15 +65,18 @@ Everything below is built and tested on v2.
   (matched on `sourceUrl`, so a load repeats safely), relinked, redirected and published, or added
   to a release. Step by step in bounded batches, or in the background (`…/start`), where the
   engine runs every step, starts an authoring agent per template and waits for each approval and
-  the go-ahead to publish. REST, 13 more MCP tools, the SDK, `contentworker migrate` and the
+  the go-ahead to publish. An approved template
+  can be reopened, changed and approved again: its pages not loaded yet are transformed again,
+  loaded ones are left alone, and a background run waits for the new approval. REST, 14 more MCP
+  tools, the SDK, `contentworker migrate` and the
   `template-content-model`, `template-import-script` and `migration-triage` skills.
 - **Site migration: the admin screen.** **Migrations** under Build, for roles holding
   `migration:run` or `content:manage`: the environment's runs, a form to start one, and each run's
   steps, templates and pages, with **Fetch until done** to fetch every waiting batch.
 - **Site migration: admin authoring, approve, load and publish actions.** Each template's review page
   in **Migrations**: its proposed model and import script, read and edited, a try on the sample
-  pages with its output, the approval held to the version that was read, then transforming and
-  loading its pages. The run's page relinks, writes redirects, publishes (or adds to a release) and
+  pages with its output, the approval held to the version that was read, reopening it for changes,
+  then transforming and loading its pages. The run's page relinks, writes redirects, publishes (or adds to a release) and
   runs it all in the background, with the go-ahead to publish.
 - **Assets.** Signed uploads to object storage, creating an asset from a public URL (REST, MCP and
   the management SDK: fetched through the SSRF guard, reused when the bytes are already in the

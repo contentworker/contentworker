@@ -4,6 +4,7 @@ import {
   ForbiddenError,
   InvalidStateError,
   MIGRATION_SOURCE_URL_FIELD,
+  MigrationApprovalChangedError,
   NotFoundError,
   type Principal,
   scopesForKind,
@@ -25,8 +26,10 @@ import {
   createMigrationRun,
   fetchSourcePages,
   getImportScript,
+  getMigrationTemplate,
   inventorySite,
   proposeTemplateModel,
+  reopenTemplate,
   setImportScript,
   sha256Hex,
   templateReviewDigest,
@@ -517,7 +520,7 @@ describe('transforming a template’s pages', () => {
       expect(raw).not.toBeNull();
       expect(sha256Hex(raw as string)).toBe(page.output?.sha256);
       expect(JSON.parse(raw as string).fields.slug).toBe(page.path.split('/').pop());
-      expect(page.outputScript).toBe(sha256Hex(SCRIPT));
+      expect(page.outputScript).toBe((await reviewed(ctx, ref)).reviewed);
     }
   });
 
@@ -605,5 +608,304 @@ describe('transforming a template’s pages', () => {
   it('waits for approval', async () => {
     const { ctx, deps, ref } = await harness();
     await expect(transformTemplatePages(ctx, deps, scope, ref)).rejects.toThrow(InvalidStateError);
+  });
+});
+
+describe('reopening an approved template', () => {
+  async function approved() {
+    const h = await harness();
+    await proposeTemplateModel(h.ctx, scope, { ...h.ref, model: MODEL });
+    await setImportScript(h.ctx, h.deps, scope, { ...h.ref, script: SCRIPT });
+    const template = await approveTemplate(h.ctx, editor, scope, await reviewed(h.ctx, h.ref));
+    return { ...h, template };
+  }
+  const pagesOf = (h: Awaited<ReturnType<typeof harness>>) =>
+    h.store.migrations.listPages(scope, h.ref.runId, { templateId: h.ref.templateId, limit: 100 });
+  const REVISED: ContentTypeDraft = {
+    ...MODEL,
+    fields: [
+      ...MODEL.fields,
+      {
+        apiId: 'summary',
+        name: 'Summary',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 4,
+      },
+    ],
+  };
+  /** Reopened, given `change`, and approved again. */
+  async function reapprove(
+    h: Awaited<ReturnType<typeof approved>>,
+    change: { model?: ContentTypeDraft; script?: string },
+  ) {
+    await reopenTemplate(h.ctx, editor, scope, await reviewed(h.ctx, h.ref));
+    if (change.model) await proposeTemplateModel(h.ctx, scope, { ...h.ref, model: change.model });
+    if (change.script !== undefined) {
+      await setImportScript(h.ctx, h.deps, scope, { ...h.ref, script: change.script });
+    }
+    return approveTemplate(h.ctx, editor, scope, await reviewed(h.ctx, h.ref));
+  }
+
+  it('needs content:manage and the version it was read at, and touches only the template', async () => {
+    const h = await approved();
+    const { ctx, store, deps, ref, template } = h;
+    await transformTemplatePages(ctx, deps, scope, ref);
+    const read = await reviewed(ctx, ref);
+    const before = await pagesOf(h);
+    const type = await store.contentTypes.get(scope, 'article');
+    const run = await store.migrations.getRun(scope, ref.runId);
+    await expect(reopenTemplate(ctx, writer, scope, read)).rejects.toThrow(ForbiddenError);
+    const author: Principal = { spaceId: 'site', kind: 'cma', scopes: ['migration:run'] };
+    await expect(reopenTemplate(ctx, author, scope, read)).rejects.toThrow(ForbiddenError);
+    await expect(
+      reopenTemplate(ctx, editor, scope, { ...read, reviewed: 'another' }),
+    ).rejects.toThrow(ConflictError);
+    await expect(reopenTemplate(ctx, editor, other, read)).rejects.toThrow(NotFoundError);
+    expect((await store.migrations.getTemplate(scope, ref.runId, ref.templateId))?.status).toBe(
+      'approved',
+    );
+    const reopened = await reopenTemplate(ctx, editor, scope, read);
+    expect(reopened).toMatchObject({
+      status: 'authoring',
+      contentTypeId: 'article',
+      approvedBy: null,
+      version: template.version + 1,
+    });
+    expect((await store.migrations.getRun(scope, ref.runId))?.version).toBe(
+      (run?.version ?? 0) + 1,
+    );
+    expect(await pagesOf(h)).toEqual(before);
+    expect(await store.contentTypes.get(scope, 'article')).toEqual(type);
+    // A lost response sent again answers it as it is; once it has changed, it is refused.
+    expect(await reopenTemplate(ctx, editor, scope, read)).toEqual(reopened);
+    await setImportScript(ctx, deps, scope, { ...ref, script: `${SCRIPT}\n// 2` });
+    await expect(reopenTemplate(ctx, editor, scope, read)).rejects.toThrow(ConflictError);
+  });
+
+  it('refuses a template never approved, or being approved now', async () => {
+    const { ctx, store, deps, ref } = await harness();
+    await expect(reopenTemplate(ctx, editor, scope, await reviewed(ctx, ref))).rejects.toThrow(
+      InvalidStateError,
+    );
+    await proposeTemplateModel(ctx, scope, { ...ref, model: MODEL });
+    await setImportScript(ctx, deps, scope, { ...ref, script: SCRIPT });
+    await expect(reopenTemplate(ctx, editor, scope, await reviewed(ctx, ref))).rejects.toThrow(
+      InvalidStateError,
+    );
+    const held = await store.migrations.getTemplate(scope, ref.runId, ref.templateId);
+    await store.migrations.saveTemplate(scope, ref.runId, {
+      ...(held as NonNullable<typeof held>),
+      status: 'approving',
+      contentTypeId: 'article',
+    });
+    await expect(reopenTemplate(ctx, editor, scope, await reviewed(ctx, ref))).rejects.toThrow(
+      /being approved/,
+    );
+  });
+
+  it('is approved again over its type, through the type’s own guards', async () => {
+    const h = await approved();
+    const { ctx, store, ref } = h;
+    const before = await store.contentTypes.get(scope, 'article');
+    const again = await reapprove(h, { model: REVISED });
+    expect(again).toMatchObject({
+      status: 'approved',
+      contentTypeId: 'article',
+      approvedBy: { kind: 'deployment' },
+    });
+    const type = await store.contentTypes.get(scope, 'article');
+    expect(type?.version).toBe((before?.version ?? 0) + 1);
+    expect(type?.status).toBe('published');
+    expect(type?.fields.some((f) => f.apiId === 'summary')).toBe(true);
+    expect((await getMigrationTemplate(ctx, scope, ref.runId, ref.templateId)).status).toBe(
+      'approved',
+    );
+  });
+
+  it('keeps its apiId: another is refused when proposed and when approved', async () => {
+    const h = await approved();
+    const { ctx, store, ref } = h;
+    await reopenTemplate(ctx, editor, scope, await reviewed(ctx, ref));
+    const renamed = { ...MODEL, apiId: 'story' };
+    const refused = await proposeTemplateModel(ctx, scope, { ...ref, model: renamed }).catch(
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(ValidationError);
+    expect((refused as ValidationError).issues).toEqual([
+      { field: 'apiId', message: expect.stringMatching(/must stay "article"/) },
+    ]);
+    // One recorded some other way is refused where it would take effect.
+    const t = await store.migrations.getTemplate(scope, ref.runId, ref.templateId);
+    await store.migrations.saveTemplate(scope, ref.runId, {
+      ...(t as NonNullable<typeof t>),
+      proposal: renamed,
+    });
+    await expect(approveTemplate(ctx, editor, scope, await reviewed(ctx, ref))).rejects.toThrow(
+      ValidationError,
+    );
+    expect(await store.contentTypes.get(scope, 'story')).toBeNull();
+    expect(await store.migrations.getTemplate(scope, ref.runId, ref.templateId)).toMatchObject({
+      status: 'authoring',
+      contentTypeId: 'article',
+    });
+  });
+
+  it('stays reopened, holding its type, when approving it again fails', async () => {
+    const h = await approved();
+    const { ctx, store, deps, ref } = h;
+    const { createEntry } = await import('../src/index');
+    store.seedSpace({ spaceId: 'site', defaultLocale: 'en-US', locales: ['en-US'] });
+    await createEntry(ctx, scope, {
+      contentTypeApiId: 'article',
+      fields: {
+        title: { 'en-US': 'Held' },
+        slug: { 'en-US': 'held' },
+        author: { 'en-US': 'Ada' },
+        sourceUrl: { 'en-US': `${O}/blog/held` },
+      },
+    });
+    await reopenTemplate(ctx, editor, scope, await reviewed(ctx, ref));
+    // `author` holds content: the type's own guard refuses its removal.
+    await proposeTemplateModel(ctx, scope, {
+      ...ref,
+      model: { ...MODEL, fields: MODEL.fields.filter((f) => f.apiId !== 'author') },
+    });
+    await expect(approveTemplate(ctx, editor, scope, await reviewed(ctx, ref))).rejects.toThrow(
+      ConflictError,
+    );
+    expect(await store.migrations.getTemplate(scope, ref.runId, ref.templateId)).toMatchObject({
+      status: 'authoring',
+      contentTypeId: 'article',
+      approvedBy: null,
+    });
+    const type = await store.contentTypes.get(scope, 'article');
+    expect(type?.fields.some((f) => f.apiId === 'author')).toBe(true);
+    await expect(
+      setImportScript(ctx, deps, scope, { ...ref, script: SCRIPT }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('never tells a stale approver they approved what they didn’t read', async () => {
+    const h = await approved();
+    const stale = await reviewed(h.ctx, h.ref);
+    const again = await reapprove(h, { script: `${SCRIPT}\n// 2` });
+    await expect(approveTemplate(h.ctx, editor, scope, stale)).rejects.toThrow(ConflictError);
+    const now = await approveTemplate(h.ctx, editor, scope, await reviewed(h.ctx, h.ref));
+    expect(now.version).toBe(again.version);
+  });
+
+  it('takes pages of an earlier version again for a new model alone, and clears their error', async () => {
+    const h = await approved();
+    const { ctx, deps, store, ref } = h;
+    await transformTemplatePages(ctx, deps, scope, ref);
+    const [first] = await pagesOf(h);
+    if (!first) throw new Error('no page');
+    await store.migrations.savePages(scope, ref.runId, [
+      { ...first, stage: 'needs-fix', error: 'a value the type refused' },
+    ]);
+    expect(await transformTemplatePages(ctx, deps, scope, ref)).toMatchObject({ transformed: 0 });
+    await reapprove(h, { model: REVISED });
+    expect(
+      (await getMigrationTemplate(ctx, scope, ref.runId, ref.templateId)).pageVersions,
+    ).toEqual({ toTransform: 5, loadedEarlier: 0 });
+    expect(await transformTemplatePages(ctx, deps, scope, ref)).toMatchObject({
+      transformed: 5,
+      validated: 5,
+    });
+    expect(await store.migrations.getPage(scope, ref.runId, first.id)).toMatchObject({
+      stage: 'validated',
+      error: null,
+    });
+    expect(
+      (await getMigrationTemplate(ctx, scope, ref.runId, ref.templateId)).pageVersions,
+    ).toEqual({ toTransform: 0, loadedEarlier: 0 });
+    // Reopened and approved as it was: the same version, so nothing to do again.
+    await reapprove(h, {});
+    expect(await transformTemplatePages(ctx, deps, scope, ref)).toMatchObject({ transformed: 0 });
+  });
+
+  it('leaves loaded and published pages alone, and counts those of an earlier version', async () => {
+    const h = await approved();
+    const { ctx, deps, store, ref } = h;
+    await transformTemplatePages(ctx, deps, scope, ref);
+    const [one, two] = await pagesOf(h);
+    if (!one || !two) throw new Error('no pages');
+    const kept = [
+      { ...one, stage: 'loaded' as const, entryId: 'e1' },
+      { ...two, stage: 'published' as const, entryId: 'e2' },
+    ];
+    await store.migrations.savePages(scope, ref.runId, kept);
+    await reapprove(h, { script: `${SCRIPT}\n// 2` });
+    expect(await transformTemplatePages(ctx, deps, scope, ref)).toMatchObject({ transformed: 3 });
+    expect(await store.migrations.getPage(scope, ref.runId, one.id)).toEqual(kept[0]);
+    expect(await store.migrations.getPage(scope, ref.runId, two.id)).toEqual(kept[1]);
+    expect(
+      (await getMigrationTemplate(ctx, scope, ref.runId, ref.templateId)).pageVersions,
+    ).toEqual({ toTransform: 0, loadedEarlier: 2 });
+  });
+
+  it('reads a page recorded by its script alone as the version approved then', async () => {
+    const h = await approved();
+    const { ctx, deps, store, ref } = h;
+    await transformTemplatePages(ctx, deps, scope, ref);
+    // As pages were written before a template could be reopened.
+    const legacy = (await pagesOf(h)).map((p) => ({ ...p, outputScript: sha256Hex(SCRIPT) }));
+    await store.migrations.savePages(scope, ref.runId, legacy);
+    expect(await transformTemplatePages(ctx, deps, scope, ref)).toMatchObject({ transformed: 0 });
+    const digest = (await reviewed(ctx, ref)).reviewed;
+    // A new model over the same script: the pages are the earlier version's.
+    await reapprove(h, { model: REVISED });
+    expect((await pagesOf(h)).map((p) => p.outputScript)).toEqual(legacy.map(() => digest));
+    expect((await pagesOf(h)).map((p) => p.stage)).toEqual(legacy.map((p) => p.stage));
+    expect(await transformTemplatePages(ctx, deps, scope, ref)).toMatchObject({ transformed: 5 });
+  });
+
+  it('writes nothing for a transform that a reopening overtook', async () => {
+    const h = await approved();
+    const { ctx, deps, ref } = h;
+    const before = await pagesOf(h);
+    let overtaken = false;
+    const overtaking: ImportScriptSandbox = {
+      async run(input: ImportScriptRun) {
+        if (!overtaken) {
+          overtaken = true;
+          await reapprove(h, { script: `${SCRIPT}\n// 2` });
+        }
+        return deps.sandbox.run(input);
+      },
+    };
+    await expect(
+      transformTemplatePages(ctx, { ...deps, sandbox: overtaking }, scope, ref),
+    ).rejects.toThrow(MigrationApprovalChangedError);
+    expect(await pagesOf(h)).toEqual(before);
+  });
+
+  it('keeps a page another step loaded while the script ran', async () => {
+    const h = await approved();
+    const { ctx, deps, store, clock, ref } = h;
+    const [one] = await pagesOf(h);
+    if (!one) throw new Error('no page');
+    let moved = false;
+    const racing: ImportScriptSandbox = {
+      async run(input: ImportScriptRun) {
+        if (!moved) {
+          moved = true;
+          clock.advance(1_000);
+          await store.migrations.savePages(scope, ref.runId, [
+            { ...one, stage: 'loaded', entryId: 'e1', updatedAt: clock.now().toISOString() },
+          ]);
+        }
+        return deps.sandbox.run(input);
+      },
+    };
+    expect(
+      await transformTemplatePages(ctx, { ...deps, sandbox: racing }, scope, ref),
+    ).toMatchObject({ transformed: 4 });
+    expect(await store.migrations.getPage(scope, ref.runId, one.id)).toMatchObject({
+      stage: 'loaded',
+      entryId: 'e1',
+    });
   });
 });

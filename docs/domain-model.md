@@ -1747,15 +1747,17 @@ it as a `MigrationArtifact` (`{ key, sha256, bytes }`).
   `stage` is one of `MIGRATION_PAGE_STAGES`: `discovered` → `clustered` → `transformed` →
   `validated` or `needs-fix` (by `stageForScore` at the run's threshold) → `loaded` → `published`.
   `output`, `score` and `entryId` are filled by the later stages, `unresolvedLinks` counts
-  the links in its entry left as hyperlinks for the relink pass, and `outputScript` is the SHA-256
-  of the script version its last transform ran.
+  the links in its entry left as hyperlinks for the relink pass, and `outputScript` is the
+  version of its template its last transform ran: the `templateReviewDigest` of the model and
+  script as approved, or, on a page transformed before templates could be reopened, the script's
+  SHA-256 alone.
 - `MigrationTemplate`: pages that share a structure. It holds a `label`, a `status` (`pending`,
-  `authoring`, `approving` while an approval writes its type, or `approved`), a `pageCount`, up to three `samplePageIds` spread across its pages,
+  `authoring`, `approving` while an approval writes its type, or `approved`; `authoring` again once reopened), a `pageCount`, up to three `samplePageIds` spread across its pages,
   and the `fingerprint` the pages matched. It also holds the `contentTypeId` and import `script`
   artifact once they are chosen, the `proposal` (the content type its pages are proposed to
   become, a `ContentTypeDraft`) and `lastTry` (`MigrationTrySummary`: the script tried, pages
-  tried, ok, passed and the mean score, with the first problems) and `approvedBy`. Migration
-  `0050_site_migration_authoring` adds `proposal`, `last_try`, `approved_by` and the page's
+  tried, ok, passed and the mean score, with the first problems) and `approvedBy`. A reopened template keeps its
+  `contentTypeId`. Migration `0050_site_migration_authoring` adds `proposal`, `last_try`, `approved_by` and the page's
   `output_script`.
 
 Clustering is pure. `structureFingerprint` (or `readPageFacts`, which also reads the title and
@@ -1828,7 +1830,8 @@ signal to a finished instance throws `MigrationDriverFinishedError` (an `Invalid
 instance (the binding's `instance.not_found`) as `NotFoundError`; any other binding failure is
 rethrown. An approval whose driver wasn't told says why (`reason`: `no-driver`,
 `driver-finished`, `unreachable`).
-`getMigrationTemplate` reads one template; its responses carry `reviewDigest`.
+`getMigrationTemplate` reads one template; its responses carry `reviewDigest` and, once it is
+approved, `pageVersions`: its pages to transform, and those loaded from an earlier version.
 
 - `inventorySite` adds the pages a sitemap lists, or a crawl's start page, skipping URLs the run
   already holds. It throws `SiteUnavailableError` (`site_unavailable`), with nothing written,
@@ -1870,13 +1873,28 @@ two at a time.
   `MigrationActor` (`jobStarterOf`). A type of that apiId that no template of the run holds is
   refused (`ConflictError`). A failed type save releases the claim (back to `authoring`), and a
   claim older than `APPROVAL_LEASE_MS` (5 minutes) can be taken over and finished. An approved
-  template's model and script can't be changed.
+  template's model and script can't be changed until it is reopened. Approving an approved template
+  answers it (and signals again) only at the digest it was approved at; any other is refused. A
+  reopened template is approved over the type it holds: another apiId is refused when proposed and
+  when approved, the save goes through `createContentType`'s guards, and a failure leaves it
+  `authoring` with its `contentTypeId`. The type becomes the proposal, so what someone changed on it
+  by hand since is replaced.
+- `reopenTemplate` (`content:manage`, and `reviewed`, the approved template's digest) moves an
+  approved template back to `authoring`, clears `approvedBy` and keeps `contentTypeId`, at the run's
+  compare-and-set. The type, its entries and the pages stay as they are. In the same unit,
+  `stampOutputs` marks the template's pages that name their script alone with the digest being
+  withdrawn. One that is reopened and unchanged is answered as it is; one never approved, or
+  `approving`, is refused (`InvalidStateError`).
 - `transformTemplatePages` runs an approved template's script on up to 50 of its pages after a
   cursor. Each output's JSON is stored as it came back, with `output.sha256` its hash, scored, and
   the page moves to `validated` or `needs-fix` with its error cleared. A script failure or an
   output that doesn't fit, or a page the sandbox refuses (over its size limit), goes to `needs-fix`
   with the reason. Pages already transformed by this
-  script version, loaded or published, or without HTML are skipped; it reports `next` and `more`.
+  approved version (`outputVersions`: the digest, or the bare hash of its script), loaded or
+  published, or without HTML are skipped; it reports `next` and `more`. Pages are written with
+  `movePages` and `expectApproved` in one unit, so only while the template is approved at the
+  `version` that was read, and each only as it was read; one reopened meanwhile throws
+  `MigrationApprovalChangedError` (a `ConflictError`) with nothing written.
 
 `runSiteMigration` (`site-migration-run.ts`) is the body of `MigrationWorkflow`, one Workflows
 instance per run (`migration-<runId>`), started once the run exists. Its steps: inventory (a site
@@ -1889,20 +1907,43 @@ publishing (no template approved and loaded in time, or no go-ahead) records the
 with why, so it isn't started again; its templates can still be authored and its pages taken on
 by hand. Approved templates are processed one
 at a time. Every loop takes the use-case's largest batch, so a run of `MIGRATION_MAX_PAGES` takes
-under 1,500 steps, inside Workflows' 10,000 per instance on Workers Paid (1,024 on Workers Free,
+under 1,500 steps (under 9,000 with every template reopened to the last round), inside Workflows' 10,000 per instance on Workers Paid (1,024 on Workers Free,
 which fits runs of a few thousand pages; `step.sleep` doesn't count). An approval sent before the
 driver reaches its wait is buffered by Workflows. A failure is recorded on the run unless it is
 already terminal; a record that keeps losing its race is left to the step's retries. Agents start for the 20 largest templates (`MIGRATION_AGENTS_PER_RUN`) and the driver
 takes the 50 largest through (`MIGRATION_DRIVEN_TEMPLATES`); the rest end `not-driven`. The load, relink, redirect and publish steps call
 `loadTemplatePages`, `relinkMigratedPages`, `importMigrationRedirects` and `publishMigration` as
 the step's principal, with `actingAs(ctx, principal)` as their context. An approval event is a
-wake-up only: who approved a template is read from its `approvedBy`, and a template the store
-doesn't hold as approved fails. The go-ahead to publish names its approver (`MigrationActor`: a key,
+wake-up only: who approved a template is read from its `approvedBy`, and an event for a template the
+store doesn't hold as approved is nothing to do. The go-ahead to publish names its approver (`MigrationActor`: a key,
 a team member or the deployment), and one that names none fails the run. Each actor, and whoever
 started the run, is resolved again before each step that acts for them; a run whose starter no
 longer acts in the space fails, and so does that starter's agent. A step's `DomainError` fails its template (or the run, which is then `failed`), and a lost
 compare-and-set is read again. `MigrationRunner` (`CloudflareMigrationRunner` over `MIGRATION_WF`)
 starts a run's driver and delivers its events.
+
+Each template is driven on its own (`DrivenTemplate`), in rounds. A round waits for its approval
+event, reads the template, and takes it through only when it is approved at a `version` the driver
+hasn't handled, so an event left over from an earlier approval, or from one reopened since, can't
+stand in for a later one. Its transform and load steps run under that `version`: a step that finds
+the template reopened (or approved again) records nothing, and the template waits for the next
+event, 14 days each time. It takes `MIGRATION_APPROVAL_ROUNDS` (8) approvals through and waits
+`MIGRATION_APPROVAL_WAITS` (24) times in all (an approval told twice is a wait, not a round); past
+either it is left to its callers. A template goes on being listened for after it is loaded, or
+failed or timed out with another template in, so one reopened
+while others wait, or while the run waits for the go-ahead, is taken through when it is approved
+again. The first round's steps keep their bare names and later ones end in `round N`, so none is
+answered by another's record. A run waits for every template except one that was reopened, once
+another is loaded. The go-ahead records how many of each template's
+waits had ended (`go-ahead rounds`), so a replay finishes the same rounds and begins none after: an
+approval told later is taken on step by step. It publishes whatever is `loaded`, after those rounds,
+a relink pass and the redirects of a template then reopened (as whoever gave it), neither of which
+holds it up; a template reopened at that point keeps its loaded entries published, its
+other pages are not published, and it ends `reopened`. No agent is started for a template that holds
+a content type, a finished agent's object ignores `start`, and one still running stops once its template
+is approved, so a reopened template is a person's to change. An instance recorded by the driver before rounds existed has no version in its `approver`
+step: its first round is held to the template as it stands if it is still that approver's, and
+the next approval it hears of counts as newer.
 
 The template agent (`site-migration-agent.ts`, hosted by the `MigrationTemplateAgent` Durable
 Object, one per template) is a tool loop over the `AIProvider` port: `get_template`,
@@ -1926,7 +1967,11 @@ the path a person's writes do. Callers pass a context acting as that principal
 read, up to three times in all, then the `TransactionConflictError` surfaces.
 
 - `loadTemplatePages` loads up to 50 `validated` pages of an approved template (and `needs-fix`
-  ones with `includeNeedsFix`) whose last step didn't fail. It refuses a template whose content
+  ones with `includeNeedsFix`) whose last step didn't fail and whose output is of the approved version; the others are left and
+  counted as `stale`. Its pages move in one unit with `expectApproved`, and it looks again before it
+  writes entries, so a load that a reopening overtakes moves no page
+  (`MigrationApprovalChangedError`); an entry it had written is found by its `sourceUrl` at the next
+  load. It refuses a template whose content
   type is missing, or lacks a `sourceUrl` field (`MIGRATION_SOURCE_URL_FIELD`: `Symbol` or `Text`,
   `unique`, not localized). Before downloading anything, it also refuses a caller who can't write
   the type, assets or `sourceUrl`, or query by `sourceUrl`. For each page it:

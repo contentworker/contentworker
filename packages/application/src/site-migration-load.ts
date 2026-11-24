@@ -55,6 +55,7 @@ import type { AppContext } from './context';
 import { updateEntry } from './entries';
 import { executeImport, recordsImportSource } from './import';
 import { importRedirects } from './redirects';
+import { assertSameApproval, isOutputOf, outputVersions } from './site-migration-version';
 import { sha256Hex } from './token-crypto';
 
 /**
@@ -120,6 +121,11 @@ export interface LoadTemplatePagesInput {
   readonly batchSize?: number;
   /** Load `needs-fix` pages too (scored below the threshold), after the `validated` ones. */
   readonly includeNeedsFix?: boolean;
+  /**
+   * The approval to load under, as the template's `version`: refused
+   * (`MigrationApprovalChangedError`) once the template is reopened or approved again.
+   */
+  readonly approval?: number;
 }
 
 export interface LoadTemplatePagesResult {
@@ -134,13 +140,19 @@ export interface LoadTemplatePagesResult {
    * planned it, a unit of work that lost its compare-and-set): left as they were for the next call.
    */
   readonly deferred: readonly MigrationPageFailure[];
+  /**
+   * Pages left where they are because their output isn't of the template as approved now:
+   * transform them, then load them.
+   */
+  readonly stale: number;
   /** Whether pages are still waiting to be loaded: a Workflow loops while it is true. */
   readonly more: boolean;
 }
 
 /**
  * Loads the next batch of an approved template's pages: `validated` ones (and `needs-fix` ones
- * when asked) whose last step didn't fail. For each page it reads the output artifact, brings in
+ * when asked) whose last step didn't fail and whose output is of the approved version. For each
+ * page it reads the output artifact, brings in
  * the assets the output names (relative URLs against the page's, each file once per run), resolves
  * the output's `$html` and `$asset` values against them and against the entries the run's pages
  * already are, and hands the records to the import planner as `principal`, with its authority.
@@ -154,6 +166,12 @@ export interface LoadTemplatePagesResult {
  * is not moved: it is loaded again from a fresh read, which finds the other load's entry and
  * updates it.
  *
+ * A page whose output an earlier version made (the template was reopened and approved again) is
+ * not moved, only counted as `stale`. A template reopened while the load runs stops it: pages move
+ * only if the template is, at the commit, still approved as it was read
+ * (`MigrationApprovalChangedError`). An entry that batch had already written is found by its
+ * `sourceUrl` when its page is loaded again.
+ *
  * Refused before any file is downloaded unless `principal` may write the type, its `sourceUrl`
  * field, assets, and query by `sourceUrl`. Pass `actingAs(ctx, principal)` as `ctx`.
  */
@@ -166,12 +184,16 @@ export async function loadTemplatePages(
 ): Promise<LoadTemplatePagesResult> {
   const run = await requireRun(ctx, scope, input.runId);
   const template = await requireTemplate(ctx, scope, run.id, input.templateId);
+  if (input.approval !== undefined) assertSameApproval(template, input.approval);
   if (template.status !== 'approved') {
     throw new InvalidStateError(
       `A template's pages are loaded once it is approved; this one is ${template.status}`,
     );
   }
   const contentType = await templateContentType(ctx, scope, template);
+  const versions = outputVersions(template);
+  const stillApproved = async () =>
+    assertSameApproval(await requireTemplate(ctx, scope, run.id, template.id), template.version);
   // As the planner will, and before any file is downloaded on the caller's behalf: the assets
   // are theirs to create too.
   authorize(principal, SCOPES.contentWrite, scope.spaceId);
@@ -196,6 +218,7 @@ export async function loadTemplatePages(
           stage,
           templateId: template.id,
           failed: false,
+          outputScript: versions,
           limit: n - found.length,
         })),
       );
@@ -210,12 +233,23 @@ export async function loadTemplatePages(
   let deferred: MigrationPageFailure[] = [];
   let pages = await waiting(limit);
   for (let attempt = 1; pages.length > 0; attempt++) {
-    const batch = await loadBatch(ctx, deps, principal, scope, run, contentType, pages);
+    const batch = await loadBatch(
+      ctx,
+      deps,
+      principal,
+      scope,
+      run,
+      contentType,
+      pages,
+      stillApproved,
+    );
     try {
       await ctx.store.withTransaction(async (tx) => {
         await tx.migrations.movePages(scope, run.id, batch.moves);
+        await tx.migrations.expectApproved(scope, run.id, template.id, template.version);
       });
     } catch (err) {
+      if (err instanceof TransactionConflictError) await stillApproved();
       // A page was written since it was read. The entries are matched by their source URL, so
       // loading the batch again from a fresh read updates them rather than adding to them.
       if (err instanceof TransactionConflictError && attempt < MOVE_ATTEMPTS) {
@@ -240,15 +274,23 @@ export async function loadTemplatePages(
       )
     ).filter(
       (p): p is MigrationPage =>
-        p !== null && p.templateId === template.id && p.error === null && stages.includes(p.stage),
+        p !== null &&
+        p.templateId === template.id &&
+        p.error === null &&
+        stages.includes(p.stage) &&
+        isOutputOf(p, versions),
     );
   }
+  const counts = await ctx.store.migrations.countOutputs(scope, run.id, template.id, versions);
   return {
     loaded,
     failed,
     assetFailures,
     unresolvedLinks,
     deferred,
+    stale: counts
+      .filter((c) => stages.includes(c.stage))
+      .reduce((n, c) => n + c.pages - c.current, 0),
     more: (await waiting(1)).length > 0,
   };
 }
@@ -290,6 +332,7 @@ async function loadBatch(
   run: MigrationRun,
   contentType: ContentType,
   pages: readonly MigrationPage[],
+  stillApproved: () => Promise<void>,
 ): Promise<LoadedBatch> {
   // Reads first: every page's output, then what the run already holds for their assets and links.
   const outputs = await Promise.all(pages.map((p) => readOutput(deps.blob, p)));
@@ -404,6 +447,8 @@ async function loadBatch(
   const refused = new Map<string, string>();
   const racing = new Set<string>();
   if (ready.length > 0) {
+    // Files can take minutes: no entry is written for a template reopened since.
+    await stillApproved();
     const result = await executeImport(
       ctx,
       principal,

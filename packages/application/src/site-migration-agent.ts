@@ -4,6 +4,7 @@ import {
   DomainError,
   MIGRATION_SOURCE_URL_FIELD,
   type MigrationActor,
+  type MigrationTemplate,
   RateLimitedError,
   type Scope,
   ValidationError,
@@ -208,6 +209,15 @@ export async function templateAgentTurn(
   if (!(await migrationActorPrincipal(ctx, state.scope, state.startedBy))) {
     return stop(state, 'Stopped: whoever started the run no longer has access to the space');
   }
+  // What a person has approved, and perhaps reopened since, is theirs to change from there on.
+  const template = await ctx.store.migrations.getTemplate(
+    state.scope,
+    state.runId,
+    state.templateId,
+  );
+  if (template && isPersons(template)) {
+    return stop(state, 'Stopped: a person approved the template');
+  }
   let answer: Awaited<ReturnType<typeof generateWithBudget>>;
   try {
     answer = await generateWithBudget(
@@ -270,6 +280,10 @@ export async function templateAgentTurn(
   };
 }
 
+/** Approved once (held by its type), whether or not it was reopened; an approval can still fail. */
+const isPersons = (t: MigrationTemplate): boolean =>
+  t.status === 'approved' || (t.status !== 'approving' && t.contentTypeId !== null);
+
 function stop(state: TemplateAgentState, summary: string): TemplateAgentState {
   const { retryAfterSeconds: _, ...rest } = state;
   return { ...rest, status: 'stopped', summary };
@@ -299,6 +313,12 @@ async function runTool(
   >;
   if (!TOOL_NAMES.has(call.name)) return { result: { error: `There is no tool "${call.name}".` } };
   try {
+    if (call.name === 'propose_model' || call.name === 'write_import_script') {
+      const now = await ctx.store.migrations.getTemplate(scope, ref.runId, ref.templateId);
+      if (now && isPersons(now)) {
+        return { result: { error: 'A person approved the template: it is theirs to change.' } };
+      }
+    }
     switch (call.name) {
       case 'get_template': {
         const run = await ctx.store.migrations.getRun(scope, ref.runId);

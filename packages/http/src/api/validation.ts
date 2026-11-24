@@ -634,6 +634,12 @@ export const migrationApproveBody = z.object({
     .length(64)
     .describe('The `reviewDigest` of the template as you read it; a changed template is a 409'),
 });
+export const migrationReopenBody = z.object({
+  reviewed: z
+    .string()
+    .length(64)
+    .describe('The `reviewDigest` of the approved template as you read it; another is a 409'),
+});
 export const migrationTransformBody = z.object({
   limit: z
     .number()

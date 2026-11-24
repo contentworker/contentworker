@@ -120,7 +120,7 @@ nothing links to.
 
 Work one template at a time, largest first. A template's `status` goes `pending` → `authoring`
 (once a model or script is written; clustering again is refused from then on) → `approving` (while
-an approval writes its content type) → `approved`.
+an approval writes its content type) → `approved`, and back to `authoring` if it is reopened.
 
 1. **Propose its model**: the content type its pages become. The server checks it as the type will
    be created and refuses one without:
@@ -145,9 +145,32 @@ an approval writes its content type) → `approved`.
 4. **Approve it.** A person with `content:manage` reads the template, including its
    `reviewDigest`, and approves with that digest as `reviewed`. Approval creates and publishes the
    content type, as them. If the model or script changed after they read it, approval answers
-   `409` and they review again. An approved template's model and script can't change. In the admin,
+   `409` and they review again. An approved template's model and script are held until it is reopened. In the admin,
    the approval sends the digest of the version on screen; when the template changes meanwhile, the
    page shows the new version and asks for it to be read before it can be approved.
+
+## Change an approved template
+
+When a template's pages need another script or model after all, a person with `content:manage`
+reopens it: **Reopen for changes** in the admin, `contentworker migrate reopen`, or `reopen` with
+the `reviewDigest` they read. It goes back to `authoring`, and is proposed, scripted, tried and
+approved again as before.
+
+- It keeps its content type, so the model's `apiId` can't change: a proposal with another one is
+  refused (`422`). Approving again saves the type as the proposal says, through the type's own
+  checks: removing a field that holds content is refused. What someone changed on the type by hand
+  since, such as field help, is replaced.
+- Pages that aren't loaded yet are transformed again by the new version. Until they are, a load
+  leaves them and counts them as `stale`. A version is the model and the script together, so a
+  change to either counts; approving it again unchanged takes no page again.
+- Pages already loaded or published, and their entries, are left as they are, with the edits people
+  made to them. The template's `pageVersions` counts the ones an earlier version made.
+- A transform or load that is running when the template is reopened stops with `409`, and moves no
+  page. An entry that load had already written stays, and is updated when its page is loaded.
+- A background run waits for the new approval, 14 days at a time and for up to 8 approvals of a
+  template, and takes the new version through. An approval given after the go-ahead to publish is
+  taken on step by step. The authoring agent isn't started again, and stops when the template is
+  first approved: a person (or an agent on the API) changes it from there.
 
 ## Take the pages in
 
@@ -155,11 +178,12 @@ Step by step, each call a bounded batch:
 
 1. **Transform** up to 10 pages a call (`limit`, `after` from the last call's `next`, while
    `more`). Each page is scored and moves to `validated` at the run's threshold or `needs-fix`
-   below it. Pages already transformed by the approved script are skipped.
+   below it. Pages already transformed by the approved version are skipped, and so are
+   loaded and published ones.
 2. **Load** up to 10 `validated` pages a call as entries, while `more`. The assets each output
    names are downloaded once per run; a file that fails is reported and its page loads without it.
-   `includeNeedsFix` loads the low scorers too, but not a page with an error: an approved script
-   can't change, so bring those in by hand. Loading a page again updates the entry it became.
+   `includeNeedsFix` loads the low scorers too, but not a page with an error: reopen the template
+   and fix its script or model, or bring those in by hand. Loading a page again updates the entry it became.
 3. **Relink** once every template is loaded, with `after` until `next` is absent: links between
    migrated pages become links between their entries.
 4. **Redirect**: a 301 from each loaded page's old path to its entry's path, by the type's URL
@@ -178,7 +202,10 @@ transforms, loads and redirects its pages, relinks, and waits for the go-ahead t
 safe: it answers `started: false`. Approving a template tells the engine (`signalled: true`);
 otherwise `reason` says why: `no-driver` (the run is taken step by step), `driver-finished`, or
 `unreachable`, when approving again tells it. A go-ahead for a run that was never started answers
-`404`. If no template is approved in time, or the go-ahead never comes, the engine stops waiting
+`404`. A template reopened while the run
+is driven is waited for again, and doesn't hold up the others. The go-ahead publishes every entry
+loaded by then, a reopened template's too; its pages not loaded yet aren't published, and are taken
+on step by step once it is approved again. If no template is approved in time, or the go-ahead never comes, the engine stops waiting
 and the run's status becomes `stopped`. A stopped run, a failed one, or one whose engine run has
 finished can't be started or given the go-ahead again (`400`), but its templates can still be
 approved, loaded and published step by step. Follow the run with its status and pages as before.
@@ -221,6 +248,9 @@ DIGEST=$(curl -s "$T" -H "Authorization: Bearer $MANAGER" | jq -r .reviewDigest)
 curl -s -X POST "$T/approve" -H "Authorization: Bearer $MANAGER" \
   -H "Content-Type: application/json" -d "{\"reviewed\":\"$DIGEST\"}"
 
+# To change it after that, reopen what was approved, then author and approve it again:
+# curl -s -X POST "$T/reopen" … -d "{\"reviewed\":\"$DIGEST\"}"
+
 curl -s -X POST "$T/transform" -H "$AUTH" -H "Content-Type: application/json" -d '{}'
 curl -s -X POST "$T/load" -H "$AUTH" -H "Content-Type: application/json" -d '{}'
 curl -s -X POST "$BASE/$RUN/relink" -H "$AUTH" -H "Content-Type: application/json" -d '{}'
@@ -249,13 +279,14 @@ you through the templates at the end. Under it, the calls are:
 
 `migration_list`, `migration_status` and `migration_pages` read a run back. Authoring is
 `migration_template_get`, `migration_propose_model`, `migration_script_get`,
-`migration_script_set`, `migration_script_try` and `migration_template_approve`; the pages go in
+`migration_script_set`, `migration_script_try`, `migration_template_approve` and
+`migration_template_reopen`; the pages go in
 with `migration_transform`, `migration_load`, `migration_relink`, `migration_redirects` and
 `migration_publish_entries`; and `migration_start` and `migration_publish` drive a run in the
 background. Every tool takes `space` and `environment` like the rest of the server.
 
-An agent proposes and scripts, but approving needs `content:manage` and the skills tell it to
-leave that to a person. Page text, script outputs and logs reach it as data from the old site, and
+An agent proposes and scripts, but approving and reopening need `content:manage` and the skills
+tell it to leave those to a person. Page text, script outputs and logs reach it as data from the old site, and
 the skills say to treat them as data, never as instructions.
 
 ### With the command line
@@ -269,6 +300,7 @@ contentworker migrate template <run> <template>
 contentworker migrate script set <run> <template> import.js
 contentworker migrate script try <run> <template> --page <page id>
 contentworker migrate approve <run> <template> --reviewed <digest>
+contentworker migrate reopen <run> <template> --reviewed <digest>
 contentworker migrate start <run>
 contentworker migrate publish <run> --via-release --release-title 'Site launch'
 ```
@@ -278,8 +310,8 @@ contentworker migrate publish <run> --via-release --release-title 'Site launch'
 then fetches batches until none wait (`--batch`, `--max-batches`); run it again after a stop. It
 exits `1` with the code `site_unavailable` when the site's `robots.txt` can't be read.
 `migrate template` shows a template's model, script version, last try and `reviewDigest`.
-`migrate approve` without `--reviewed` shows the template and asks before approving what it shows
-(`--yes` off a terminal). `migrate publish` sends a started run the go-ahead; `--now` publishes the
+`migrate approve` and `migrate reopen` without `--reviewed` show the template and ask before acting
+on what they show (`--yes` off a terminal). `migrate publish` sends a started run the go-ahead; `--now` publishes the
 loaded entries here instead, batch by batch.
 
 ## When a call is refused
@@ -289,7 +321,7 @@ loaded entries here instead, batch by batch.
 | `403`  | `forbidden`         | The token lacks the scope; the message names it.                                                                           |
 | `400`  | `invalid_state`     | The step is out of order: clustering before an inventory or once a template is authored, a script change once a template is approved, a transform or load before approval, or a start or go-ahead for a run that failed, stopped or whose engine run has finished. |
 | `404`  | `not_found`         | No such run or template in this environment, or no background driver to send a go-ahead to.                                |
-| `409`  | `conflict`          | Another step wrote the run first (`retryable: true`; send the call again), or the template changed since its `reviewDigest` was read (review it again). |
+| `409`  | `conflict`          | Another step wrote the run first (`retryable: true`; send the call again), or the template changed since its `reviewDigest` was read (review it again), or it was reopened while its pages were transformed or loaded. |
 | `422`  | `validation_failed` | A source field is malformed, or the URL is on a private address. The issue names the field, such as `source.include[0]`. |
 | `501`  | `not_configured`    | This deployment can't read source sites, run import scripts, or run migrations in the background.                         |
 | `503`  | `site_unavailable`  | The site's `robots.txt` can't be read (`retryable: true`). Nothing was written; try again later.                            |

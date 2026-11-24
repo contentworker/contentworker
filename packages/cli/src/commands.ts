@@ -1120,6 +1120,8 @@ function renderTemplate(t: MigrationTemplate): string {
         : undefined,
       contentType: t.contentTypeId ?? undefined,
       script: t.script ? `${t.script.sha256.slice(0, 12)} (${t.script.bytes} bytes)` : undefined,
+      toTransform: t.pageVersions?.toTransform || undefined,
+      loadedEarlier: t.pageVersions?.loadedEarlier || undefined,
       lastTry: tried
         ? `${tried.ok}/${tried.pages} ok, ${tried.passed} passed, mean ${tried.meanScore}`
         : undefined,
@@ -1239,6 +1241,41 @@ const migrateApprove: Command = {
           : result.reason === 'unreachable'
             ? ' The run’s driver couldn’t be reached: run this again to tell it.'
             : ` Next: transform and load its pages${result.reason === 'no-driver' ? `, or contentworker migrate start ${run}` : ''}.`),
+    };
+  },
+};
+
+const migrateReopen: Command = {
+  name: 'migrate reopen',
+  args: '<run> <template>',
+  summary: 'Reopen an approved template, to change it and approve it again (content:manage)',
+  options: {
+    reviewed: {
+      type: 'string',
+      description:
+        'The reviewDigest you read (migrate template); absent, the one read now, confirmed',
+    },
+    yes: YES,
+  },
+  async run(ctx) {
+    const run = arg(ctx, 0, '<run>');
+    const template = arg(ctx, 1, '<template>');
+    const cma = await ctx.client();
+    let reviewed = str(ctx, 'reviewed');
+    if (!reviewed) {
+      const t = await cma.migrations.template(run, template);
+      if (!ctx.json) ctx.io.stderr(renderTemplate(t));
+      await confirm(
+        ctx,
+        `Reopen template ${t.label}? Its pages not loaded yet wait until it is approved again; ` +
+          'loaded and published pages and their entries stay as they are.',
+      );
+      reviewed = t.reviewDigest;
+    }
+    const t = await cma.migrations.reopen(run, template, reviewed);
+    return {
+      json: t,
+      human: `Reopened ${t.label}. Change its model or script, then contentworker migrate approve ${run} ${template}`,
     };
   },
 };
@@ -1488,6 +1525,7 @@ export const COMMANDS: readonly Command[] = [
   migrateScriptSet,
   migrateScriptTry,
   migrateApprove,
+  migrateReopen,
   migrateStart,
   migratePublish,
   types,

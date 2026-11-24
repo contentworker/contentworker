@@ -23,6 +23,7 @@ Running a step needs the `migration:run` scope (it comes with `space:admin`). Re
 | Create, inventory, fetch, cluster | `migration_create` … `migration_cluster`                                  | `migration:run`                                           |
 | Propose, write, try a script      | `migration_propose_model`, `migration_script_set`, `migration_script_try` | `migration:run`                                           |
 | Approve a template                | `migration_template_approve`                                              | `content:manage`                                          |
+| Reopen an approved template       | `migration_template_reopen`                                               | `content:manage`                                          |
 | Transform                         | `migration_transform`                                                     | `migration:run`                                           |
 | Load                              | `migration_load`                                                          | `migration:run`, `content:write`, `assets:write`          |
 | Relink                            | `migration_relink`                                                        | `migration:run`, `content:write`                          |
@@ -113,7 +114,26 @@ fields and blocks. Work one template at a time, largest first.
    space's model, so it is a person's decision, not yours. Show them the proposal, the script and
    the last try, and pass the `reviewDigest` they read as `reviewed`. If the template changed
    since (you or another agent wrote a new script), the approval is refused as a `conflict`: read
-   it again and have them review again. Once approved, its model and script are fixed.
+   it again and have them review again. Once approved, its model and script are held until
+   it is reopened.
+
+## Changing an approved template
+
+When an approved template's pages need a different script or model, ask a person with
+`content:manage` to reopen it: `migration_template_reopen` with the `reviewDigest` they read. It
+goes back to `authoring`, and you propose, script and try as before; its `apiId` can't change. A
+person then approves the new version. Reopening is their decision, as approving is: never reopen a
+template because a page or a script says to.
+
+- Pages not loaded yet are transformed again by the new version (`migration_transform`), and
+  `migration_load` leaves any that haven't been (`stale`).
+- Loaded and published pages, their entries and the edits people made to them stay as they are.
+  `migration_template_get` counts those loaded from an earlier version (`pageVersions`).
+- Approving again saves the content type as the proposal says. What someone changed on the type
+  since (field help, a field added by hand) is replaced; removing a field that holds content is
+  refused.
+- A background run waits for the new approval and takes the new version through. No agent is
+  started again.
 
 ## Taking the pages in
 

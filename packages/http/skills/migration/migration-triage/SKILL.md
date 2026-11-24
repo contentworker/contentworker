@@ -47,7 +47,7 @@ fell short and fixing the cause, not pushing them through.
 - **Shape or model issues**: a field the type doesn't have, a block whose `variant` isn't one of
   the blocks field's, markup in a plain-text field, a marker in the wrong place (`$html` outside a
   `RichText` field, `$asset` outside an asset link). Fix the script, or if the pages really have
-  that field, propose the model again before approval.
+  that field, propose the model again (reopen the template first, once it is approved).
 - **Refused at load** (`failed` in a load's answer, the page moves to `needs-fix` with the reason):
   a value the content type refuses (a required field left empty, a value a validation refuses).
 - **Asset failures** (`assetFailures`): a file the load couldn't download. The page loads without
@@ -59,13 +59,16 @@ fell short and fixing the cause, not pushing them through.
 
 Before approval, change the script or the model and try again; each try replaces `lastTry`.
 
-After approval the model and script are fixed: no new version can be written. So triage before
-asking for approval, on pages chosen to cover the template's variations. Once approved, tell the
-person which pages score low or fail and why; the choices are theirs: load the low scorers anyway
-with `includeNeedsFix` and finish them by hand in the editor, or leave them out. Loading them is
+Triage before asking for approval, on pages chosen to cover the template's variations. Once
+approved, tell the person which pages score low or fail and why; the choices are theirs: have the
+template reopened (`migration_template_reopen`, `content:manage`), fix its script or model, and
+approve it again, so that `migration_transform` takes its pages that aren't loaded again; load the
+low scorers anyway with `includeNeedsFix` and finish them by hand in the editor; or leave them out. Loading them is
 never a way to make the numbers go away.
 
-Every step is safe to repeat. A transform skips pages already transformed by the current script;
+Every step is safe to repeat. A transform skips pages already transformed by the approved version (its
+model and script together), and loaded or published ones; a load leaves pages of an earlier version
+where they are and counts them as `stale`;
 a load matches entries on `sourceUrl`, so a page loaded again updates the entry it became, and a
 page that moves back to `validated` loads on the next call. Redirects run again are `unchanged`.
 Publishing again finds published entries published.

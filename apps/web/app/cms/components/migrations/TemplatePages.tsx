@@ -2,7 +2,7 @@ import { Catalog, CatalogRow, CatalogTile } from '@contentworker/ui/catalog';
 import { Checkbox } from '@contentworker/ui/checkbox';
 import { Label } from '@contentworker/ui/label';
 import { SkeletonPill } from '@contentworker/ui/skeleton';
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useClient } from '~/cms/lib/client-context';
 import { plural } from '~/cms/lib/format';
 import type { MigrationTemplateView } from '~/cms/lib/management';
@@ -10,6 +10,7 @@ import {
   addFailures,
   batchUntilDone,
   type Failures,
+  isReopened,
   LOAD_BATCH,
   type MigrationRights,
   NO_FAILURES,
@@ -28,6 +29,7 @@ const NONE_LOADED = {
   failed: NO_FAILURES,
   assetFailures: NO_FAILURES,
   deferred: NO_FAILURES,
+  stale: 0,
 };
 
 /**
@@ -52,10 +54,28 @@ export function TemplatePages({
   const [load, setLoad] = useState(NONE_LOADED);
   // Where the last single transform left off, so the next one goes on from there.
   const cursor = useRef<string | undefined>(undefined);
+  // Another approval starts the pages over: where the last batch left off, and what it said, were
+  // of the version before.
+  const approved = t.status === 'approved' ? t.version : null;
+  const last = useRef(approved);
+  useEffect(() => {
+    if (last.current === approved) return;
+    last.current = approved;
+    cursor.current = undefined;
+    setFailed(NO_FAILURES);
+    setLoad(NONE_LOADED);
+  }, [approved]);
   const step: StepState =
     t.status === 'approved'
       ? { available: true }
-      : { available: false, reason: 'Approve the template first.' };
+      : {
+          available: false,
+          reason: isReopened(t)
+            ? 'It was reopened: approve it again first.'
+            : 'Approve the template first.',
+        };
+  const toTransform = t.pageVersions?.toTransform ?? 0;
+  const loadedEarlier = t.pageVersions?.loadedEarlier ?? 0;
 
   const transform = (loop: boolean) =>
     runner.run(
@@ -129,6 +149,7 @@ export function TemplatePages({
             assetFailures: addFailures(a.assetFailures, r.assetFailures),
             // Left for the next batch, which takes them again: the last batch's are what's left.
             deferred: addFailures(NO_FAILURES, r.deferred),
+            stale: r.stale,
           }),
           next: (r) => {
             more = r.more;
@@ -165,8 +186,11 @@ export function TemplatePages({
             <span className="flex flex-wrap gap-x-2">
               <span className="w-full">
                 Runs the approved script on its pages, {TRANSFORM_BATCH} a request, and scores each.
-                Pages it already transformed are skipped.
+                Pages this version already transformed, and loaded ones, are skipped.
               </span>
+              {toTransform > 0 ? (
+                <span className="w-full">{plural(toTransform, 'page')} to transform.</span>
+              ) : null}
               <Why id={`${id}-transform`} step={step} show={rights?.run === true} />
             </span>
           }
@@ -195,8 +219,14 @@ export function TemplatePages({
             <span className="flex flex-wrap gap-x-2">
               <span className="w-full">
                 Makes its validated pages draft entries as you, {LOAD_BATCH} a request, with their
-                assets. Loading a page again updates its entry.
+                assets. Pages already loaded are left as they are.
               </span>
+              {loadedEarlier > 0 ? (
+                <span className="w-full">
+                  {plural(loadedEarlier, 'page')} loaded from an earlier version, left as{' '}
+                  {loadedEarlier === 1 ? 'it is' : 'they are'}.
+                </span>
+              ) : null}
               {rights?.load ? (
                 <span className="flex w-full items-center gap-2 pt-1">
                   <Checkbox
@@ -246,9 +276,9 @@ export function TemplatePages({
         </p>
       ) : null}
       <p className="max-w-measure px-1 text-muted-foreground text-xs">
-        An approved template’s script can’t be changed, so a needs-fix page can’t be transformed
-        again. Load can still take the ones that only scored low; one with an error is left to bring
-        in by hand.
+        To fix a needs-fix page, reopen the template, change its script or model and approve it
+        again: Transform then takes the page again. Load can also take the ones that only scored
+        low.
       </p>
     </div>
   );
@@ -266,11 +296,13 @@ const loadLine = (t: {
   unresolvedLinks: number;
   failed: Failures;
   assetFailures: Failures;
+  stale: number;
 }) =>
   [
     `Loaded ${plural(t.loaded, 'page')}`,
     t.failed.total ? `${t.failed.total} not loaded` : '',
     t.assetFailures.total ? `${plural(t.assetFailures.total, 'file')} not brought in` : '',
+    t.stale ? `${plural(t.stale, 'page')} to transform again first` : '',
     t.unresolvedLinks ? `${plural(t.unresolvedLinks, 'link')} left for Relink` : '',
   ]
     .filter(Boolean)

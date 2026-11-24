@@ -137,6 +137,7 @@ const client = {
   }),
   tryMigrationScript: vi.fn(),
   approveMigrationTemplate: vi.fn(),
+  reopenMigrationTemplate: vi.fn(),
   transformMigrationPages: vi.fn(),
   loadMigrationPages: vi.fn(),
   relinkMigrationPages: vi.fn(),
@@ -175,6 +176,7 @@ afterEach(() => {
   for (const name of [
     'tryMigrationScript',
     'approveMigrationTemplate',
+    'reopenMigrationTemplate',
     'transformMigrationPages',
     'loadMigrationPages',
     'relinkMigrationPages',
@@ -308,9 +310,7 @@ describe('reviewing a template', () => {
   it('locks an approved template, saying why', async () => {
     template = authored({ status: 'approved', contentTypeId: 'post' });
     open();
-    expect(
-      await screen.findByText(/is approved, so its model and script are settled/),
-    ).toBeTruthy();
+    expect(await screen.findByText(/is approved, so its model and script are held/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Edit model' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit script' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Open its content type' }).getAttribute('href')).toBe(
@@ -485,9 +485,9 @@ describe('approving', () => {
     fireEvent.click(button);
     expect(screen.queryByRole('alertdialog')).toBeNull();
     await press('I’ve read this version');
-    client.approveMigrationTemplate.mockResolvedValueOnce({
-      template: { ...template, status: 'approved' },
-      signalled: true,
+    client.approveMigrationTemplate.mockImplementationOnce(async () => {
+      template = { ...template, status: 'approved' };
+      return { template, signalled: true };
     });
     await approve();
     await press('Approve template');
@@ -581,6 +581,158 @@ describe('approving', () => {
   });
 });
 
+describe('reopening an approved template', () => {
+  beforeEach(() => {
+    template = authored({ status: 'approved', contentTypeId: 'post' });
+    client.reopenMigrationTemplate.mockImplementation(async () => {
+      template = { ...template, status: 'authoring', approvedBy: null };
+      return template;
+    });
+  });
+
+  it('confirms on the page what it leaves alone, sends the digest read, and unlocks the edits', async () => {
+    open();
+    await press('Reopen for changes…');
+    const ask = await screen.findByRole('alertdialog', { name: /Reopen “Blog post”/ });
+    expect(ask.textContent).toMatch(/Its model and script can be edited again/);
+    expect(ask.textContent).toMatch(/Pages not loaded yet are transformed again/);
+    expect(ask.textContent).toMatch(/published pages, and their entries, stay as they are/);
+    expect(ask.textContent).toMatch(/background run waits for the new approval/);
+    expect(document.activeElement).toBe(within(ask).getByRole('button', { name: 'Cancel' }));
+    await press('Cancel');
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Reopen for changes…' }),
+      ),
+    );
+    expect(client.reopenMigrationTemplate).not.toHaveBeenCalled();
+    await press('Reopen for changes…');
+    await press('Reopen template');
+    const said = await screen.findByText(/^Reopened\. Edit its model or script above/);
+    await waitFor(() => expect(document.activeElement).toBe(said));
+    expect(client.reopenMigrationTemplate).toHaveBeenCalledWith('run-1', 't1', digest('a'));
+    expect(await screen.findByRole('button', { name: 'Edit model' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Approve…' })).toBeTruthy();
+    expect(screen.queryByText('This template changed since you read it')).toBeNull();
+    expect(screen.getAllByText('It was reopened: approve it again first.')).toHaveLength(2);
+  });
+
+  it('holds the API ID of a reopened model, and shows the API’s refusal beside it', async () => {
+    template = authored({ contentTypeId: 'post' });
+    open();
+    expect(await screen.findByText('Reopened for changes after it was approved.')).toBeTruthy();
+    await press('Edit model');
+    const box = await screen.findByLabelText('Content model as JSON');
+    fireEvent.change(box, { target: { value: JSON.stringify({ ...MODEL, apiId: 'story' }) } });
+    await press('Propose model');
+    expect((await screen.findByRole('alert')).textContent).toMatch(/apiId: must stay “post”/);
+    expect(client.proposeMigrationModel).not.toHaveBeenCalled();
+    client.proposeMigrationModel.mockRejectedValueOnce(
+      new ApiError(422, 'POST … → 422', {
+        error: {
+          code: 'validation_failed',
+          message: 'x',
+          issues: [{ field: 'apiId', message: 'must stay "post"' }],
+        },
+      }),
+    );
+    fireEvent.change(box, { target: { value: JSON.stringify(MODEL) } });
+    await press('Propose model');
+    expect((await screen.findByRole('alert')).textContent).toBe('apiId: must stay "post"');
+  });
+
+  it('says why it was refused, and gives focus back', async () => {
+    client.reopenMigrationTemplate.mockRejectedValueOnce(
+      refusal(409, 'conflict', 'The template was approved again'),
+    );
+    open();
+    await press('Reopen for changes…');
+    await press('Reopen template');
+    expect(await screen.findByText('It wasn’t reopened')).toBeTruthy();
+    expect(screen.getByText('The template was approved again')).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Reopen for changes…' }),
+      ),
+    );
+  });
+
+  it('shows no other question when the answer was lost and it was reopened', async () => {
+    client.listContentTypes.mockResolvedValueOnce([{ apiId: 'post', name: 'Post' }]);
+    client.reopenMigrationTemplate.mockImplementationOnce(async () => {
+      template = { ...template, status: 'authoring' };
+      throw new TypeError('network');
+    });
+    open();
+    await press('Reopen for changes…');
+    await press('Reopen template');
+    expect(await screen.findByText('The reopening didn’t confirm')).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body));
+    // Approving it again says what that replaces, and what it leaves.
+    await press('Approve…');
+    const ask = await screen.findByRole('alertdialog');
+    expect(ask.textContent).toMatch(/This revises and publishes/);
+    expect(ask.textContent).toMatch(/changed on the content type since is replaced/);
+    expect(ask.textContent).not.toMatch(/No entries are made yet/);
+  });
+
+  it('asks for a version nobody here read to be read, once reopened', async () => {
+    template = authored();
+    const { qc } = open();
+    await screen.findByRole('button', { name: 'Approve…' });
+    // Someone else saved another version and approved it.
+    template = authored({ status: 'approved', contentTypeId: 'post', reviewDigest: digest('e') });
+    await qc.invalidateQueries();
+    await press('Reopen for changes…');
+    await press('Reopen template');
+    expect(await screen.findByText('This template changed since you read it')).toBeTruthy();
+  });
+
+  it('isn’t offered on a run that failed, and says so', async () => {
+    status = 'failed';
+    open();
+    expect(
+      await screen.findByText('The run failed, so its templates can’t be reopened.'),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Reopen for changes…' })).toBeNull();
+  });
+
+  it('isn’t offered without content:manage', async () => {
+    client.getSpaceAccess.mockResolvedValue({ scopes: ['migration:run'], subject: 'me' });
+    open();
+    expect(await screen.findByText('Reopening takes content:manage.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Reopen for changes…' })).toBeNull();
+  });
+
+  it('once approved again, offers Transform for the pages of the earlier version', async () => {
+    template = authored({
+      status: 'approved',
+      contentTypeId: 'post',
+      pageVersions: { toTransform: 4, loadedEarlier: 1 },
+    });
+    client.loadMigrationPages.mockResolvedValue({
+      loaded: 0,
+      failed: [],
+      assetFailures: [],
+      unresolvedLinks: 0,
+      deferred: [],
+      stale: 4,
+      more: false,
+    });
+    open();
+    expect(await screen.findByText('4 pages to transform.')).toBeTruthy();
+    expect(screen.getByText('1 page loaded from an earlier version, left as it is.')).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: 'Transform until done' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    await press('Load until done');
+    expect(
+      await screen.findByText('Loaded 0 pages; 4 pages to transform again first.'),
+    ).toBeTruthy();
+  });
+});
+
 describe('taking a template’s pages in', () => {
   const transformed = (over: Partial<MigrationTransformResult> = {}): MigrationTransformResult => ({
     transformed: 10,
@@ -596,6 +748,7 @@ describe('taking a template’s pages in', () => {
     assetFailures: [],
     unresolvedLinks: 0,
     deferred: [],
+    stale: 0,
     more: false,
     ...over,
   });

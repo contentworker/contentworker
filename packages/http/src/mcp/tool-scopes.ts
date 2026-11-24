@@ -203,6 +203,7 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   migration_status: [SCOPES.contentManage, SCOPES.migrationRun],
   migration_template_approve: [SCOPES.contentManage, SCOPES.migrationRun],
   migration_template_get: [SCOPES.contentManage, SCOPES.migrationRun],
+  migration_template_reopen: [SCOPES.contentManage, SCOPES.migrationRun],
   migration_templates: [SCOPES.contentManage, SCOPES.migrationRun],
   migration_transform: [SCOPES.migrationRun],
   model_clone_content_type: [SCOPES.contentManage],

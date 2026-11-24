@@ -292,7 +292,7 @@ export const templatePath = (run: string, template: string) =>
 export interface MigrationRights {
   /** Propose, script, try, transform, start: `migration:run`. */
   readonly run: boolean;
-  /** Approve a template, write redirects: `content:manage`. */
+  /** Approve a template, reopen one, write redirects: `content:manage`. */
   readonly manage: boolean;
   readonly load: boolean;
   readonly relink: boolean;
@@ -323,13 +323,19 @@ export function lockedReason(
   template: Pick<MigrationTemplateView, 'status'>,
   run: MigrationRunView['run'] | undefined,
 ): string | undefined {
+  if (template.status === 'approved' && run?.status === 'failed')
+    return 'This template is approved and the run failed, so its model and script can’t be changed.';
   if (template.status === 'approved')
-    return 'This template is approved, so its model and script are settled: its pages are transformed and loaded with what was approved.';
+    return 'This template is approved, so its model and script are held: its pages are transformed and loaded with what was approved. To change them, reopen it under Approve.';
   if (template.status === 'approving')
     return 'This template is being approved, so its model and script are held until that finishes.';
   if (run?.status === 'failed') return 'The run failed, so its templates can’t be changed.';
   return undefined;
 }
+
+/** Approved once and reopened: it holds the content type a new approval revises. */
+export const isReopened = (t: Pick<MigrationTemplateView, 'status' | 'contentTypeId'>) =>
+  t.status === 'authoring' && t.contentTypeId !== null;
 
 /** What an approval told the run's background driver, in plain words. */
 export function approvalLine(a: MigrationApproval): string {

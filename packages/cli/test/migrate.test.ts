@@ -366,6 +366,29 @@ describe('migrate, authoring and publishing', () => {
     expect(JSON.parse(asked.calls[1]?.body ?? '')).toEqual({ reviewed: DIGEST });
   });
 
+  it('reopens with the digest given, or the one read now once confirmed', async () => {
+    const routes = {
+      [`GET ${T}`]: () => template('approved'),
+      [`POST ${T}/reopen`]: () => template(),
+    };
+    const h = await harness(routes, { env: ENV });
+    const given = await h.run('migrate', 'reopen', 'r1', 't1', '--reviewed', DIGEST);
+    expect(given.code).toBe(EXIT.ok);
+    expect(given.stdout).toMatch(/Reopened Template 1\. .*migrate approve r1 t1/);
+    expect(JSON.parse(h.calls[0]?.body ?? '')).toEqual({ reviewed: DIGEST });
+
+    // Off a terminal, nothing can be confirmed: nothing is reopened.
+    expect((await h.run('migrate', 'reopen', 'r1', 't1')).code).toBe(EXIT.usage);
+    expect(h.calls.map((c) => c.method)).toEqual(['POST', 'GET']);
+
+    const asked = await harness(routes, { env: ENV, interactive: true, answers: ['y'] });
+    expect((await asked.run('migrate', 'reopen', 'r1', 't1')).code).toBe(EXIT.ok);
+    expect(JSON.parse(asked.calls[1]?.body ?? '')).toEqual({ reviewed: DIGEST });
+    const declined = await harness(routes, { env: ENV, interactive: true, answers: ['n'] });
+    await declined.run('migrate', 'reopen', 'r1', 't1');
+    expect(declined.calls.map((c) => c.method)).toEqual(['GET']);
+  });
+
   it('surfaces a stale review as the api’s conflict', async () => {
     const h = await harness(
       {

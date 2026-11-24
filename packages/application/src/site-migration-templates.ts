@@ -29,6 +29,7 @@ import {
 } from '@contentworker/domain';
 import {
   type BlobStore,
+  type ContentStore,
   type ImportScriptContentType,
   type ImportScriptFieldSummary,
   type ImportScriptResult,
@@ -38,18 +39,24 @@ import {
 import { createContentType, publishContentType } from './content-types';
 import type { AppContext } from './context';
 import { jobStarterOf } from './job-starter';
+import {
+  assertSameApproval,
+  isOutputOf,
+  outputVersions,
+  templateReviewDigest,
+} from './site-migration-version';
 import { migrationArtifactKey } from './site-migrations';
 import { sha256Hex } from './token-crypto';
 
 /**
  * Site migration, authoring a template: propose the content type its pages become, write its
  * import script, try the script on the sample pages, approve the template (which creates the
- * type), and transform the template's pages with the approved script.
+ * type), transform the template's pages with the approved script, and reopen it to change it.
  *
  * Everything but the approval is an author's or an agent's work and changes nothing outside the
  * run: a proposal is recorded on the template, a script is an artifact under the run, and a try
  * keeps only its summary. Only {@link approveTemplate} writes the space's model, as a person with
- * `content:manage`.
+ * `content:manage`; {@link reopenTemplate}, theirs too, writes only the template.
  *
  * Every template write rides with the run's version compare-and-set (`MigrationStore`), so two
  * writers can't interleave a run's templates. Each template's agent writes on its own, so a lost
@@ -97,7 +104,8 @@ export interface ProposeTemplateModelInput extends TemplateRef {
  * Records the content type a template's pages are proposed to become, checked as the type will
  * be created ({@link checkTemplateModel}: a `sourceUrl` field, one blocks field for the body, a
  * URL pattern), and moves the template to `authoring`, so clustering the run again can't discard
- * it. Nothing in the space's model changes until the template is approved.
+ * it. Nothing in the space's model changes until the template is approved. A reopened template
+ * keeps its apiId ({@link assertHeldApiId}).
  */
 export async function proposeTemplateModel(
   ctx: AppContext,
@@ -107,6 +115,7 @@ export async function proposeTemplateModel(
   const model = checkTemplateModel(input.model, { previewLoopback: ctx.previewLoopback === true });
   return writeTemplate(ctx, scope, input, (template, at) => {
     assertAuthorable(template);
+    assertHeldApiId(template, model.apiId);
     return { ...template, proposal: model, status: 'authoring', updatedAt: at };
   });
 }
@@ -278,16 +287,6 @@ export interface ApproveTemplateInput extends TemplateRef {
 }
 
 /**
- * What a person approves: the proposal and the script version, as one SHA-256. A try's summary
- * or a status change doesn't change it; a new proposal or script does.
- */
-export function templateReviewDigest(template: MigrationTemplate): string {
-  return sha256Hex(
-    JSON.stringify({ proposal: template.proposal, script: template.script?.sha256 ?? null }),
-  );
-}
-
-/**
  * Approves a template: creates its content type from the proposal (or revises the one of that
  * apiId the run's templates already hold), publishes it, and moves the template to `approved`
  * with `contentTypeId` and `approvedBy` (the approver, whom its pages are loaded as). Needs
@@ -304,6 +303,11 @@ export function templateReviewDigest(template: MigrationTemplate): string {
  * approves it only while that claim is still the one this call made. A failed type save releases
  * the claim. A claim left by an approval that stopped part-way (a crash) can be taken over once it
  * is {@link APPROVAL_LEASE_MS} old, and a second call then finishes it.
+ *
+ * A reopened template is approved the same way, over the type it holds (its apiId can't change):
+ * the save goes through the type's own guards (a field in use isn't removed), and a failure leaves
+ * it reopened. Approving a template that is approved already answers it, for the digest it was
+ * approved at only: a caller who read another version is refused, not told they approved it.
  */
 export async function approveTemplate(
   ctx: AppContext,
@@ -318,16 +322,20 @@ export async function approveTemplate(
   }
   const ref = { runId: input.runId, templateId: input.templateId };
   const template = await requireTemplate(ctx, scope, ref.runId, ref.templateId);
-  if (template.status === 'approved') return template;
-  if (!template.proposal) throw new InvalidStateError('The template has no proposed model');
-  if (!template.script) throw new InvalidStateError('The template has no import script');
   const stale = () =>
     new ConflictError(
       'The template’s model or script changed after it was reviewed: review it again',
     );
+  if (template.status === 'approved') {
+    if (templateReviewDigest(template) !== input.reviewed) throw stale();
+    return template;
+  }
+  if (!template.proposal) throw new InvalidStateError('The template has no proposed model');
+  if (!template.script) throw new InvalidStateError('The template has no import script');
   if (templateReviewDigest(template) !== input.reviewed) throw stale();
   const proposal = template.proposal;
   const apiId = proposal.apiId;
+  assertHeldApiId(template, apiId);
   const existing = await ctx.store.contentTypes.get(scope, apiId);
   if (existing) {
     const held = (await ctx.store.migrations.listTemplates(scope, ref.runId)).some(
@@ -339,10 +347,13 @@ export async function approveTemplate(
       );
     }
   }
-  const before = template.contentTypeId;
+  // What a failed save goes back to. The claim of a first approval that stopped before it wrote
+  // the type holds nothing: no page can have been loaded as a type that doesn't exist.
+  const before = template.status === 'approving' && !existing ? null : template.contentTypeId;
   const claim = await writeTemplate(ctx, scope, ref, (current, at) => {
-    if (current.status === 'approved') return current;
     if (templateReviewDigest(current) !== input.reviewed) throw stale();
+    if (current.status === 'approved') return current;
+    assertHeldApiId(current, apiId);
     if (
       current.status === 'approving' &&
       Date.parse(at) - Date.parse(current.updatedAt) < APPROVAL_LEASE_MS
@@ -380,6 +391,66 @@ export async function approveTemplate(
 /** How long an approval holds its template before another may take it over. */
 export const APPROVAL_LEASE_MS = 5 * 60_000;
 
+// --- reopen -----------------------------------------------------------------
+
+/**
+ * Reopens an approved template, so its model and script can be changed and approved again: back
+ * to `authoring`, with no approver. It keeps its content type, which a new approval revises. Needs
+ * `content:manage`, as approving does, and `input.reviewed`, the {@link templateReviewDigest} of
+ * the approved template as the person read it (`ConflictError` when it is another by now).
+ *
+ * The type, its entries and the pages stay as they are; until the template is approved again its
+ * pages are neither transformed nor loaded. Pages whose output is recorded by its script alone are
+ * stamped with the version being withdrawn, in the same unit, so a new model over the same script
+ * still reads as a newer version ({@link outputVersions}).
+ *
+ * Reopening a reopened template nobody has changed yet answers it as it is (a lost response sent
+ * again). One never approved, or being approved now, is refused (`InvalidStateError`).
+ */
+export async function reopenTemplate(
+  ctx: AppContext,
+  principal: Principal,
+  scope: Scope,
+  input: ApproveTemplateInput,
+): Promise<MigrationTemplate> {
+  authorize(principal, SCOPES.contentManage, scope.spaceId);
+  return writeTemplate(
+    ctx,
+    scope,
+    input,
+    (current, at) => {
+      const reopened = current.status === 'authoring' && current.contentTypeId !== null;
+      if (current.status === 'approving') {
+        throw new InvalidStateError('The template is being approved; try again in a moment');
+      }
+      if (current.status !== 'approved' && !reopened) {
+        throw new InvalidStateError(
+          `Only an approved template is reopened; this one is ${current.status}`,
+        );
+      }
+      if (templateReviewDigest(current) !== input.reviewed) {
+        throw new ConflictError(
+          'The template was approved again or changed after it was read: read it again',
+        );
+      }
+      return reopened
+        ? current
+        : { ...current, status: 'authoring', approvedBy: null, updatedAt: at };
+    },
+    async (tx, current) => {
+      if (!current.script) return;
+      await tx.migrations.stampOutputs(
+        scope,
+        input.runId,
+        current.id,
+        current.script.sha256,
+        templateReviewDigest(current),
+        ctx.clock.now().toISOString(),
+      );
+    },
+  );
+}
+
 // --- transform --------------------------------------------------------------
 
 export interface TransformTemplatePagesInput extends TemplateRef {
@@ -387,6 +458,11 @@ export interface TransformTemplatePagesInput extends TemplateRef {
   readonly batchSize?: number;
   /** The `next` of the call before: where this one goes on from. */
   readonly after?: string;
+  /**
+   * The approval to run under, as the template's `version`: refused
+   * (`MigrationApprovalChangedError`) once the template is reopened or approved again.
+   */
+  readonly approval?: number;
 }
 
 export interface MigrationTransformFailure {
@@ -416,9 +492,13 @@ export interface TransformTemplatePagesResult {
  * the script fails on, or whose output doesn't fit the content type, goes to `needs-fix` with the
  * reason.
  *
- * Safe to run again: a page already transformed by this script version (`outputScript`) is
- * skipped, as are pages loaded or published, and pages with no HTML. A new script version takes
- * every page again on the next pass.
+ * Safe to run again: a page already transformed by this approved version, its model and script
+ * together (`outputScript`, {@link outputVersions}), is skipped, as are pages with no HTML. A new
+ * version takes every other page again on the next pass, but never one loaded or published: its
+ * entry is someone's to edit, and loading it again would write over that.
+ *
+ * Pages are written only while the template is still approved as it was read (at the commit), and
+ * each only as it was read; a page another step moved meanwhile is taken from a fresh read.
  */
 export async function transformTemplatePages(
   ctx: AppContext,
@@ -428,6 +508,7 @@ export async function transformTemplatePages(
 ): Promise<TransformTemplatePagesResult> {
   const run = await requireRun(ctx, scope, input.runId);
   const template = await requireTemplate(ctx, scope, run.id, input.templateId);
+  if (input.approval !== undefined) assertSameApproval(template, input.approval);
   if (template.status !== 'approved' || !template.script || !template.contentTypeId) {
     throw new InvalidStateError(
       `A template's pages are transformed once it is approved; this one is ${template.status}`,
@@ -439,7 +520,8 @@ export async function transformTemplatePages(
       `The template's content type "${template.contentTypeId}" doesn't exist in this environment`,
     );
   }
-  const scriptSha = template.script.sha256;
+  const versions = outputVersions(template);
+  const digest = templateReviewDigest(template);
   const script = await readScript(deps.blob, template.script);
   const limit = Math.max(
     1,
@@ -450,23 +532,22 @@ export async function transformTemplatePages(
     limit,
     ...(input.after ? { after: input.after } : {}),
   });
-  const due = pages.filter(
-    (p) =>
-      p.html !== null &&
-      p.outputScript !== scriptSha &&
-      p.stage !== 'loaded' &&
-      p.stage !== 'published',
-  );
+  const isDue = (p: MigrationPage) =>
+    p.html !== null &&
+    !isOutputOf(p, versions) &&
+    p.stage !== 'loaded' &&
+    p.stage !== 'published' &&
+    p.templateId === template.id;
   const summaryOf = importScriptContentType(contentType);
-  const at = ctx.clock.now().toISOString();
-  const failed: MigrationTransformFailure[] = [];
-  const updated = await mapLimit(due, SCRIPT_CONCURRENCY, async (page): Promise<MigrationPage> => {
-    const base = { ...page, outputScript: scriptSha, updatedAt: at };
-    const fail = (error: string): MigrationPage => {
-      const reason = clip(error, MAX_ERROR_LENGTH);
-      failed.push({ pageId: page.id, url: page.url, error: reason });
-      return { ...base, stage: 'needs-fix', output: null, score: null, error: reason };
-    };
+  const transformPage = async (page: MigrationPage, at: string): Promise<MigrationPage> => {
+    const base = { ...page, outputScript: digest, updatedAt: at };
+    const fail = (error: string): MigrationPage => ({
+      ...base,
+      stage: 'needs-fix',
+      output: null,
+      score: null,
+      error: clip(error, MAX_ERROR_LENGTH),
+    });
     const html = page.html ? await deps.blob.get(page.html.key) : null;
     if (html === null) return fail('The page’s HTML is missing from storage');
     const ran = await runScript(deps.sandbox, scope, script, page, html, summaryOf);
@@ -486,9 +567,37 @@ export async function transformTemplatePages(
       score,
       error: null,
     };
-  });
-  // Pages are whole and their step is safe to repeat: no compare-and-set needed.
-  if (updated.length > 0) await ctx.store.migrations.savePages(scope, run.id, updated);
+  };
+  let due = pages.filter(isDue);
+  let updated: MigrationPage[] = [];
+  for (let attempt = 1; due.length > 0; attempt++) {
+    const at = ctx.clock.now().toISOString();
+    updated = await mapLimit(due, SCRIPT_CONCURRENCY, (page) => transformPage(page, at));
+    const moves = updated.map((page, i) => ({
+      page,
+      expected: (due[i] as MigrationPage).updatedAt,
+    }));
+    try {
+      await ctx.store.withTransaction(async (tx) => {
+        await tx.migrations.movePages(scope, run.id, moves);
+        await tx.migrations.expectApproved(scope, run.id, template.id, template.version);
+      });
+      break;
+    } catch (err) {
+      if (!(err instanceof TransactionConflictError)) throw err;
+      assertSameApproval(await requireTemplate(ctx, scope, run.id, template.id), template.version);
+      if (attempt >= WRITE_ATTEMPTS) throw err;
+      // A page was written meanwhile (another transform, a load): these again, as they are now.
+      const ids = due.map((p) => p.id);
+      due = (
+        await Promise.all(ids.map((id) => ctx.store.migrations.getPage(scope, run.id, id)))
+      ).filter((p): p is MigrationPage => p !== null && isDue(p));
+      updated = [];
+    }
+  }
+  const failed: MigrationTransformFailure[] = updated.flatMap((p) =>
+    p.error !== null ? [{ pageId: p.id, url: p.url, error: p.error }] : [],
+  );
   const more = pages.length === limit;
   const next = more ? pages.at(-1)?.id : undefined;
   return {
@@ -644,6 +753,21 @@ function assertAuthorable(template: MigrationTemplate): void {
   }
 }
 
+/**
+ * A template that holds a content type keeps its apiId: its loaded pages are entries of that type,
+ * and loading the rest as another would split them.
+ */
+function assertHeldApiId(template: MigrationTemplate, apiId: string): void {
+  if (template.contentTypeId !== null && template.contentTypeId !== apiId) {
+    throw new ValidationError([
+      {
+        field: 'apiId',
+        message: `must stay "${template.contentTypeId}": the template was approved as that content type, and its loaded entries are of it`,
+      },
+    ]);
+  }
+}
+
 function checkScript(script: unknown): string {
   if (typeof script !== 'string' || !script.trim()) {
     throw new ValidationError([{ field: 'script', message: 'must be the script’s source' }]);
@@ -674,6 +798,8 @@ async function writeTemplate(
   scope: Scope,
   ref: TemplateRef,
   change: (template: MigrationTemplate, at: string) => MigrationTemplate,
+  /** Written in the same unit, given the template as it was. */
+  also?: (tx: Pick<ContentStore, 'migrations'>, before: MigrationTemplate) => Promise<void>,
 ): Promise<MigrationTemplate> {
   for (let attempt = 1; ; attempt++) {
     const run = await requireRun(ctx, scope, ref.runId);
@@ -691,6 +817,7 @@ async function writeTemplate(
     try {
       await ctx.store.withTransaction(async (tx) => {
         await tx.migrations.saveTemplate(scope, run.id, next);
+        await also?.(tx, template);
         await tx.migrations.saveRun(
           scope,
           { ...run, version: run.version + 1, updatedAt: at },

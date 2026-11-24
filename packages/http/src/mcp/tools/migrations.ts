@@ -19,6 +19,7 @@ import {
   proposeTemplateModel,
   publishMigration,
   relinkMigratedPages,
+  reopenTemplate,
   type SiteMigrationDeps,
   setImportScript,
   startMigration,
@@ -61,6 +62,7 @@ import {
   migrationPublishBody,
   migrationRedirectsBody,
   migrationRelinkBody,
+  migrationReopenBody,
   migrationRunBody,
   migrationScriptBody,
   migrationTransformBody,
@@ -308,8 +310,9 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
     {
       description:
         'One template: status (pending, authoring, approving, approved), its proposed model, ' +
-        'script version, lastTry and reviewDigest, which migration_template_approve takes as ' +
-        '`reviewed`.',
+        'script version, lastTry and reviewDigest, which migration_template_approve and ' +
+        'migration_template_reopen take as `reviewed`. Once approved, pageVersions counts pages ' +
+        'to transform and pages loaded from an earlier version.',
       inputSchema: toolSchema('migration_template_get', () =>
         z.object({ ...templateArgs, ...scopeArgs }),
       ),
@@ -429,7 +432,8 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
         'content type from the proposal and tells the run’s driver (`signalled`; else `reason`: ' +
         'no-driver, driver-finished or unreachable, when approving again retries). `reviewed` ' +
         'is the reviewDigest from migration_template_get as you read it: a template changed ' +
-        'since is refused (conflict). Only approve what a person has reviewed.',
+        'since is refused (conflict). A reopened template’s type is revised. Only approve what a ' +
+        'person has reviewed.',
       inputSchema: toolSchema('migration_template_approve', () =>
         z.object({ ...templateArgs, ...migrationApproveBody.shape, ...scopeArgs }),
       ),
@@ -440,6 +444,33 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
       return ok(
         migrationApprovalResponse(
           await approveMigrationTemplate(ctx, deps.migrationRunner, t.principal, scopeOf(args), {
+            ...ref(args),
+            reviewed: args.reviewed,
+          }),
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
+    'migration_template_reopen',
+    {
+      description:
+        'Reopen an approved template, as a person with content:manage, to change its model or ' +
+        'script and approve it again. `reviewed` is the reviewDigest you read. It keeps its ' +
+        'content type (the apiId can’t change); the type, entries and pages stay as they are. ' +
+        'After the new approval, migration_transform retakes pages not loaded yet; loaded and ' +
+        'published ones are never retaken. A background run waits for the new approval.',
+      inputSchema: toolSchema('migration_template_reopen', () =>
+        z.object({ ...templateArgs, ...migrationReopenBody.shape, ...scopeArgs }),
+      ),
+      annotations: { idempotentHint: true },
+    },
+    async (args) => {
+      guardAny([SCOPES.migrationRun, SCOPES.contentManage], scopeOf(args));
+      return ok(
+        migrationTemplateResponse(
+          await reopenTemplate(ctx, t.principal, scopeOf(args), {
             ...ref(args),
             reviewed: args.reviewed,
           }),

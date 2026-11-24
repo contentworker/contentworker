@@ -70,4 +70,5 @@ tool is a page; propose what the pages' structure calls for.
 
 Write the script that fills this type (`template-import-script`), and try it. A try checks each
 output against the proposal, so a field the script needs and the model lacks shows up there:
-propose again, then try again. Once the person approves, the model is fixed.
+propose again, then try again. Once the person approves, the model is held until a
+person reopens the template; its `apiId` stays for good.

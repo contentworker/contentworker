@@ -12,6 +12,7 @@ import {
   eq,
   getTableColumns,
   gt,
+  inArray,
   isNotNull,
   isNull,
   type SQL,
@@ -245,6 +246,31 @@ export function makeMigrationStore(x: Exec): MigrationStore {
       statements.push(db.delete(schema.guard));
       await writeAll(x, statements);
     },
+    async stampOutputs(scope, runId, templateId, from, to, at) {
+      await x.write(
+        db
+          .update(pages)
+          .set({ outputScript: to, updatedAt: new Date(at) })
+          .where(
+            and(
+              ofRun(pages, scope, runId),
+              eq(pages.templateId, templateId),
+              eq(pages.outputScript, from),
+            ),
+          ),
+      );
+    },
+    async expectApproved(scope, runId, templateId, version) {
+      await writeAll(x, [
+        // Aborts the batch (TransactionConflictError) once the template isn't as it was approved.
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT EXISTS (SELECT 1 FROM ${templates} WHERE ${templates.spaceId} = ${scope.spaceId} AND ${templates.environmentId} = ${scope.environmentId} AND ${templates.runId} = ${runId} AND ${templates.id} = ${templateId} AND ${templates.status} = 'approved' AND ${templates.version} = ${version}) AS ok`,
+          ),
+        db.delete(schema.guard),
+      ]);
+    },
     async entriesByUrl(scope, runId, urls) {
       const found: { url: string; entryId: string }[] = [];
       const distinct = [...new Set(urls)];
@@ -330,6 +356,7 @@ export function makeMigrationStore(x: Exec): MigrationStore {
       if (query.after !== undefined) conds.push(gt(pages.id, query.after));
       if (query.stage !== undefined) conds.push(eq(pages.stage, query.stage));
       if (query.templateId !== undefined) conds.push(eq(pages.templateId, query.templateId));
+      if (query.outputScript) conds.push(inArray(pages.outputScript, [...query.outputScript]));
       if (query.unresolvedLinks) conds.push(gt(pages.unresolvedLinks, 0));
       if (query.failed !== undefined) {
         conds.push(query.failed ? isNotNull(pages.error) : isNull(pages.error));
@@ -366,6 +393,22 @@ export function makeMigrationStore(x: Exec): MigrationStore {
         failed += Number(r.failed);
       }
       return { total, fetched, failed, byStage };
+    },
+
+    async countOutputs(scope, runId, templateId, versions) {
+      const list = JSON.stringify(versions);
+      const rows = await db
+        .select({
+          stage: pages.stage,
+          pages: count(),
+          current: sql<number>`coalesce(sum(${pages.outputScript} IN (SELECT value FROM json_each(${list}))), 0)`,
+        })
+        .from(pages)
+        .where(
+          and(ofRun(pages, scope, runId), eq(pages.templateId, templateId), isNotNull(pages.html)),
+        )
+        .groupBy(pages.stage);
+      return rows.map((r) => ({ stage: r.stage, pages: r.pages, current: Number(r.current) }));
     },
 
     async listTemplates(scope, runId) {

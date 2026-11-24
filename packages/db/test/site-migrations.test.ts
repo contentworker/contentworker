@@ -449,6 +449,97 @@ describe('site migrations on D1', () => {
     expect((await store.migrations.getPage(scope, r.id, 'p-00001'))?.outputScript).toBe('abc');
   });
 
+  it('moves pages only under the approval they were read under', async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    const t = template(r.id, { status: 'approved', version: 4 });
+    await store.migrations.replaceTemplates(scope, r.id, [{ template: t, pageIds: [] }], AT);
+    const p = page(r.id, 1, { templateId: t.id, stage: 'validated' });
+    await store.migrations.addPages(scope, r.id, [p]);
+    const move = (at: typeof scope, version: number, stage: MigrationPage['stage']) =>
+      store.withTransaction(async (tx) => {
+        await tx.migrations.movePages(scope, r.id, [{ page: { ...p, stage }, expected: AT }]);
+        await tx.migrations.expectApproved(at, r.id, t.id, version);
+      });
+    // Approved again since, and the template of another environment: nothing moves.
+    await expect(move(scope, 3, 'loaded')).rejects.toThrow(TransactionConflictError);
+    await expect(move({ ...scope, environmentId: 'staging' }, 4, 'loaded')).rejects.toThrow(
+      TransactionConflictError,
+    );
+    await store.migrations.saveTemplate(scope, r.id, { ...t, status: 'authoring' });
+    await expect(move(scope, 4, 'loaded')).rejects.toThrow(TransactionConflictError);
+    expect((await store.migrations.getPage(scope, r.id, p.id))?.stage).toBe('validated');
+    await store.migrations.saveTemplate(scope, r.id, t);
+    await move(scope, 4, 'loaded');
+    expect((await store.migrations.getPage(scope, r.id, p.id))?.stage).toBe('loaded');
+    // The reopening's own unit, ahead of the move: the move's guard sees it.
+    await expect(
+      store.withTransaction(async (tx) => {
+        await tx.migrations.saveTemplate(scope, r.id, { ...t, status: 'authoring' });
+        await tx.migrations.expectApproved(scope, r.id, t.id, 4);
+      }),
+    ).rejects.toThrow(TransactionConflictError);
+    expect((await store.migrations.getTemplate(scope, r.id, t.id))?.status).toBe('approved');
+  });
+
+  it('lists, counts and stamps pages by the version of their output', async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    const html = { key: 'k', sha256: 's', bytes: 1 };
+    const of = (n: number, over: Partial<MigrationPage>) => page(r.id, n, { html, ...over });
+    const many = Array.from({ length: 120 }, (_, i) =>
+      of(100 + i, { templateId: 't1', stage: 'published', outputScript: 'v1' }),
+    );
+    await store.migrations.addPages(scope, r.id, [
+      of(1, { templateId: 't1', stage: 'validated', outputScript: 'v1' }),
+      of(2, { templateId: 't1', stage: 'validated', outputScript: 'v2' }),
+      of(3, { templateId: 't1', stage: 'validated' }),
+      of(4, { templateId: 't1', stage: 'needs-fix', outputScript: 'bare' }),
+      // Not fetched, and another template's.
+      page(r.id, 5, { templateId: 't1', stage: 'clustered' }),
+      of(6, { templateId: 't2', stage: 'validated', outputScript: 'bare' }),
+      ...many,
+    ]);
+    const ids = async (outputScript: string[]) =>
+      (
+        await store.migrations.listPages(scope, r.id, {
+          templateId: 't1',
+          stage: 'validated',
+          outputScript,
+          limit: 10,
+        })
+      ).map((p) => p.id);
+    expect(await ids(['v1', 'bare'])).toEqual(['p-00001']);
+    expect(await ids(['v2'])).toEqual(['p-00002']);
+    const counts = await store.migrations.countOutputs(scope, r.id, 't1', ['v1', 'bare']);
+    expect(Object.fromEntries(counts.map((c) => [c.stage, [c.pages, c.current]]))).toEqual({
+      validated: [3, 1],
+      'needs-fix': [1, 1],
+      published: [120, 120],
+    });
+    expect(
+      await store.migrations.countOutputs({ ...scope, environmentId: 'x' }, r.id, 't1', ['v1']),
+    ).toEqual([]);
+
+    await store.migrations.stampOutputs(
+      { ...scope, environmentId: 'x' },
+      r.id,
+      't1',
+      'bare',
+      'v1',
+      LATER,
+    );
+    await store.withTransaction((tx) =>
+      tx.migrations.stampOutputs(scope, r.id, 't1', 'bare', 'v0', LATER),
+    );
+    const stamped = await store.migrations.getPage(scope, r.id, 'p-00004');
+    expect(stamped).toMatchObject({ outputScript: 'v0', stage: 'needs-fix', updatedAt: LATER });
+    expect((await store.migrations.getPage(scope, r.id, 'p-00006'))?.outputScript).toBe('bare');
+    expect((await store.migrations.getPage(scope, r.id, 'p-00001'))?.outputScript).toBe('v1');
+  });
+
   it('moves pages only while each is as it was read, directly and in a unit', async () => {
     const scope = newScope();
     const r = run();
