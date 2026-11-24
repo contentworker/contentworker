@@ -75,8 +75,10 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
 - **Generated files are regenerated, not edited, and never committed:** the docs and diagram
   themes (`apps/docs/src/styles/theme.css`, `docs/diagrams/themes/ledger-{light,dark}.json`, from
   `packages/design/src/tokens.ts` by `pnpm sync:theme`), the docs embed
-  (`packages/docs/src/generated.ts`, from `docs/*.md`) and the MCP skills embed
-  (`packages/http/src/mcp/skills.generated.ts`, from `packages/http/skills/**`). All are
+  (`packages/docs/src/generated.ts`, from `docs/*.md`), the MCP skills embed
+  (`packages/http/src/mcp/skills.generated.ts`, from `packages/http/skills/**`) and the
+  import-script sandbox runtime (`packages/import-script-runtime/src/bundle.generated.ts`, from
+  `packages/import-script-runtime/src/**`). All are
   gitignored: `pnpm install` writes them, and turbo's `generate` task rewrites them before every
   `check-types`, `test`, `build` and `dev` (`pnpm generate` by hand).
 - **Durable Object migration tags only ever append** (`apps/engine/wrangler.jsonc` and
