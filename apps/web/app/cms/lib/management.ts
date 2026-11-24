@@ -53,6 +53,12 @@ import type {
   Menu,
   MenuItemInput,
   MenuLink,
+  MigrationArtifact,
+  MigrationPage,
+  MigrationPageStage,
+  MigrationRun,
+  MigrationSourceInput,
+  MigrationTemplate,
   Promotion,
   PromotionStatus,
   Redirect,
@@ -1357,6 +1363,64 @@ export interface ImportResult {
   readonly updated: number;
   readonly skipped: number;
   readonly failed: readonly { externalId: string; message: string }[];
+}
+
+// --- site migration ---------------------------------------------------------
+// As the Management API sends them: a stored file by its hash and size, never its bytes or where
+// it lives, and no structure fingerprints (clustering's working data).
+
+/** A stored file a migration record names (a page's HTML, a script's output), by hash and size. */
+export type MigrationFile = Omit<MigrationArtifact, 'key'>;
+
+export type MigrationPageView = Omit<MigrationPage, 'html' | 'output' | 'fingerprint'> & {
+  readonly html: MigrationFile | null;
+  readonly output: MigrationFile | null;
+};
+
+export type MigrationTemplateView = Omit<MigrationTemplate, 'script' | 'fingerprint'> & {
+  readonly script: MigrationFile | null;
+};
+
+/** A run's pages counted: all of them, those with HTML, those whose last step failed, by stage. */
+export interface MigrationPageCounts {
+  readonly total: number;
+  readonly fetched: number;
+  readonly failed: number;
+  readonly byStage: Readonly<Partial<Record<MigrationPageStage, number>>>;
+}
+
+/** A run, its page counts and its templates (largest first): `GET …/migrations/runs/:id`. */
+export interface MigrationRunView {
+  readonly run: MigrationRun;
+  readonly pages: MigrationPageCounts;
+  readonly templates: readonly MigrationTemplateView[];
+}
+
+export interface MigrationRunInput {
+  readonly name?: string;
+  readonly source: MigrationSourceInput;
+}
+
+/** One fetch batch's outcome; `more` while pages still wait, `unavailable` when nothing ran. */
+export interface MigrationFetchResult {
+  readonly fetched: number;
+  readonly failed: number;
+  readonly added: number;
+  readonly more: boolean;
+  readonly unavailable?: string;
+}
+
+export interface MigrationPageQuery {
+  readonly stage?: MigrationPageStage;
+  readonly template?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** One page of a run's pages, in discovery order; `nextCursor` only while more follow. */
+export interface MigrationPageList {
+  readonly items: MigrationPageView[];
+  readonly nextCursor?: string;
 }
 
 /** The body both space export calls take: the export file, and what to do with it. */
@@ -2693,6 +2757,64 @@ export function createManagementClient(
     }> {
       return req('POST', `${mgmt}/imports/space-export`, input, undefined, LARGE_LIMIT);
     },
+    // --- site migration (runs, and the steps before template authoring) ------
+    /** The newest runs, at most `limit` (the API's default 25, its most 100). */
+    async listMigrationRuns(limit?: number): Promise<MigrationRun[]> {
+      const r = await req<{ items: MigrationRun[] }>(
+        'GET',
+        `${mgmt}/migrations/runs${queryString({ limit })}`,
+      );
+      return r.items;
+    },
+    /** Creates a run (migration:run). Nothing is fetched until its inventory. */
+    createMigrationRun(input: MigrationRunInput): Promise<MigrationRun> {
+      return req('POST', `${mgmt}/migrations/runs`, input);
+    },
+    getMigrationRun(id: string): Promise<MigrationRunView> {
+      return req('GET', `${mgmt}/migrations/runs/${encodeURIComponent(id)}`);
+    },
+    /**
+     * Lists the source's pages into the run. A sitemap walk reads many files, so it has a batch's
+     * time. Safe to repeat: only new URLs are added.
+     */
+    inventoryMigrationRun(id: string, signal?: AbortSignal): Promise<MigrationRun> {
+      return req(
+        'POST',
+        `${mgmt}/migrations/runs/${encodeURIComponent(id)}/inventory`,
+        undefined,
+        signal,
+        BATCH_LIMIT,
+      );
+    },
+    /** Fetches one bounded batch of the pages not fetched yet; call again while `more`. */
+    fetchMigrationPages(
+      id: string,
+      opts: { readonly limit?: number } = {},
+      signal?: AbortSignal,
+    ): Promise<MigrationFetchResult> {
+      return req(
+        'POST',
+        `${mgmt}/migrations/runs/${encodeURIComponent(id)}/fetch`,
+        opts,
+        signal,
+        BATCH_LIMIT,
+      );
+    },
+    /** Groups the fetched pages into templates, replacing an earlier grouping whole. */
+    clusterMigrationRun(id: string, signal?: AbortSignal): Promise<MigrationRunView> {
+      return req(
+        'POST',
+        `${mgmt}/migrations/runs/${encodeURIComponent(id)}/cluster`,
+        {},
+        signal,
+        BATCH_LIMIT,
+      );
+    },
+    listMigrationPages(id: string, query: MigrationPageQuery = {}): Promise<MigrationPageList> {
+      const qs = queryString(query);
+      return req('GET', `${mgmt}/migrations/runs/${encodeURIComponent(id)}/pages${qs}`);
+    },
+
     /**
      * Who the session is in this space: its scopes, and the bulk jobs over entries its role may
      * start (`bulkJobs`, the api's own rule). A person's role is per space, so the admin asks

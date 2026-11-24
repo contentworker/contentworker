@@ -19,6 +19,7 @@ import { useTheme } from '~/lib/theme';
 import { useClient } from '../../lib/client-context';
 import { useFeatures } from '../../lib/features';
 import type { PreviewEntry } from '../../lib/management';
+import { useSpaceScopes } from '../../lib/space-access';
 import { entryTitle } from './Breadcrumbs';
 import { openKeyboardShortcuts } from './KeyboardShortcuts';
 import { type NavItem, SETTINGS_SECTIONS, visibleNav } from './nav';
@@ -74,13 +75,14 @@ export const openCommandPalette = () => window.dispatchEvent(new Event(OPEN_EVEN
 export function CommandPalette() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { client, conn, signOut } = useClient();
+  const { client, conn, signOut, ready } = useClient();
   const { resolved: theme, setChoice } = useTheme();
   const toggle = useCallback(
     () => setChoice(theme === 'dark' ? 'light' : 'dark'),
     [setChoice, theme],
   );
   const features = useFeatures();
+  const scopes = useSpaceScopes(ready);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -231,13 +233,13 @@ export function CommandPalette() {
       };
     });
     return [
-      ...navItems(visibleNav(features)),
+      ...navItems(visibleNav(features, scopes)),
       ...actions,
       ...SETTINGS_ITEMS,
       ...typeItems,
       ...entryItems,
     ];
-  }, [types, entries, conn.locale, typeId, theme, toggle, signOut, features]);
+  }, [types, entries, conn.locale, typeId, theme, toggle, signOut, features, scopes]);
 
   // Settings sections are long-tail destinations: listed only once you type.
   const filtered = useMemo(() => {

@@ -260,7 +260,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   `packages/ui/src/sidebar.tsx`. Full height on its own ground, with a rule. From the top: the brand
   row on the header's line, whose mark is the `SidebarTrigger` (named "Sidebar", ⌘\ or Ctrl+\);
   the day's work (Overview, Content, Approvals when on, Releases) with no label; then groups
-  labelled as captions: **Build** (Workflows, Blocks), **Library** (Assets, Taxonomy) and **Settings**
+  labelled as captions: **Build** (Workflows, Blocks, Migrations), **Library** (Assets, Taxonomy) and **Settings**
   (Access, Automation, Extensions, Workspace: Settings' own section groups, each opening its first
   section and reading as current on any of its sections); the account at its foot; `SidebarRail`
   on its edge (for a mouse; on touch the mark is the toggle). The page you're on is
@@ -292,7 +292,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   key), Connection, Keyboard shortcuts (with a fine pointer), the theme (Light, Dark, Match system)
   and Sign out. Its accessible name is that name plus "account menu".
 - **Shortcuts** are written for the device (⌘ on Apple, Ctrl elsewhere). G then a letter goes to a
-  page (H Overview, C Content, A Approvals, R Releases, W Workflows, B Blocks, M Assets, T
+  page (H Overview, C Content, A Approvals, R Releases, W Workflows, B Blocks, I Migrations, M Assets, T
   Taxonomy, S Settings); ? opens the list of every shortcut (a sheet, with whatever the page
   registers); ⌘K is the command palette; ⌘J Coworker when it is on; ⌘\ the sidebar. Single keys go through
   `plainKeyAllowed` (not with a modifier, while typing, or with a dialog, menu or inline confirm
@@ -1136,6 +1136,27 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   choices), each slot and the blocks it takes, where it may go, its former ids, and an Entries
   figure ("at least" when the count stopped short). No catalog yet is `Empty` with a minimal
   `contentworker.blocks.json` in a `CodeBlock` and the dry-run command, both to copy. A block whose manifest names an asset thumbnail (`{ assetId }`) leads its row with that picture in place of the `Boxes` tile (40px square, `rounded-lg`, edged as the tile is, `alt=""`); a `{ url }` thumbnail isn't drawn (the admin's `img-src` takes no other origin), and a missing asset or a failed load is the tile.
+- **Migrations** (`cms/routes/Migrations.tsx`, `cms/routes/MigrationRun.tsx`,
+  `cms/components/migrations/`): a website brought in as structured content, a run at a time. It
+  is the first page only some roles open: the nav, the palette and its G-letter list it, once the
+  role in the space is known, only for a role holding one of its `NavItem.scopes`
+  (`migration:run` or `content:manage`), and the page says so in place to anyone else. **The
+  list** is `PageHeader` with New migration (with `migration:run`), then the runs as a catalog:
+  the source's kind as the tile, the name linked over its source URL in mono, and its status
+  (`bad` once failed); its pages are counted on its own page, never by a read a row. No runs is
+  `Empty` saying what a migration does, with Migrate a website. **New migration** is a form sheet
+  (Sitemap or Link crawl as a `Segmented`, the URL in mono, globs one a line); the API's 422 lands
+  beside the field it names and takes focus there. **A run** is its source and status, Pages by
+  stage as figures, then **Steps**: Inventory, Fetch pages and Cluster as a catalog, the step the
+  run waits on the primary, one it can't take now disabled with why under it (`runSteps` in
+  `cms/lib/migrations.ts`, the API's rule). Fetch until done asks again while the API says
+  `more`, with the bulk job's `Progress` and Stop. A source site that can't be read now (503
+  `site_unavailable`) is not the run's fault: a default Alert, calm, with Try again, never a
+  destructive one; a step that lost a race (409 `retryable`) is sent again without a word.
+  Without `migration:run` the steps show and offer nothing. **Templates** (catalog rows with
+  their status and pages, and Show pages) and **Pages** (a table stacked into cards on a phone,
+  filtered on the server by stage and template, with Load more) close the page. A page's HTML is
+  never shown: each page is its live URL, opening in a new tab.
 
 ## Screens that change shape
 

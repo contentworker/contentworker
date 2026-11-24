@@ -23,11 +23,16 @@ The whole run is built, on every surface:
   template, and `migration-triage` through scores and failures.
 - `cma.migrations` in the [Management SDK](/guides/sdks/) and `contentworker migrate` in the
   [command-line tool](/guides/cli/).
+- **Migrations** in the admin (under Build, for roles that hold `migration:run` or
+  `content:manage`): the environment's runs, a form to start one, and each run's steps, templates
+  and pages. **Fetch until done** keeps fetching batches until no pages are waiting, and can be
+  stopped at any point.
 
 A small site can be taken through step by step, each call a bounded batch. A large one is handed to
 the engine with `start`, which runs every step in the background and waits for people only where
-a person decides: approving each template, and the go-ahead to publish. An admin screen for runs is
-planned.
+a person decides: approving each template, and the go-ahead to publish. The admin screen follows
+runs and fetches their pages; authoring, approving, loading and publishing from it are planned, so
+for now those go through the API, MCP, the SDK or the command line.
 
 ## Before you start
 
