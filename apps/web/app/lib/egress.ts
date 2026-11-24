@@ -12,65 +12,14 @@
  * address isn't caught: `global_fetch_strictly_public` is the backstop for that.
  */
 
+import { isInternalHostname, isSpecialPurposeAddress } from '@contentworker/domain';
+
 /** A fetch the policy refused, before or during the request. */
 export class EgressRefused extends Error {}
 
-/**
- * Whether `host` is a private, loopback, link-local, CGNAT, multicast or otherwise special
- * address, or one that wraps an IPv4 address that may be (NAT64, 6to4, Teredo, IPv4-mapped or
- * -compatible). Brackets around an IPv6 literal are ignored.
- */
-export function isPrivateAddress(host: string): boolean {
-  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 192 && b === 0) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      // Documentation ranges (192.0.2.0/24 is in 192.0 above).
-      (a === 198 && b === 51 && Number(v4[3]) === 100) ||
-      (a === 203 && b === 0 && Number(v4[3]) === 113) ||
-      // The 6to4 relay anycast.
-      (a === 192 && b === 88 && Number(v4[3]) === 99) ||
-      a >= 224
-    );
-  }
-  if (!h.includes(':')) return false;
-  if (h === '::' || h === '::1') return true;
-  // IPv4-mapped (::ffff:a.b.c.d or ::ffff:hhhh:hhhh) is checked as the IPv4 address.
-  const mapped = /^::ffff:(.+)$/.exec(h)?.[1];
-  if (mapped) {
-    if (mapped.includes('.')) return isPrivateAddress(mapped);
-    const [hi, lo] = mapped.split(':').map((x) => Number.parseInt(x, 16));
-    if (hi !== undefined && lo !== undefined)
-      return isPrivateAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
-  }
-  // NAT64 (64:ff9b::/96, 64:ff9b:1::/48) and 6to4 (2002::/16) carry an IPv4 address that may be a
-  // private one, so they are refused outright, as is the documentation range (2001:db8::/32).
-  if (/^(64:ff9b:|2002:|2001:db8:)/.test(h)) return true;
-  // Teredo (2001::/32) wraps one too, and so does an IPv4-compatible address (`::a.b.c.d`, which
-  // URLs write as `::hhhh:hhhh`).
-  if (/^2001:0?:/.test(h) || /^::[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h)) return true;
-  return /^(fc|fd|fe8|fe9|fea|feb|ff)/.test(h);
-}
-
-/** Host names that only resolve inside a network, and wildcard-DNS services that point anywhere. */
-const INTERNAL_NAME =
-  /(^|\.)(localhost|local|internal|intranet|lan|home\.arpa|metadata\.google\.internal|nip\.io|sslip\.io|xip\.io|localtest\.me)$/i;
-
-/** Whether `host` resolves only inside a network (or a single label), or to whatever its labels say. */
-export const isInternalName = (host: string) => {
-  const h = host.replace(/\.$/, '');
-  return INTERNAL_NAME.test(h) || !h.includes('.');
-};
+/** Whether `host` resolves only inside a network (or is a single label), or to whatever its labels say. */
+export const isInternalName = (host: string) =>
+  isInternalHostname(host) || !host.replace(/\.+$/, '').includes('.');
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 
@@ -102,7 +51,9 @@ export function egressProblem(url: string | URL, { loopback = false }: EgressOpt
   // Any IP literal: public services are reached by name, and a literal is how the private ranges
   // (and the ones that wrap them) are written.
   if (host.startsWith('[') || /^\d{1,3}(\.\d{1,3}){3}$/.test(host))
-    return isPrivateAddress(host) ? `a private address (${host})` : `an IP address (${host})`;
+    return isSpecialPurposeAddress(host)
+      ? `a private address (${host})`
+      : `an IP address (${host})`;
   if (isInternalName(host)) return `an internal name (${host})`;
   return null;
 }

@@ -39,9 +39,10 @@ In the admin, **Send events from every environment** is `allEnvironments`: off, 
 the environment you're viewing. The table's **Environments** column shows each webhook's scope
 (**All environments**, or the environment's id), and **Edit** can change it.
 
-The URL must be a public `http` or `https` address (use `https`). Loopback, link-local and private
-addresses, and `localhost`, `.local` and `.internal` names, are refused with a 422 on create and
-update.
+The URL must be a public `http` or `https` address (use `https`). Loopback, link-local, private and
+other special-purpose addresses (documentation, benchmarking, multicast, reserved, and IPv6 forms
+that wrap one), and `localhost` and local-only names such as `.local`, `.internal` and `.lan`
+(with or without a trailing dot), are refused with a 422 on create and update.
 
 ### Which environments a webhook hears
 
