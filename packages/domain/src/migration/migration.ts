@@ -168,7 +168,11 @@ export interface MigrationPage {
   readonly updatedAt: string;
 }
 
-export type MigrationTemplateStatus = 'pending' | 'authoring' | 'approved';
+/**
+ * `approving`: an approval holds the template while it writes the content type; authoring writes
+ * are refused until it finishes or lets go.
+ */
+export type MigrationTemplateStatus = 'pending' | 'authoring' | 'approving' | 'approved';
 
 /** Pages that share a structure, and so one content type and one import script. */
 export interface MigrationTemplate {

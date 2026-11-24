@@ -261,7 +261,9 @@ export async function tryImportScript(
       .slice(0, MAX_TRY_PROBLEMS)
       .map((p) => clip(p, MAX_ERROR_LENGTH)),
   };
-  await writeTemplate(ctx, scope, input, (current) => ({ ...current, lastTry: summary }));
+  // Its own column, outside the run's compare-and-set: a summary isn't something reviewed (it isn't
+  // in the digest), and a busy agent trying again and again mustn't starve an approval's writes.
+  await ctx.store.migrations.saveTemplateTry(scope, run.id, template.id, summary);
   return { results, summary };
 }
 
@@ -294,8 +296,14 @@ export function templateReviewDigest(template: MigrationTemplate): string {
  *
  * A type of the proposal's apiId that no template of the run holds is someone's own model, and is
  * refused rather than revised; the save is held to the type's version as read, so one created or
- * changed meanwhile is refused too. The template claims the apiId first, so an approval that
- * stopped part-way (the type saved, the template not yet approved) finishes on a second call.
+ * changed meanwhile is refused too.
+ *
+ * The approval holds the template while it writes the type: one write checks the digest again and
+ * moves the template to `approving` with the apiId claimed, which refuses every authoring write
+ * (a proposal or script committed after that can't slip under the approval), and the final write
+ * approves it only while that claim is still the one this call made. A failed type save releases
+ * the claim. A claim left by an approval that stopped part-way (a crash) can be taken over once it
+ * is {@link APPROVAL_LEASE_MS} old, and a second call then finishes it.
  */
 export async function approveTemplate(
   ctx: AppContext,
@@ -313,11 +321,11 @@ export async function approveTemplate(
   if (template.status === 'approved') return template;
   if (!template.proposal) throw new InvalidStateError('The template has no proposed model');
   if (!template.script) throw new InvalidStateError('The template has no import script');
-  if (templateReviewDigest(template) !== input.reviewed) {
-    throw new ConflictError(
+  const stale = () =>
+    new ConflictError(
       'The template’s model or script changed after it was reviewed: review it again',
     );
-  }
+  if (templateReviewDigest(template) !== input.reviewed) throw stale();
   const proposal = template.proposal;
   const apiId = proposal.apiId;
   const existing = await ctx.store.contentTypes.get(scope, apiId);
@@ -331,27 +339,46 @@ export async function approveTemplate(
       );
     }
   }
-  // Claimed before the type is written, so a retry knows the type is this run's.
-  if (template.contentTypeId !== apiId) {
-    await writeTemplate(ctx, scope, ref, (current) => {
-      assertAuthorable(current);
-      return { ...current, contentTypeId: apiId };
-    });
-  }
-  await createContentType(ctx, principal, scope, proposal, {
-    expectedVersion: existing?.version ?? 0,
-  });
-  await publishContentType(ctx, scope, apiId);
-  return writeTemplate(ctx, scope, ref, (current, at) => {
+  const before = template.contentTypeId;
+  const claim = await writeTemplate(ctx, scope, ref, (current, at) => {
     if (current.status === 'approved') return current;
-    if (templateReviewDigest(current) !== input.reviewed) {
-      throw new ConflictError(
-        'The template’s model or script changed while it was approved: review it again',
-      );
+    if (templateReviewDigest(current) !== input.reviewed) throw stale();
+    if (
+      current.status === 'approving' &&
+      Date.parse(at) - Date.parse(current.updatedAt) < APPROVAL_LEASE_MS
+    ) {
+      throw new ConflictError('The template is being approved; try again in a moment');
+    }
+    return { ...current, status: 'approving', contentTypeId: apiId, updatedAt: at };
+  });
+  if (claim.status === 'approved') return claim;
+  const ours = (current: MigrationTemplate) =>
+    current.status === 'approving' && current.updatedAt === claim.updatedAt;
+  try {
+    await createContentType(ctx, principal, scope, proposal, {
+      expectedVersion: existing?.version ?? 0,
+    });
+    await publishContentType(ctx, scope, apiId);
+  } catch (err) {
+    // Released, so the template can be authored and approved again; the apiId goes back to what
+    // it was, so a type this call never wrote isn't left looking like the run's.
+    await writeTemplate(ctx, scope, ref, (current, at) =>
+      ours(current)
+        ? { ...current, status: 'authoring', contentTypeId: before, updatedAt: at }
+        : current,
+    ).catch(() => undefined);
+    throw err;
+  }
+  return writeTemplate(ctx, scope, ref, (current, at) => {
+    if (!ours(current)) {
+      throw new ConflictError('The template’s approval was taken over: review it again');
     }
     return { ...current, status: 'approved', contentTypeId: apiId, approvedBy, updatedAt: at };
   });
 }
+
+/** How long an approval holds its template before another may take it over. */
+export const APPROVAL_LEASE_MS = 5 * 60_000;
 
 // --- transform --------------------------------------------------------------
 
@@ -611,6 +638,9 @@ async function templateModel(
 function assertAuthorable(template: MigrationTemplate): void {
   if (template.status === 'approved') {
     throw new InvalidStateError('The template is approved: its model and script are settled');
+  }
+  if (template.status === 'approving') {
+    throw new InvalidStateError('The template is being approved: its model and script are held');
   }
 }
 

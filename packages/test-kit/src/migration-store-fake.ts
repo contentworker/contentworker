@@ -3,6 +3,7 @@ import {
   type MigrationPage,
   type MigrationRun,
   type MigrationTemplate,
+  type MigrationTrySummary,
   type Scope,
 } from '@contentworker/domain';
 import {
@@ -206,6 +207,17 @@ export class InMemoryMigrationStore implements MigrationStore {
     // As D1: an id the run doesn't hold is skipped.
     if (!this.templateData.has(key)) return;
     this.templateData.set(key, clone({ ...template, runId }));
+  }
+
+  async saveTemplateTry(
+    scope: Scope,
+    runId: string,
+    templateId: string,
+    lastTry: MigrationTrySummary,
+  ): Promise<void> {
+    const key = `${scopeKey(scope)}::${runId}::${templateId}`;
+    const current = this.templateData.get(key);
+    if (current) this.templateData.set(key, clone({ ...current, lastTry }));
   }
 
   async replaceTemplates(

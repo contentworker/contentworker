@@ -175,9 +175,18 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
     state: TemplateAgentStart,
   ): TemplateAgentWiring | Promise<TemplateAgentWiring>;
 
-  /** Starts the agent; false (and nothing changed) when it has been started already. */
+  /**
+   * Starts the agent; false when it has been started already. A running agent that has lost its
+   * alarm (an alarm that couldn't set the next) gets one again, so starting is also a repair.
+   */
   async start(input: TemplateAgentStart): Promise<{ started: boolean }> {
-    if (await this.ctx.storage.get<StoredMeta>(META)) return { started: false };
+    const meta = await this.ctx.storage.get<StoredMeta>(META);
+    if (meta) {
+      if (meta.status === 'running' && (await this.ctx.storage.getAlarm()) === null) {
+        await this.ctx.storage.setAlarm(Date.now());
+      }
+      return { started: false };
+    }
     await this.save(newTemplateAgentState(input), 0, 0);
     await this.ctx.storage.setAlarm(Date.now());
     return { started: true };
@@ -205,6 +214,8 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
     }
     let state: TemplateAgentState = { ...meta, messages: [] };
     let failures = meta.failures;
+    // Messages in storage now: grows with each turn saved, so a failure after a saved turn keeps it.
+    let savedCount = meta.messageCount;
     let wired: TemplateAgentWiring | undefined;
     // Turns stop starting past this, well inside an alarm's 15 minutes of wall time: a turn is a
     // model call (90 s at most) and its tools (a try is a few sandbox runs).
@@ -217,10 +228,11 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
         i < TURNS_PER_ALARM && state.status === 'running' && Date.now() < deadline;
         i++
       ) {
-        const before = state.messages.length;
-        state = await templateAgentTurn(wired.ctx, wired.deps, state);
+        const next = await templateAgentTurn(wired.ctx, wired.deps, state);
+        await this.save(next, savedCount, 0);
+        state = next;
         failures = 0;
-        await this.save(state, before, failures);
+        savedCount = next.messages.length;
         if (state.retryAfterSeconds !== undefined) break;
       }
     } catch (err) {
@@ -234,21 +246,29 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
       if (failures >= MAX_FAILURES) {
         state = { ...state, status: 'stopped', summary: 'Stopped after repeated errors' };
       }
-      await this.saveMeta(state, meta.messageCount, failures);
+      try {
+        // The turns this alarm saved stay: the meta names every message in storage.
+        await this.saveMeta(state, savedCount, failures);
+      } catch (e) {
+        console.error('migration template agent: saving its state failed', {
+          templateId: meta.templateId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     } finally {
-      await wired?.close();
+      await wired?.close().catch(() => undefined);
+      // Always a next alarm: while it runs, the next turn (with backoff after a failure); once it
+      // has finished, the one that deletes its conversation.
+      const wait =
+        state.status !== 'running'
+          ? RETAIN_MS
+          : state.retryAfterSeconds !== undefined
+            ? state.retryAfterSeconds * 1000
+            : failures > 0
+              ? 30_000 * failures
+              : 0;
+      await this.ctx.storage.setAlarm(Date.now() + wait);
     }
-    if (state.status !== 'running') {
-      await this.ctx.storage.setAlarm(Date.now() + RETAIN_MS);
-      return;
-    }
-    const wait =
-      state.retryAfterSeconds !== undefined
-        ? state.retryAfterSeconds * 1000
-        : failures > 0
-          ? 30_000 * failures
-          : 0;
-    await this.ctx.storage.setAlarm(Date.now() + wait);
   }
 
   /** Writes only the meta: the messages it names are those already stored. */

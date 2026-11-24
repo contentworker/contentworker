@@ -255,6 +255,13 @@ describe('import scripts', () => {
     expect(tried.summary).toMatchObject({ pages: 3, ok: 3, passed: 3, meanScore: 1 });
     const template = await store.migrations.getTemplate(scope, ref.runId, ref.templateId);
     expect(template?.lastTry).toEqual(tried.summary);
+    // Outside the run's compare-and-set: a try moves neither the run nor the template's version.
+    const run = await store.migrations.getRun(scope, ref.runId);
+    await tryImportScript(ctx, deps, scope, ref);
+    expect((await store.migrations.getRun(scope, ref.runId))?.version).toBe(run?.version);
+    expect((await store.migrations.getTemplate(scope, ref.runId, ref.templateId))?.version).toBe(
+      template?.version,
+    );
     expect(await store.migrations.listPages(scope, ref.runId, { limit: 100 })).toEqual(before);
   });
 
@@ -337,6 +344,82 @@ describe('approving a template', () => {
     const again = await reviewed(ctx, ref);
     await tryImportScript(ctx, deps, scope, ref);
     expect((await approveTemplate(ctx, editor, scope, again)).status).toBe('approved');
+  });
+
+  it('holds the template while it writes the type: a proposal can’t slip in', async () => {
+    const { ctx, deps, store, ref } = await harness();
+    await proposeTemplateModel(ctx, scope, { ...ref, model: MODEL });
+    await setImportScript(ctx, deps, scope, { ...ref, script: SCRIPT });
+    const read = await reviewed(ctx, ref);
+    // Between the claim and the final write (the type's publish is the next unit of work), the
+    // agent proposes another model.
+    const unit = store.withTransaction.bind(store);
+    let units = 0;
+    let slipped: unknown;
+    store.withTransaction = async (fn) => {
+      units += 1;
+      if (units === 2) {
+        slipped = await proposeTemplateModel(ctx, scope, {
+          ...ref,
+          model: { ...MODEL, apiId: 'other', name: 'Other' },
+        }).catch((err: unknown) => err);
+      }
+      return unit(fn);
+    };
+    const approved = await approveTemplate(ctx, editor, scope, read);
+    expect(slipped).toBeInstanceOf(InvalidStateError);
+    expect(approved).toMatchObject({ status: 'approved', proposal: { apiId: 'article' } });
+    expect(await store.contentTypes.get(scope, 'other')).toBeNull();
+  });
+
+  it('lets go when the type can’t be saved', async () => {
+    const { ctx, deps, store, ref } = await harness();
+    const { createContentType } = await import('../src/index');
+    await proposeTemplateModel(ctx, scope, { ...ref, model: MODEL });
+    await setImportScript(ctx, deps, scope, { ...ref, script: SCRIPT });
+    const read = await reviewed(ctx, ref);
+    // Someone creates "article" just after the approval's read: the save is refused at its version.
+    const get = store.contentTypes.get.bind(store.contentTypes);
+    let reads = 0;
+    store.contentTypes.get = async (sc, apiId) => {
+      const found = await get(sc, apiId);
+      reads += 1;
+      if (reads === 1) {
+        await createContentType(ctx, editor, scope, { ...MODEL, fields: MODEL.fields.slice(0, 2) });
+      }
+      return found;
+    };
+    await expect(approveTemplate(ctx, editor, scope, read)).rejects.toThrow(ConflictError);
+    store.contentTypes.get = get;
+    const released = await store.migrations.getTemplate(scope, ref.runId, ref.templateId);
+    expect(released).toMatchObject({ status: 'authoring', contentTypeId: null });
+  });
+
+  it('refuses a second approval, and authoring, while one holds the template', async () => {
+    const { ctx, deps, store, ref, clock } = await harness();
+    await proposeTemplateModel(ctx, scope, { ...ref, model: MODEL });
+    await setImportScript(ctx, deps, scope, { ...ref, script: SCRIPT });
+    const held = (await store.migrations.getTemplate(
+      scope,
+      ref.runId,
+      ref.templateId,
+    )) as NonNullable<Awaited<ReturnType<typeof store.migrations.getTemplate>>>;
+    await store.migrations.saveTemplate(scope, ref.runId, {
+      ...held,
+      status: 'approving',
+      updatedAt: clock.now().toISOString(),
+    });
+    await expect(approveTemplate(ctx, editor, scope, await reviewed(ctx, ref))).rejects.toThrow(
+      /being approved/,
+    );
+    await expect(setImportScript(ctx, deps, scope, { ...ref, script: SCRIPT })).rejects.toThrow(
+      /being approved/,
+    );
+    // Past its lease (an approval that stopped part-way), another call takes it over and finishes.
+    clock.advance(6 * 60_000);
+    expect((await approveTemplate(ctx, editor, scope, await reviewed(ctx, ref))).status).toBe(
+      'approved',
+    );
   });
 
   it('needs an approver it can record', async () => {

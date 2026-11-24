@@ -1740,7 +1740,7 @@ it as a `MigrationArtifact` (`{ key, sha256, bytes }`).
   the links in its entry left as hyperlinks for the relink pass, and `outputScript` is the SHA-256
   of the script version its last transform ran.
 - `MigrationTemplate`: pages that share a structure. It holds a `label`, a `status` (`pending`,
-  `authoring` or `approved`), a `pageCount`, up to three `samplePageIds` spread across its pages,
+  `authoring`, `approving` while an approval writes its type, or `approved`), a `pageCount`, up to three `samplePageIds` spread across its pages,
   and the `fingerprint` the pages matched. It also holds the `contentTypeId` and import `script`
   artifact once they are chosen, the `proposal` (the content type its pages are proposed to
   become, a `ContentTypeDraft`) and `lastTry` (`MigrationTrySummary`: the script tried, pages
@@ -1827,14 +1827,19 @@ two at a time.
 - `tryImportScript` runs the stored script (or one given) on the sample pages (or up to five
   pages of the template), checks each output's shape and its fit to the template's type (the
   approved one, else the proposal: no unknown fields, blocks of the blocks field's variants), and
-  scores it. Only the summary is kept, as `lastTry`.
+  scores it. Only the summary is kept, as `lastTry`, in its own column outside the run's
+  compare-and-set, so a busy agent's tries never make an approval lose its race.
 - `approveTemplate` needs `content:manage` and `reviewed`, the `templateReviewDigest` (SHA-256 of
   the proposal and the script version) of the template as the reviewer read it: a template whose
-  proposal or script changed since is refused (`ConflictError`). It claims the proposal's apiId on
-  the template, creates (or revises) the content type as the caller, held to the type's version as
-  read, and publishes it, then moves the template to `approved` with `approvedBy`, the caller as a
+  proposal or script changed since is refused (`ConflictError`). It checks the digest again in
+  the write that claims the template (`approving`, the proposal's apiId), which refuses every
+  authoring write until it finishes; creates (or revises) the content type as the caller, held to
+  the type's version as read, and publishes it; then moves the template to `approved` with
+  `approvedBy`, the caller as a
   `MigrationActor` (`jobStarterOf`). A type of that apiId that no template of the run holds is
-  refused (`ConflictError`). An approved template's model and script can't be changed.
+  refused (`ConflictError`). A failed type save releases the claim (back to `authoring`), and a
+  claim older than `APPROVAL_LEASE_MS` (5 minutes) can be taken over and finished. An approved
+  template's model and script can't be changed.
 - `transformTemplatePages` runs an approved template's script on up to 50 of its pages after a
   cursor. Each output's JSON is stored as it came back, with `output.sha256` its hash, scored, and
   the page moves to `validated` or `needs-fix` with its error cleared. A script failure or an
@@ -1849,7 +1854,11 @@ per step → `clusterPages` → one template agent per template not approved →
 `waitForEvent` on `template-approved-<templateId>` (14 days; Workflows event types take only
 letters, digits, `-` and `_`) → its transforms a batch per step, then its load and redirects → one
 relink pass → `waitForEvent` on `publish-approved` → publish. Approved templates are processed one
-at a time. Agents start for the 20 largest templates (`MIGRATION_AGENTS_PER_RUN`) and the driver
+at a time. Every loop takes the use-case's largest batch, so a run of `MIGRATION_MAX_PAGES` takes
+under 1,500 steps, inside Workflows' 10,000 per instance on Workers Paid (1,024 on Workers Free,
+which fits runs of a few thousand pages; `step.sleep` doesn't count). An approval sent before the
+driver reaches its wait is buffered by Workflows. A failure is recorded on the run unless it is
+already terminal; a record that keeps losing its race is left to the step's retries. Agents start for the 20 largest templates (`MIGRATION_AGENTS_PER_RUN`) and the driver
 takes the 50 largest through (`MIGRATION_DRIVEN_TEMPLATES`); the rest end `not-driven`. The load, relink, redirect and publish steps call
 `loadTemplatePages`, `relinkMigratedPages`, `importMigrationRedirects` and `publishMigration` as
 the step's principal, with `actingAs(ctx, principal)` as their context. An approval event is a
@@ -1870,7 +1879,9 @@ clipped) and script outputs reach the model fenced by `wrapUntrusted`. Each turn
 `generateWithBudget` on the background AI window, starting on the `balanced` tier and moving to
 `flagship` after three tries that don't all pass. A run stops at 30 turns or 600,000 tokens. The
 object takes up to three turns per alarm (none started past five minutes), keeps each message
-under its own storage key, stops after five failed alarms in a row, and deletes its storage 30 days
+under its own storage key (a failed turn keeps the turns before it), always sets its next alarm,
+with backoff after a failure, stops after five failed alarms in a row, gets its alarm back when
+started again, and deletes its storage 30 days
 after it finishes. A try's problems, the page URL and every output reach the model inside the
 fence; only a try's counts are outside it.
 

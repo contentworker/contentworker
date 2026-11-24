@@ -1,4 +1,9 @@
-import { env, introspectWorkflowInstance, runDurableObjectAlarm } from 'cloudflare:test';
+import {
+  env,
+  introspectWorkflowInstance,
+  runDurableObjectAlarm,
+  runInDurableObject,
+} from 'cloudflare:test';
 import {
   type AppContext,
   approveTemplate,
@@ -243,5 +248,75 @@ describe('MigrationTemplateAgent', () => {
     expect(await runDurableObjectAlarm(stub)).toBe(true);
     expect(await stub.status()).toBeNull();
     expect(await runDurableObjectAlarm(stub)).toBe(false);
+  });
+
+  it('keeps a turn it saved when a later turn of the same alarm fails, and always sets the next alarm', async () => {
+    const { ctx, scope } = context();
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: O } });
+    const deps = {
+      source: migrationTestState.source as FakeSiteSource,
+      blob: migrationTestState.blob as FakeBlobStore,
+    };
+    await inventorySite(ctx, deps, scope, run.id);
+    while ((await fetchSourcePages(ctx, deps, scope, run.id)).more) {}
+    const { templates } = await clusterPages(ctx, scope, run.id);
+    const template = templates[0];
+    if (!template) throw new Error('no template');
+    // Turn 1 answers; turn 2's model call fails; turn 3 (the next alarm) sees turn 1.
+    const requests: GenerateRequest[] = [];
+    let calls = 0;
+    migrationTestState.ai = {
+      async generate(req) {
+        requests.push(req);
+        calls += 1;
+        if (calls === 2) throw new Error('the model fell over');
+        if (calls === 1) {
+          return {
+            text: '',
+            toolCalls: [{ id: 'k1', name: 'get_template', input: {} }],
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
+        }
+        return { text: 'done', usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    const input = {
+      scope,
+      runId: run.id,
+      templateId: template.id,
+      startedBy: { kind: 'deployment' as const },
+    };
+    const stub = env.MIGRATION_AGENT.get(env.MIGRATION_AGENT.idFromName(templateAgentName(input)));
+    await stub.start(input);
+    await runDurableObjectAlarm(stub);
+    expect(await stub.status()).toMatchObject({ status: 'running', turns: 1 });
+    // The failure set the next alarm (with backoff), and kept turn 1's messages.
+    await runInDurableObject(stub, async (_o, state) => {
+      expect(await state.storage.getAlarm()).not.toBeNull();
+      expect((await state.storage.get<{ messageCount: number }>('meta'))?.messageCount).toBe(3);
+    });
+    await runDurableObjectAlarm(stub);
+    expect(await stub.status()).toMatchObject({ status: 'done', turns: 2 });
+    expect(requests.at(-1)?.messages?.filter((m) => m.role === 'tool')).toHaveLength(1);
+  });
+
+  it('gets its alarm back on a second start when it lost it', async () => {
+    const { ctx, scope } = context();
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: O } });
+    const input = {
+      scope,
+      runId: run.id,
+      templateId: 'lost-alarm',
+      startedBy: { kind: 'deployment' as const },
+    };
+    const stub = env.MIGRATION_AGENT.get(env.MIGRATION_AGENT.idFromName(templateAgentName(input)));
+    await stub.start(input);
+    await runInDurableObject(stub, async (_o, state) => {
+      await state.storage.deleteAlarm();
+    });
+    expect(await stub.start(input)).toEqual({ started: false });
+    await runInDurableObject(stub, async (_o, state) => {
+      expect(await state.storage.getAlarm()).not.toBeNull();
+    });
   });
 });

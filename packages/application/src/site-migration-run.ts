@@ -20,15 +20,22 @@ import { resolveStarter } from './job-starter';
 import {
   importMigrationRedirects,
   loadTemplatePages,
+  MIGRATION_LOAD_BATCH_MAX,
+  MIGRATION_RELINK_BATCH_MAX,
   type MigrationLoadDeps,
   publishMigration,
   relinkMigratedPages,
 } from './site-migration-load';
-import { type TemplateAuthoringDeps, transformTemplatePages } from './site-migration-templates';
+import {
+  MIGRATION_TRANSFORM_BATCH_MAX,
+  type TemplateAuthoringDeps,
+  transformTemplatePages,
+} from './site-migration-templates';
 import {
   clusterPages,
   fetchSourcePages,
   inventorySite,
+  MIGRATION_FETCH_BATCH_MAX,
   type SiteMigrationDeps,
   SiteUnavailableError,
 } from './site-migrations';
@@ -70,8 +77,17 @@ export const MIGRATION_AGENTS_PER_RUN = 20;
 const UNAVAILABLE_WAIT = '10 minutes';
 /** Times a site that can't be read is waited out, in all, before the run fails. */
 const UNAVAILABLE_ATTEMPTS = 12;
-/** Batches the fetch, transform and load loops take at most (well over any run's pages). */
-const MAX_BATCHES = 1_000;
+/** Run statuses a failure is never recorded over. */
+const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set(['failed']);
+/**
+ * The step budget. Workflows allows an instance 10,000 steps on Workers Paid (configurable to
+ * 25,000; 1,024 on Workers Free), and `step.sleep` doesn't count. Every loop here takes the
+ * use-case's largest batch, so a run of `MIGRATION_MAX_PAGES` (10,000) pages takes about 200 fetch,
+ * 200 transform and 200 load steps, 100 relink and 50 publish steps, plus a few per template (at
+ * most {@link MIGRATION_DRIVEN_TEMPLATES}) and the waits: under 1,500. Each loop is also capped
+ * (`MAX_BATCHES`) so a use-case that kept saying `more` can't run the instance out of steps.
+ */
+const MAX_BATCHES = 400;
 const STEP = {
   retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
   timeout: '10 minutes',
@@ -260,6 +276,7 @@ export async function runSiteMigration(
             const principal = await principalFor(ctx, scope, relinker);
             const { next } = await relinkMigratedPages(actingAs(ctx, principal), principal, scope, {
               runId,
+              batchSize: MIGRATION_RELINK_BATCH_MAX,
               ...(after ? { after } : {}),
             });
             return next ? { next } : {};
@@ -316,7 +333,8 @@ export async function runSiteMigration(
     await steps.do('record failure', STEP, async () => {
       for (let attempt = 1; attempt <= 3; attempt++) {
         const run = await ctx.store.migrations.getRun(scope, runId);
-        if (!run || run.status === 'failed') return true;
+        // A terminal status is never written over.
+        if (!run || TERMINAL_RUN_STATUSES.has(run.status)) return true;
         try {
           await ctx.store.migrations.saveRun(
             scope,
@@ -331,10 +349,11 @@ export async function runSiteMigration(
           );
           return true;
         } catch (e) {
-          if (!(e instanceof TransactionConflictError)) throw e;
+          // The last lost race is thrown, so the step's own retries take over from a fresh read.
+          if (!(e instanceof TransactionConflictError) || attempt === 3) throw e;
         }
       }
-      return false;
+      return true;
     });
     return { status: 'failed', templates: inOrder(outcomes), error: message };
   }
@@ -377,7 +396,7 @@ async function inventoryAndFetch(
       await steps.do(`fetch ${i}`, FETCH_STEP, () =>
         settle(async () => {
           await principalFor(ctx, scope, params.startedBy);
-          return fetchSourcePages(ctx, site, scope, runId);
+          return fetchSourcePages(ctx, site, scope, runId, { limit: MIGRATION_FETCH_BATCH_MAX });
         }),
       ),
     );
@@ -421,6 +440,7 @@ async function processTemplate(
             transformTemplatePages(ctx, authoring, scope, {
               runId,
               templateId,
+              batchSize: MIGRATION_TRANSFORM_BATCH_MAX,
               ...(after ? { after } : {}),
             }),
           ),
@@ -439,7 +459,7 @@ async function processTemplate(
               load,
               principal,
               scope,
-              { runId, templateId },
+              { runId, templateId, batchSize: MIGRATION_LOAD_BATCH_MAX },
             );
             return { loaded, more };
           }),

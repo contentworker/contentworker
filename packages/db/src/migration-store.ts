@@ -404,6 +404,14 @@ export function makeMigrationStore(x: Exec): MigrationStore {
           .where(and(ofRun(templates, scope, runId), eq(templates.id, t.id))),
       );
     },
+    async saveTemplateTry(scope, runId, templateId, lastTry) {
+      await x.write(
+        db
+          .update(templates)
+          .set({ lastTry })
+          .where(and(ofRun(templates, scope, runId), eq(templates.id, templateId))),
+      );
+    },
     async replaceTemplates(scope, runId, clusters, at) {
       const when = new Date(at);
       const statements: Query[] = [

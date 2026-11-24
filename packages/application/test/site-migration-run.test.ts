@@ -289,6 +289,24 @@ describe('a migration run’s driver', () => {
     expect(first.status === 'waiting' && first.on.length).toBe(MIGRATION_DRIVEN_TEMPLATES);
   });
 
+  it('leaves a failure record that keeps losing its race to the step’s retries', async () => {
+    const { ctx, host, params, steps, run } = await harness();
+    await ctx.store.migrations.saveRun(
+      scope,
+      { ...run, error: 'boom', status: 'created', version: 2 },
+      1,
+    );
+    // Gone wrong (the starter can't act), and every write of the failure loses its race.
+    const gone = { ...params, startedBy: { kind: 'member' as const, memberId: 'removed' } };
+    ctx.store.migrations.saveRun = async () => {
+      const { TransactionConflictError } = await import('@contentworker/ports');
+      throw new TransactionConflictError();
+    };
+    const done = await steps.run(() => runSiteMigration(steps, host, gone));
+    expect(done.status).toBe('errored');
+    expect(steps.executed.filter((n) => n === 'record failure').length).toBeGreaterThan(1);
+  });
+
   it('records a run gone wrong as failed', async () => {
     const { ctx, host, params, steps, run } = await harness();
     await ctx.store.migrations.saveRun(

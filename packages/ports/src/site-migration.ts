@@ -5,6 +5,7 @@ import type {
   MigrationRun,
   MigrationSource,
   MigrationTemplate,
+  MigrationTrySummary,
   Scope,
 } from '@contentworker/domain';
 
@@ -84,6 +85,17 @@ export interface MigrationStore {
    * `saveRun`, which is what keeps two writers of a run's templates apart.
    */
   saveTemplate(scope: Scope, runId: string, template: MigrationTemplate): Promise<void>;
+  /**
+   * Sets only a template's `lastTry`, outside the run's compare-and-set (a try's summary is
+   * nobody's to race over, and isn't part of what is reviewed). An id the run doesn't hold is
+   * skipped.
+   */
+  saveTemplateTry(
+    scope: Scope,
+    runId: string,
+    templateId: string,
+    lastTry: MigrationTrySummary,
+  ): Promise<void>;
   /**
    * Replaces the run's templates with `clusters`, atomically: the old templates go, each new one
    * is written, its pages point at it and move to `clustered`, and every other page of the run
