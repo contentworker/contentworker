@@ -53,6 +53,11 @@ export function EmbedNodeView(props: NodeViewProps) {
               <SkeletonText width="40%" />
               <span className="sr-only">Loading {label}</span>
             </span>
+          ) : props.editor?.isEditable === false ? (
+            // Shown, not editable: its name, with nothing to pick.
+            <span className="block truncate text-sm">
+              {target.status === 'found' ? targetName(linkType, target.option) : null}
+            </span>
           ) : (
             <EntityPicker
               id={pickerId}

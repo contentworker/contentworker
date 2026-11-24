@@ -33,7 +33,7 @@ import { Skeleton } from '@contentworker/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
 import { CalendarClock, PackageOpen, Plus, Rocket, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { type EntryRef, entryPath, entryRef } from '~/cms/components/dashboard/entry-titles';
@@ -79,7 +79,13 @@ export function Releases() {
   const toast = useToast();
   const invalidate = useInvalidate();
   const [creating, setCreating] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
+  // `?release=<id>` opens one (a link from elsewhere, a migration's): read once, then left alone.
+  const [search, setSearch] = useSearchParams();
+  const [openId, setOpenId] = useState<string | null>(() => search.get('release'));
+  const closeRelease = () => {
+    setOpenId(null);
+    if (search.has('release')) setSearch({}, { replace: true, preventScrollReset: true });
+  };
   const [query, setQuery] = useState('');
   const [show, setShow] = useState<ReleaseFilter>('all');
   const [scheduledShow, setScheduledShow] = useState<ScheduledFilter>('all');
@@ -116,7 +122,7 @@ export function Releases() {
   const remove = async (id: string) => {
     await client.deleteRelease(id);
     toast.success('Release deleted');
-    if (openId === id) setOpenId(null);
+    if (openId === id) closeRelease();
     await reload();
   };
 
@@ -383,7 +389,7 @@ export function Releases() {
 
       <ReleaseDetailSheet
         releaseId={openId}
-        onClose={() => setOpenId(null)}
+        onClose={closeRelease}
         onChanged={() => void reload()}
       />
     </div>

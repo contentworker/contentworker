@@ -150,6 +150,25 @@ export function BlockConfigCode(props: {
   );
 }
 
+/** Any text read-only in the code view (a migration's import script). */
+export function TextView({ text, label }: { text: string; label: string }) {
+  const { editor, failed, retry } = useEditor();
+  return (
+    <>
+      <EditorLoading editor={editor} failed={failed} />
+      {failed ? (
+        <EditorFailed retry={retry} />
+      ) : editor ? (
+        <CodeBlock className={FRAME}>
+          <editor.TextCode value={text} label={label} />
+        </CodeBlock>
+      ) : (
+        <EditorSkeleton lines={text.split('\n').length} />
+      )}
+    </>
+  );
+}
+
 /** How tall a place's diff is: the longer side, side by side; both sides' changed lines, unified. */
 function diffLines(p: PlaceCode, split: boolean): number {
   const a = p.code.split('\n');

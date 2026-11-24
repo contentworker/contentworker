@@ -50,6 +50,7 @@ import type {
   FilterOp,
   FrontendEndpoints,
   GraphIssue,
+  ImportScriptOutput,
   Menu,
   MenuItemInput,
   MenuLink,
@@ -57,8 +58,10 @@ import type {
   MigrationPage,
   MigrationPageStage,
   MigrationRun,
+  MigrationScore,
   MigrationSourceInput,
   MigrationTemplate,
+  MigrationTrySummary,
   ModerationHold,
   Promotion,
   PromotionStatus,
@@ -1380,7 +1383,109 @@ export type MigrationPageView = Omit<MigrationPage, 'html' | 'output' | 'fingerp
 
 export type MigrationTemplateView = Omit<MigrationTemplate, 'script' | 'fingerprint'> & {
   readonly script: MigrationFile | null;
+  /** What an approval names as the version a person read: its proposal and script, as one hash. */
+  readonly reviewDigest: string;
 };
+
+/** A template's import script as text, and its hash; both null before one is written. */
+export interface MigrationScriptText {
+  readonly script: string | null;
+  readonly sha256: string | null;
+}
+
+/** One page's try: the output with its rich text as documents, its score, and what's wrong. */
+export interface MigrationTryPage {
+  readonly pageId: string;
+  readonly url: string;
+  readonly ok: boolean;
+  readonly output?: ImportScriptOutput;
+  readonly score?: MigrationScore;
+  readonly issues: readonly string[];
+  readonly error?: string;
+  readonly logs: readonly string[];
+}
+
+export interface MigrationTryResult {
+  readonly summary: MigrationTrySummary;
+  readonly results: readonly MigrationTryPage[];
+}
+
+/** An approval, and whether the run's driver heard of it (or why it didn't). */
+export interface MigrationApproval {
+  readonly template: MigrationTemplateView;
+  readonly signalled: boolean;
+  readonly reason?: 'no-driver' | 'driver-finished' | 'unreachable';
+}
+
+/** A page (or a file of one) a step couldn't take, and why. */
+export interface MigrationPageFailure {
+  readonly pageId: string;
+  readonly url: string;
+  readonly error: string;
+}
+
+/** Where a batch leaves off: pass `next` as the next one's `after`. */
+export interface MigrationBatch {
+  readonly limit?: number;
+  readonly after?: string;
+}
+
+export interface MigrationTransformResult {
+  readonly transformed: number;
+  readonly validated: number;
+  readonly needsFix: number;
+  readonly failed: readonly MigrationPageFailure[];
+  readonly next?: string;
+  readonly more: boolean;
+}
+
+export interface MigrationLoadResult {
+  readonly loaded: number;
+  readonly failed: readonly MigrationPageFailure[];
+  readonly assetFailures: readonly MigrationPageFailure[];
+  readonly unresolvedLinks: number;
+  readonly deferred: readonly MigrationPageFailure[];
+  readonly more: boolean;
+}
+
+export interface MigrationRelinkResult {
+  readonly checked: number;
+  readonly relinked: number;
+  readonly unresolvedLinks: number;
+  readonly skipped: readonly MigrationPageFailure[];
+  readonly next?: string;
+}
+
+export interface MigrationRedirectsResult {
+  readonly created: number;
+  readonly updated: number;
+  readonly unchanged: number;
+  readonly skipped: {
+    readonly identity: number;
+    readonly noUrlPattern: number;
+    readonly unresolved: number;
+  };
+  readonly chains: readonly {
+    readonly id: string;
+    readonly via: readonly string[];
+    readonly destination: string;
+  }[];
+}
+
+export interface MigrationPublishResult {
+  readonly published: number;
+  readonly added: number;
+  readonly releaseId?: string;
+  readonly failed: readonly MigrationPageFailure[];
+  readonly next?: string;
+}
+
+/** Publish now, or through a release: an open one, or the run's own. */
+export interface MigrationPublishTarget {
+  readonly viaRelease?: boolean;
+  readonly releaseId?: string;
+  readonly releaseTitle?: string;
+}
 
 /** A run's pages counted: all of them, those with HTML, those whose last step failed, by stage. */
 export interface MigrationPageCounts {
@@ -1811,6 +1916,9 @@ export function createManagementClient(
   const root = '';
   const spaceBase = `${root}/spaces/${conn.space}`;
   const mgmt = `${root}/spaces/${conn.space}/environments/${conn.environment}`;
+  const runPath = (run: string) => `${mgmt}/migrations/runs/${encodeURIComponent(run)}`;
+  const templatePath = (run: string, template: string) =>
+    `${runPath(run)}/templates/${encodeURIComponent(template)}`;
   const preview = `${root}/preview/${conn.space}/${conn.environment}`;
   const delivery = `${root}/delivery/${conn.space}/${conn.environment}`;
   async function send<T>(
@@ -2765,7 +2873,7 @@ export function createManagementClient(
     }> {
       return req('POST', `${mgmt}/imports/space-export`, input, undefined, LARGE_LIMIT);
     },
-    // --- site migration (runs, and the steps before template authoring) ------
+    // --- site migration -------------------------------------------------------
     /** The newest runs, at most `limit` (the API's default 25, its most 100). */
     async listMigrationRuns(limit?: number): Promise<MigrationRun[]> {
       const r = await req<{ items: MigrationRun[] }>(
@@ -2821,6 +2929,93 @@ export function createManagementClient(
     listMigrationPages(id: string, query: MigrationPageQuery = {}): Promise<MigrationPageList> {
       const qs = queryString(query);
       return req('GET', `${mgmt}/migrations/runs/${encodeURIComponent(id)}/pages${qs}`);
+    },
+    getMigrationTemplate(run: string, template: string): Promise<MigrationTemplateView> {
+      return req('GET', templatePath(run, template));
+    },
+    /** Records the content type a template's pages are proposed to become (migration:run). */
+    proposeMigrationModel(
+      run: string,
+      template: string,
+      model: unknown,
+    ): Promise<MigrationTemplateView> {
+      return req('POST', `${templatePath(run, template)}/proposal`, { model });
+    },
+    getMigrationScript(run: string, template: string): Promise<MigrationScriptText> {
+      return req('GET', `${templatePath(run, template)}/script`);
+    },
+    /** Stores a new version of a template's import script, without running it (migration:run). */
+    setMigrationScript(
+      run: string,
+      template: string,
+      script: string,
+    ): Promise<MigrationTemplateView> {
+      return req('PUT', `${templatePath(run, template)}/script`, { script });
+    },
+    /** Runs the stored script on the template's sample pages (migration:run); keeps the summary. */
+    tryMigrationScript(
+      run: string,
+      template: string,
+      signal?: AbortSignal,
+    ): Promise<MigrationTryResult> {
+      return req('POST', `${templatePath(run, template)}/try`, {}, signal, BATCH_LIMIT);
+    },
+    /** Approves a template as read at `reviewed`, creating its content type (content:manage). */
+    approveMigrationTemplate(
+      run: string,
+      template: string,
+      reviewed: string,
+    ): Promise<MigrationApproval> {
+      return req('POST', `${templatePath(run, template)}/approve`, { reviewed });
+    },
+    /** Runs the approved script on a bounded batch of the template's pages (migration:run). */
+    transformMigrationPages(
+      run: string,
+      template: string,
+      opts: MigrationBatch = {},
+      signal?: AbortSignal,
+    ): Promise<MigrationTransformResult> {
+      return req('POST', `${templatePath(run, template)}/transform`, opts, signal, BATCH_LIMIT);
+    },
+    /** Loads a bounded batch of the template's pages as entries, with their assets. */
+    loadMigrationPages(
+      run: string,
+      template: string,
+      opts: { readonly limit?: number; readonly includeNeedsFix?: boolean } = {},
+      signal?: AbortSignal,
+    ): Promise<MigrationLoadResult> {
+      return req('POST', `${templatePath(run, template)}/load`, opts, signal, BATCH_LIMIT);
+    },
+    /** Points links between migrated pages at their entries, a bounded batch at a time. */
+    relinkMigrationPages(
+      run: string,
+      opts: MigrationBatch = {},
+      signal?: AbortSignal,
+    ): Promise<MigrationRelinkResult> {
+      return req('POST', `${runPath(run)}/relink`, opts, signal, BATCH_LIMIT);
+    },
+    /** Redirects each loaded page's old path to its entry's (content:manage). Safe to repeat. */
+    importMigrationRedirects(run: string, signal?: AbortSignal): Promise<MigrationRedirectsResult> {
+      return req('POST', `${runPath(run)}/redirects`, {}, signal, BATCH_LIMIT);
+    },
+    /** Publishes a bounded batch of the run's loaded entries, or adds them to a release. */
+    publishMigrationPages(
+      run: string,
+      opts: MigrationPublishTarget & MigrationBatch = {},
+      signal?: AbortSignal,
+    ): Promise<MigrationPublishResult> {
+      return req('POST', `${runPath(run)}/publish`, opts, signal, BATCH_LIMIT);
+    },
+    /** Hands the run to its background driver, acting for the person (migration:run). */
+    startMigrationRun(run: string): Promise<{ started: boolean }> {
+      return req('POST', `${runPath(run)}/start`);
+    },
+    /** Gives the run's driver the go-ahead to publish (content:publish). */
+    approveMigrationPublish(
+      run: string,
+      target: MigrationPublishTarget = {},
+    ): Promise<{ accepted: true }> {
+      return req('POST', `${runPath(run)}/publish-approval`, target);
     },
 
     /**

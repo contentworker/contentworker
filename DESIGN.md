@@ -1163,9 +1163,21 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   `site_unavailable`) is not the run's fault: a default Alert, calm, with Try again, never a
   destructive one; a step that lost a race (409 `retryable`) is sent again without a word.
   Without `migration:run` the steps show and offer nothing. **Templates** (catalog rows with
-  their status and pages, and Show pages) and **Pages** (a table stacked into cards on a phone,
-  filtered on the server by stage and template, with Load more) close the page. A page's HTML is
-  never shown: each page is its live URL, opening in a new tab.
+  their status, pages and last try, the name linked to its review, and Show pages), **Finish the
+  run** (Relink, Redirects and Publish, over every loaded page), **Run in the background** and
+  **Pages** (a table stacked into cards on a phone, filtered on the server by stage and template,
+  with Load more) close the page. A page's HTML is never shown: each page is its live URL, opening
+  in a new tab. **A template** (`cms/routes/MigrationTemplate.tsx`) is reviewed top to bottom: its
+  content model as a list (and as JSON), its import script in the code view with its hash, Try on
+  sample pages, Approve, then Transform and Load, each step one bounded batch or until done with
+  Stop. The model and script are edited as text in place of their views. What came from the source
+  site or its script is words; only a rich-text document a save would take is drawn, read-only, by
+  the rich text editor's own renderer. **Approving and publishing confirm on the page**, beside what
+  they act on: the approval sends the digest of the version that was read, and a template that
+  moved on since shows in the warning Alert, asking for the new version to be read ("I've read this
+  version") before Approve works again. A step a role can't take is absent, and what it takes is
+  said once a section. A loop's failure keeps what its batches did; a publish that failed asks
+  again rather than resending.
 
 ## Screens that change shape
 
@@ -1503,7 +1515,10 @@ for code and data blocks only.
   task on an entry, rejecting or withdrawing a promotion (nothing is copied; it can be requested
   again), and an empty asset folder (a folder with anything in it is refused). The team page's
   account actions and revoking an invitation also ask in place for now: their step-up field
-  posts with their form. Anything new joins this list by being written here. The rule is about what
+  posts with their form. A migration's
+  approval, its publish and its go-ahead ask in place too, though a publish is public at once: the
+  question stands beside what was reviewed, names the count, and the safe answer holds focus.
+  Anything new joins this list by being written here. The rule is about what
   is stored, so three kinds of asking sit outside it: leaving a form with work in it (Leaving,
   above, and leaving a workflow with edits) loses only what was never saved; stopping a bulk job
   leaves done what is done, and the rest can be run again; and a workflow's Publish asks in place,
@@ -1517,7 +1532,8 @@ for code and data blocks only.
   detail is: `ResponsiveSheetContent`).
 - **Relative time** (`components/ago.tsx`): "3m ago" that stays true, the full time in its tooltip.
 - **Code view** (`cms/components/block-config/codemirror.tsx`): read-only code in CodeMirror 6,
-  for code a developer reads, folds and copies (the block config as code); a short snippet to copy
+  for code a developer reads, folds and copies (the block config as code, a migration's import script
+  as plain text with its hidden characters drawn); a short snippet to copy
   stays a `CodeBlock`. Fetched when it first opens, never in a route's chunk, with a skeleton in its
   shape meanwhile and a destructive Alert with Try again if the fetch fails. Ledger's look from the
   tokens, so it follows the theme: Plex Mono on the code block's muted fill (the block ringed while

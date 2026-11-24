@@ -58,6 +58,9 @@ export default [
       // Site migration: a website brought in as structured content, one run at a time.
       route('migrations', 'routes/migrations.tsx', { id: 'migrations' }),
       route('migrations/:runId', 'routes/migration.tsx', { id: 'migration' }),
+      route('migrations/:runId/templates/:templateId', 'routes/migration-template.tsx', {
+        id: 'migration-template',
+      }),
       route('taxonomy', 'routes/taxonomy.tsx', { id: 'taxonomy' }),
       route('assets', 'routes/assets.tsx', { id: 'assets' }),
       // The screen's old address: bookmarks and links keep working.

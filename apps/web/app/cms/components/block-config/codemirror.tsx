@@ -14,7 +14,14 @@ import { json } from '@codemirror/lang-json';
 import { foldGutter, foldKeymap, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { getChunks, MergeView, unifiedMergeView } from '@codemirror/merge';
 import { EditorState, type Extension } from '@codemirror/state';
-import { EditorView, GutterMarker, gutter, keymap, lineNumbers } from '@codemirror/view';
+import {
+  EditorView,
+  GutterMarker,
+  gutter,
+  highlightSpecialChars,
+  keymap,
+  lineNumbers,
+} from '@codemirror/view';
 import { tags as t } from '@lezer/highlight';
 import { useEffect, useRef } from 'react';
 
@@ -177,6 +184,43 @@ export function JsonCode({
     v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } });
   }, [value]);
   return <div ref={host} data-testid="json-code" />;
+}
+
+/**
+ * Characters that draw as nothing (or reorder what is around them) beyond the editor's own set:
+ * joiners, bidirectional controls, fillers legal in identifiers, variation selectors and tags.
+ */
+const HIDDEN = new RegExp(
+  '[\\u034f\\u115f\\u1160\\u17b4\\u17b5\\u180b-\\u180f\\u200c\\u200d\\u202a-\\u202e\\u2060-\\u206f' +
+    '\\u3164\\ufe00-\\ufe0f\\uffa0\\u{e0000}-\\u{e0fff}]',
+  'gu',
+);
+
+/**
+ * Text as it is, read-only, with line numbers: a script someone reviews before it runs. Characters
+ * that don't show (bidirectional controls, zero-width ones) are drawn, so what is read is what runs.
+ */
+export function TextCode({ value, label }: { value: string; label: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!host.current) return;
+    const view = new EditorView({
+      parent: host.current,
+      state: EditorState.create({
+        doc: value,
+        extensions: [
+          ledger,
+          lineNumbers(),
+          highlightSpecialChars({ addSpecialChars: HIDDEN }),
+          EditorView.lineWrapping,
+          EditorState.readOnly.of(true),
+          EditorView.contentAttributes.of({ 'aria-label': label }),
+        ],
+      }),
+    });
+    return () => view.destroy();
+  }, [value, label]);
+  return <div ref={host} data-testid="text-code" className="[&_.cm-editor]:max-h-128" />;
 }
 
 /**

@@ -26,13 +26,14 @@ The whole run is built, on every surface:
 - **Migrations** in the admin (under Build, for roles that hold `migration:run` or
   `content:manage`): the environment's runs, a form to start one, and each run's steps, templates
   and pages. **Fetch until done** keeps fetching batches until no pages are waiting, and can be
-  stopped at any point.
+  stopped at any point. A template's page is where it is reviewed: its content model and import
+  script to read or edit, **Try on sample pages** with what each page would become, **Approve**,
+  then **Transform** and **Load**. The run's page ends with **Relink**, **Redirects**, **Publish**
+  and **Run in the background**.
 
 A small site can be taken through step by step, each call a bounded batch. A large one is handed to
 the engine with `start`, which runs every step in the background and waits for people only where
-a person decides: approving each template, and the go-ahead to publish. The admin screen follows
-runs and fetches their pages; authoring, approving, loading and publishing from it are planned, so
-for now those go through the API, MCP, the SDK or the command line.
+a person decides: approving each template, and the go-ahead to publish.
 
 ## Before you start
 
@@ -144,7 +145,9 @@ an approval writes its content type) → `approved`.
 4. **Approve it.** A person with `content:manage` reads the template, including its
    `reviewDigest`, and approves with that digest as `reviewed`. Approval creates and publishes the
    content type, as them. If the model or script changed after they read it, approval answers
-   `409` and they review again. An approved template's model and script can't change.
+   `409` and they review again. An approved template's model and script can't change. In the admin,
+   the approval sends the digest of the version on screen; when the template changes meanwhile, the
+   page shows the new version and asks for it to be read before it can be approved.
 
 ## Take the pages in
 
@@ -155,14 +158,16 @@ Step by step, each call a bounded batch:
    below it. Pages already transformed by the approved script are skipped.
 2. **Load** up to 10 `validated` pages a call as entries, while `more`. The assets each output
    names are downloaded once per run; a file that fails is reported and its page loads without it.
-   `includeNeedsFix` loads the low scorers too. Loading a page again updates the entry it became.
+   `includeNeedsFix` loads the low scorers too, but not a page with an error: an approved script
+   can't change, so bring those in by hand. Loading a page again updates the entry it became.
 3. **Relink** once every template is loaded, with `after` until `next` is absent: links between
    migrated pages become links between their entries.
 4. **Redirect**: a 301 from each loaded page's old path to its entry's path, by the type's URL
    pattern. Pages whose path didn't move are skipped. Safe to repeat.
 5. **Publish** up to 50 loaded entries a call, or with `viaRelease` add them to a release
    (`releaseId`, or the run's own, titled `releaseTitle`) for someone to ship, again with `after`
-   until `next` is absent. Naming a release without `viaRelease` is refused (`422`).
+   until `next` is absent. Naming a release without `viaRelease` is refused (`422`). Publishing is
+   public and the run doesn't undo it, so the admin asks first, with the number of entries.
 
 ## Run it in the background
 
