@@ -1684,8 +1684,9 @@ export interface AgentReviewRepo {
 export interface ModerationHoldRepo {
   /**
    * Opens a hold. False when the entry already has an open one (at most one per entry). Inside a
-   * unit of work it decides from committed state, and a hold another writer opens first aborts
-   * the unit at commit (`TransactionConflictError`).
+   * unit of work the insert is always queued, and an open hold (committed before, or by another
+   * writer first) aborts the unit at commit (`TransactionConflictError`); the answer is then only
+   * what committed state said.
    */
   create(scope: Scope, hold: ModerationHold): Promise<boolean>;
   get(scope: Scope, id: string): Promise<ModerationHold | null>;
@@ -1698,7 +1699,7 @@ export interface ModerationHoldRepo {
   countOpen(scope: Scope): Promise<PendingCount[]>;
   /**
    * Points an open hold at the version a later flag judged. False when it is no longer open; in a
-   * unit of work a hold decided meanwhile aborts the unit at commit.
+   * unit of work one that isn't open at commit aborts the unit (`TransactionConflictError`).
    */
   refresh(
     scope: Scope,
@@ -1707,7 +1708,8 @@ export interface ModerationHoldRepo {
   ): Promise<boolean>;
   /**
    * Compare-and-set open → decided. False when it was no longer open (someone decided first); in
-   * a unit of work that lost race aborts the unit at commit (`TransactionConflictError`).
+   * a unit of work the update is always queued, and a hold not open at commit aborts the unit
+   * (`TransactionConflictError`), with every write it rides with.
    */
   decide(
     scope: Scope,

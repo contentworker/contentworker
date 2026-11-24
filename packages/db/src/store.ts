@@ -5521,16 +5521,17 @@ function makeModerationHoldRepo(x: Exec): ModerationHoldRepo {
         })
         .onConflictDoNothing();
       if (x.inUnit) {
-        // Decided from committed state; a hold another writer opens first aborts the unit.
+        // The guarded insert is always queued: an open hold, committed already or by another
+        // writer before this unit, aborts the unit at commit (TransactionConflictError), so the
+        // writes it rides with (the unpublish) never commit on a lost race.
         const [open] = await db
           .select({ id: t.id })
           .from(t)
           .where(and(scopeFilter(t, scope), eq(t.entryId, hold.entryId), eq(t.status, 'open')))
           .limit(1);
-        if (open) return false;
         await x.write(insert);
         x.expectChanged(1);
-        return true;
+        return !open;
       }
       return (await insert.returning({ id: t.id })).length === 1;
     },
@@ -5571,10 +5572,11 @@ function makeModerationHoldRepo(x: Exec): ModerationHoldRepo {
         })
         .where(and(scopeFilter(t, scope), eq(t.id, id), eq(t.status, 'open')));
       if (x.inUnit) {
-        if ((await statusOf(scope, id)) !== 'open') return false;
+        // Queued whatever the committed status: a hold no longer open aborts the unit at commit.
+        const open = (await statusOf(scope, id)) === 'open';
         await x.write(update);
         x.expectChanged(1);
-        return true;
+        return open;
       }
       return (await update.returning({ id: t.id })).length === 1;
     },
@@ -5589,11 +5591,12 @@ function makeModerationHoldRepo(x: Exec): ModerationHoldRepo {
         })
         .where(and(scopeFilter(t, scope), eq(t.id, id), eq(t.status, 'open')));
       if (x.inUnit) {
-        // Same pattern as `create`: decide from committed state, guard at commit.
-        if ((await statusOf(scope, id)) !== 'open') return false;
+        // Same pattern as `create`: the guarded update is always queued, so a hold decided by
+        // anyone before this unit commits aborts it, and the publish it rides with with it.
+        const open = (await statusOf(scope, id)) === 'open';
         await x.write(update);
         x.expectChanged(1);
-        return true;
+        return open;
       }
       return (await update.returning({ id: t.id })).length === 1;
     },

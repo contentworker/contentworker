@@ -217,7 +217,6 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   model_typescript: [SCOPES.previewRead],
   moderation_hold_keep: [SCOPES.contentPublish],
   moderation_hold_list: [SCOPES.previewRead],
-  moderation_hold_republish: [SCOPES.contentPublish],
   oauth_connection_revoke: [SCOPES.spaceAdmin],
   oauth_connections_list: [SCOPES.spaceAdmin],
   plugin_approve_capabilities: [SCOPES.spaceAdmin],

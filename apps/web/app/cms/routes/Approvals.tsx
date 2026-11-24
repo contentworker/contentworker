@@ -494,6 +494,8 @@ function HoldRow({
   const invalidate = useInvalidate();
   const toast = useToast();
   const { busy, run } = useLocalRun();
+  // The reason typed into Republish's confirm, and only for it: backing out drops it, and Keep
+  // unpublished never sends it.
   const [note, setNote] = useState('');
   const name = entry?.title;
   const quoted = name ? `“${name}”` : 'the entry';
@@ -503,7 +505,8 @@ function HoldRow({
       const why = note.trim() || undefined;
       await (republish
         ? client.republishModerationHold(hold.id, why)
-        : client.keepModerationHold(hold.id, why));
+        : client.keepModerationHold(hold.id));
+      setNote('');
       toast.success(republish ? `Republished ${quoted}` : `Kept ${quoted} unpublished`);
       await invalidate(['moderation-holds'], ['entry'], ['entries'], APPROVALS_COUNT_KEY);
     });
@@ -552,6 +555,7 @@ function HoldRow({
           tone="default"
           busy={busy}
           onConfirm={() => void decide(true)}
+          onCancel={() => setNote('')}
         >
           {(ask) => (
             <Button size="sm" disabled={busy || resolving} onClick={ask}>

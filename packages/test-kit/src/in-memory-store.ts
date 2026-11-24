@@ -2529,6 +2529,14 @@ export class InMemoryContentStore implements ContentStore {
   };
 
   private readonly moderationHoldData = new JournaledMap<string, ModerationHold>();
+  /** Open `withTransaction` calls: a hold's lost compare-and-set inside one aborts it, as on D1. */
+  private txDepth = 0;
+
+  /** A lost compare-and-set: false outside a unit, the unit's abort inside one (D1 at commit). */
+  private holdLost(): false {
+    if (this.txDepth > 0) throw new TransactionConflictError();
+    return false;
+  }
 
   /** The scope's holds, keyed `<scope>::<id>`. */
   private holdsIn(scope: Scope): ModerationHold[] {
@@ -2542,7 +2550,7 @@ export class InMemoryContentStore implements ContentStore {
     create: async (scope, hold) => {
       // As the D1 index: at most one open hold per entry.
       if (this.holdsIn(scope).some((h) => h.entryId === hold.entryId && h.status === 'open')) {
-        return false;
+        return this.holdLost();
       }
       this.moderationHoldData.set(`${scopeKey(scope)}::${hold.id}`, { ...hold });
       return true;
@@ -2569,14 +2577,14 @@ export class InMemoryContentStore implements ContentStore {
     refresh: async (scope, id, to) => {
       const key = `${scopeKey(scope)}::${id}`;
       const hold = this.moderationHoldData.get(key);
-      if (hold?.status !== 'open') return false;
+      if (hold?.status !== 'open') return this.holdLost();
       this.moderationHoldData.set(key, { ...hold, ...to, flags: [...to.flags] });
       return true;
     },
     decide: async (scope, id, decision) => {
       const key = `${scopeKey(scope)}::${id}`;
       const hold = this.moderationHoldData.get(key);
-      if (hold?.status !== 'open') return false;
+      if (hold?.status !== 'open') return this.holdLost();
       this.moderationHoldData.set(key, {
         ...hold,
         status: decision.status,
@@ -3817,6 +3825,7 @@ export class InMemoryContentStore implements ContentStore {
     const outboxSnapshot = [...this.outboxData];
     // Purge progress marks hold Dates, so they are copied here rather than JSON round-tripped.
     const purgeSnapshot = [...this.purgeData].map(([k, v]) => [k, { ...v }] as const);
+    this.txDepth += 1;
     try {
       const result = await fn({
         spaces: this.spaces,
@@ -3860,6 +3869,8 @@ export class InMemoryContentStore implements ContentStore {
       this.purgeData.clear();
       for (const [k, v] of purgeSnapshot) this.purgeData.set(k, v);
       throw err;
+    } finally {
+      this.txDepth -= 1;
     }
   }
 

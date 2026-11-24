@@ -892,11 +892,11 @@ Entries the on-publish moderation pass unpublished, waiting on a person; see
 [AI, agents & search](./ai-agents-and-search.md#moderation-holds). A role also needs publish on the
 held entry's type to decide.
 
-| Method | Path                               | Scope             | Description                                                                                                      |
-| ------ | ---------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
-| GET    | `…/moderation-holds`               | `preview:read`    | List holds, newest first (`?status=open\|republished\|kept\|cleared`, `?entryId=`)                               |
-| POST   | `…/moderation-holds/:id/republish` | `content:publish` | `{ note? }`: publish the held version again, closing the hold; 409 if decided, or the entry was edited since     |
-| POST   | `…/moderation-holds/:id/keep`      | `content:publish` | `{ note? }`: close the hold, the entry stays unpublished; 409 if decided, or the entry was published again since |
+| Method | Path                               | Scope             | Description                                                                                                                                                                           |
+| ------ | ---------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `…/moderation-holds`               | `preview:read`    | List holds, newest first (`?status=open\|republished\|kept\|cleared`, `?entryId=`)                                                                                                    |
+| POST   | `…/moderation-holds/:id/republish` | `content:publish` | `{ note? }`: publish the held version again, closing the hold. A person signed in to the admin only (any token: 403 `person_required`); 409 if decided, or the entry was edited since |
+| POST   | `…/moderation-holds/:id/keep`      | `content:publish` | `{ note? }`: close the hold, the entry stays unpublished; 409 if decided, or the entry was published again since                                                                      |
 
 ### Collaboration
 

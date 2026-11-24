@@ -2,14 +2,19 @@ import {
   getModerationHold,
   keepHeldEntryUnpublished,
   listModerationHolds,
-  republishHeldEntry,
 } from '@contentworker/application';
-import { authorizeContent, principalActorId, SCOPES, type Scope } from '@contentworker/domain';
+import { authorizeContent, SCOPES, type Scope } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
-/** Moderation holds: the MCP half of `routes/management/moderation.ts`, on the same use-cases. */
+/**
+ * Moderation holds: the MCP half of `routes/management/moderation.ts`, on the same use-cases.
+ *
+ * A deliberate exception to "every capability on both surfaces": there is no republish tool.
+ * Overriding moderation is for a person signed in to the admin (`republishHeldEntry` refuses
+ * every token), and every MCP caller is a token, so a tool could only ever refuse.
+ */
 export function registerModerationTools(server: McpServer, t: ToolContext): void {
   const { ctx, principal, guard } = t;
 
@@ -36,7 +41,9 @@ export function registerModerationTools(server: McpServer, t: ToolContext): void
       description:
         'List entries the moderation agent unpublished after a publish, newest first. ' +
         'status "open" lists those waiting on a decision (as Approvals does); each names the ' +
-        'categories moderation flagged. Holds on types you can’t read are left out.',
+        'categories moderation flagged. Holds on types you can’t read are left out. Only a ' +
+        'person signed in to the admin can republish one; tell the user so rather than looking ' +
+        'for another way.',
       inputSchema: toolSchema('moderation_hold_list', () =>
         z.object({
           status: z.enum(['open', 'republished', 'kept', 'cleared']).optional(),
@@ -61,29 +68,6 @@ export function registerModerationTools(server: McpServer, t: ToolContext): void
   );
 
   server.registerTool(
-    'moderation_hold_republish',
-    {
-      description:
-        'Override moderation: publish a held entry’s held version again and close its hold. ' +
-        'Refused when the hold was already decided, or the entry was edited after it was held ' +
-        '(publish the new version from the entry instead). Needs publish on the type. Only do ' +
-        'this when a person has judged the flag wrong.',
-      inputSchema: toolSchema('moderation_hold_republish', decisionArgs),
-    },
-    async (args) => {
-      const s = scopeOf(args);
-      guard(SCOPES.contentPublish, s);
-      await guardDecision(s, args.id);
-      return ok(
-        await republishHeldEntry(ctx, s, args.id, {
-          decidedBy: principalActorId(principal),
-          ...(args.note ? { note: args.note } : {}),
-        }),
-      );
-    },
-  );
-
-  server.registerTool(
     'moderation_hold_keep',
     {
       description:
@@ -98,7 +82,7 @@ export function registerModerationTools(server: McpServer, t: ToolContext): void
       await guardDecision(s, args.id);
       return ok(
         await keepHeldEntryUnpublished(ctx, s, args.id, {
-          decidedBy: principalActorId(principal),
+          principal,
           ...(args.note ? { note: args.note } : {}),
         }),
       );

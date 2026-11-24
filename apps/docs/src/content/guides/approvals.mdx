@@ -20,7 +20,7 @@ review, and each comes down to a person with the right permission deciding:
   otherwise, plus read access to the entry's content type.
 - Listing tasks, agent reviews and moderation holds needs `preview:read`; deciding an agent review
   needs `content:write`; deciding a moderation hold needs `content:publish`, and publish on the
-  entry's content type.
+  entry's content type. Republishing a held entry also needs a person signed in to the admin.
 - Setting the space-wide separation-of-duties default needs `space:admin`.
 
 ## Approvals
@@ -96,26 +96,31 @@ and someone who may publish decides when it goes live.
 ## Moderation holds
 
 The moderation agent runs after an entry is published. When it flags the entry, it unpublishes it
-at once and opens a **hold**: the entry, the version it judged, the categories it flagged (`hate`,
-`harassment`, `house_rules` and so on), and when. The entry stays out of delivery until someone
-decides.
+at once and opens a **hold**: the entry, the version that was live, the categories it flagged
+(`hate`, `harassment`, `house_rules` and so on), and when. The entry stays out of delivery until
+someone decides.
 
 - **Republish** overrides moderation: the held version goes back to delivery, and who decided,
   with an optional reason, is kept on the hold and in the agent run log. The moderation pass that
-  publish starts leaves that version live. It is refused when the entry was edited after it was
-  held, since what moderation judged is no longer what would go out: publish the new version from
-  the entry instead, and moderation reads it again. A [workflow](/guides/workflows/) that gates
-  publishing still applies.
+  publish starts leaves that version live. Only a person signed in to the admin can republish: an
+  API key, the admin token, and an OAuth or personal access token are refused with a `403`
+  (`person_required`) whatever their scopes, so an agent can't override moderation, and there is
+  no MCP tool for it. It is refused with a `409` when the entry's current version isn't the held
+  one (it was edited after the publish moderation flagged), since what would go out is not what
+  was live: publish the new version from the entry instead, and moderation reads it again. A
+  [workflow](/guides/workflows/) that gates publishing still applies.
 - **Keep unpublished** agrees with moderation and closes the hold; the entry stays a draft to fix
   and publish from the editor. It is refused when someone has published the entry again since.
 
 Either decision is made once: a second one, by anyone, is a `409`. A hold also closes on its own
-(`cleared`) when moderation passes a later published version of the entry.
+(`cleared`) when a newer version of the entry is published and moderation passes it. The reason a
+decider gave is shown only to callers that may write content (`content:write`); a preview key
+lists the holds without it.
 
 | Do this       | API                                          | MCP tool                    | Scope             |
 | ------------- | -------------------------------------------- | --------------------------- | ----------------- |
 | List open     | `GET …/moderation-holds?status=open`         | `moderation_hold_list`      | `preview:read`    |
-| Republish     | `POST …/moderation-holds/{id}/republish` (`note`) | `moderation_hold_republish` | `content:publish` |
+| Republish     | `POST …/moderation-holds/{id}/republish` (`note`) | none: a person, in the admin | `content:publish` |
 | Keep offline  | `POST …/moderation-holds/{id}/keep` (`note`) | `moderation_hold_keep`      | `content:publish` |
 
 ## Next steps

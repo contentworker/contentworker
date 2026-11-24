@@ -174,6 +174,8 @@ export interface ConfirmButtonProps {
   /** Disables the confirming button (e.g. while another request is in flight). */
   readonly busy?: boolean;
   readonly onConfirm: () => void;
+  /** Called when the confirm is backed out of (Cancel or Escape), e.g. to drop what was typed in it. */
+  readonly onCancel?: () => void;
   readonly className?: string;
   /** Renders the trigger; call `ask` from its onClick to swap in the confirm. */
   readonly children: (ask: () => void) => ReactNode;
@@ -204,6 +206,7 @@ export function ConfirmButton({
   tone = 'destructive',
   busy,
   onConfirm,
+  onCancel,
   className,
   children,
 }: ConfirmButtonProps) {
@@ -219,7 +222,10 @@ export function ConfirmButton({
           note={note}
           details={details}
           cancelLabel={cancelLabel}
-          onCancel={() => setAsking(false)}
+          onCancel={() => {
+            setAsking(false);
+            onCancel?.();
+          }}
           returnFocus={trigger}
           className={className}
         >

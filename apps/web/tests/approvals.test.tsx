@@ -375,6 +375,29 @@ describe('Held by moderation', () => {
     );
   });
 
+  it('drops a reason typed into a confirm backed out of, and never sends it with Keep', async () => {
+    const calls = setup();
+    const row = await heldRow();
+    const republish = within(row).getByRole('button', { name: 'Republish' });
+    await waitFor(() => expect((republish as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(republish);
+    const reason = () => within(row).getByRole('textbox', { name: /Why republish/ });
+    fireEvent.change(reason(), { target: { value: 'Meant for Republish only' } });
+    fireEvent.click(within(row).getByRole('button', { name: 'Cancel' }));
+    // Asked again, the confirm starts empty.
+    fireEvent.click(within(row).getByRole('button', { name: 'Republish' }));
+    expect((reason() as HTMLTextAreaElement).value).toBe('');
+    fireEvent.change(reason(), { target: { value: 'Typed, then Keep pressed' } });
+    fireEvent.click(within(row).getByRole('button', { name: 'Keep unpublished' }));
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        method: 'POST',
+        url: `${BASE}/moderation-holds/hold-1/keep`,
+        body: {},
+      }),
+    );
+  });
+
   it('keeps an entry unpublished in one press, and the row leaves', async () => {
     const calls = setup();
     const row = await heldRow();

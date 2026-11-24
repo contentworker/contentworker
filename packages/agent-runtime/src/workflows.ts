@@ -330,6 +330,7 @@ export async function moderateWorkflow(
       usage: ZERO,
     };
   }
+  const judged = loaded.version !== undefined ? { judgedVersion: loaded.version } : {};
   const denied = input.deniedFields ?? [];
   const text = denied.length
     ? Object.entries(loaded.fields)
@@ -348,6 +349,7 @@ export async function moderateWorkflow(
       decisions: [`flagged: ${categories.join(', ') || 'policy violation'}`],
       usage,
       flags: categories,
+      ...judged,
     };
   }
   return {
@@ -356,6 +358,7 @@ export async function moderateWorkflow(
     status: 'completed',
     decisions: ['clean'],
     usage,
+    ...judged,
   };
 }
 
@@ -484,7 +487,13 @@ async function runEntryPass(
       // Record the retraction only AFTER it succeeds: the ledger must not
       // claim flagged content was pulled from delivery when it wasn't.
       const outcome =
-        (await act.retractEntry(input.scope, entryId, 'moderate', moderated.flags ?? [])) ?? 'held';
+        (await act.retractEntry(
+          input.scope,
+          entryId,
+          'moderate',
+          moderated.flags ?? [],
+          moderated.judgedVersion,
+        )) ?? 'held';
       const note = HOLD_NOTES[outcome];
       if (note) {
         await act.recordRun(input.scope, {
@@ -496,7 +505,7 @@ async function runEntryPass(
         });
       }
     } else if (moderated?.status === 'completed') {
-      await act.clearHold(input.scope, entryId);
+      await act.clearHold(input.scope, entryId, moderated.judgedVersion);
     }
     return perEntry;
   }

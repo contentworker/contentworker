@@ -17,6 +17,7 @@ function fakeActivities(over: Partial<Activities> = {}) {
   const retracted: string[] = [];
   const flagged: (readonly string[] | undefined)[] = [];
   const cleared: string[] = [];
+  const judged: (number | undefined)[] = [];
   const base: Activities = {
     loadEntry: async () => ({
       contentTypeApiId: 'article',
@@ -45,17 +46,19 @@ function fakeActivities(over: Partial<Activities> = {}) {
         decisions: run.decisions,
       });
     },
-    retractEntry: async (_s, entryId, _agent, flags) => {
+    retractEntry: async (_s, entryId, _agent, flags, judgedVersion) => {
       retracted.push(entryId);
       flagged.push(flags);
+      judged.push(judgedVersion);
       return 'held' as const;
     },
-    clearHold: async (_s, entryId) => {
+    clearHold: async (_s, entryId, judgedVersion) => {
       cleared.push(entryId);
+      judged.push(judgedVersion);
     },
     ...over,
   } as Activities;
-  return { act: base, recorded, retracted, flagged, cleared };
+  return { act: base, recorded, retracted, flagged, cleared, judged };
 }
 
 describe('publishAgentsWorkflow', () => {
@@ -163,6 +166,37 @@ describe('publishAgentsWorkflow', () => {
     await publishAgentsWorkflow(act, { scope, entryIds: ['e1'], enrich: false, moderate: true });
     expect(flagged).toEqual([['hate', 'spam']]);
     expect(cleared).toEqual([]);
+  });
+
+  it('hands the version the classifier read to the hold, and to the clean verdict', async () => {
+    const entry = {
+      contentTypeApiId: 'article',
+      displayField: 'title',
+      defaultLocale: 'en-US',
+      textFields: [],
+      fields: {},
+      version: 7,
+      text: 'T',
+    };
+    const flaggedPass = fakeActivities({
+      loadEntry: async () => entry,
+      classify: async () => ({ flagged: true, categories: ['spam'], usage: ZERO }),
+    });
+    await publishAgentsWorkflow(flaggedPass.act, {
+      scope,
+      entryIds: ['e1'],
+      enrich: false,
+      moderate: true,
+    });
+    expect(flaggedPass.judged).toEqual([7]);
+    const cleanPass = fakeActivities({ loadEntry: async () => entry });
+    await publishAgentsWorkflow(cleanPass.act, {
+      scope,
+      entryIds: ['e1'],
+      enrich: false,
+      moderate: true,
+    });
+    expect(cleanPass.judged).toEqual([7]);
   });
 
   it('records no retraction when the live version was republished over moderation', async () => {

@@ -70,16 +70,19 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
     async recordRun(scope, run) {
       await recordAgentRun(ctx, scope, run);
     },
-    async retractEntry(scope, entryId, _agent, flags = []) {
+    async retractEntry(scope, entryId, _agent, flags = [], judgedVersion) {
       // One unit: the unpublish, its outbox row and the hold. "Already unpublished / gone" is
       // the desired end state and answers as such; anything else (store or connection failure,
       // a lost race) propagates: this runs as a durable step, and swallowing it would resolve the
       // step successfully, skip its retries, and let the ledger record a retraction that never
       // happened while flagged content stayed live.
-      return holdEntryForModeration(ctx, scope, entryId, { flags });
+      return holdEntryForModeration(ctx, scope, entryId, {
+        flags,
+        ...(judgedVersion !== undefined ? { judgedVersion } : {}),
+      });
     },
-    async clearHold(scope, entryId) {
-      await clearModerationHold(ctx, scope, entryId);
+    async clearHold(scope, entryId, judgedVersion) {
+      await clearModerationHold(ctx, scope, entryId, judgedVersion);
     },
     async loadEntry(scope, entryId): Promise<LoadedEntry | null> {
       const found = await ctx.store.entries.get(scope, entryId);
@@ -111,6 +114,7 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
         defaultLocale: locale,
         textFields,
         fields: found.fields,
+        version: found.entry.currentVersion,
         text,
       };
     },

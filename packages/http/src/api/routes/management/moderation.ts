@@ -4,7 +4,7 @@ import {
   listModerationHolds,
   republishHeldEntry,
 } from '@contentworker/application';
-import { authorizeContent, principalActorId, SCOPES } from '@contentworker/domain';
+import { authorizeContent, deniedFieldsFor, SCOPES } from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -19,19 +19,23 @@ const holdStatus = (raw: string | undefined): HoldStatus | undefined =>
 
 /**
  * Moderation holds: entries the moderation agent took offline, and a person's decision on each.
- * The same use-cases back the `moderation_hold_*` MCP tools.
+ * The same use-cases back the `moderation_hold_list` and `moderation_hold_keep` MCP tools.
+ * Republish has no tool: only a person signed in to the admin may republish (`republishHeldEntry`
+ * refuses every token), and every MCP caller is a token.
  */
 export function moderationRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx } = deps;
   const app = new Hono<AuthVars>();
 
   // Deciding a hold is a publishing decision: a role needs publish on the held entry's type,
-  // whichever way it decides. The hold names the type, so a gone entry is still guarded.
+  // whichever way it decides. The hold names the type, so a gone entry is still guarded. Answers
+  // the fields the role can't read, so a refusal never names them.
   const authorizeDecision = async (c: Context<AuthVars>) => {
     const principal = c.get('principal');
-    if (!principal.contentGrants) return;
+    if (!principal.contentGrants) return [];
     const hold = await getModerationHold(ctx, scopeOf(c), c.req.param('id') as string);
     authorizeContent(principal, 'publish', hold.contentTypeApiId);
+    return deniedFieldsFor(principal, hold.contentTypeApiId);
   };
 
   app.get(
@@ -66,18 +70,22 @@ export function moderationRoutes(deps: AuthDeps): Hono<AuthVars> {
       body: moderationDecisionBody,
       description:
         'Overrides moderation: publishes the held version again and closes the hold, in one ' +
-        'transaction with the `entry.published` event. Needs publish on the type. 409 when the ' +
+        'transaction with the `entry.published` event. Only a person signed in to the admin may: ' +
+        'any token (an API key, the admin token, an OAuth or personal access token) is refused ' +
+        'with 403 `person_required`, and there is no MCP tool for it. Needs publish on the type. ' +
+        '409 when the ' +
         'hold was already decided, or the entry was edited after it was held (publish the new ' +
         'version from the entry instead). A workflow that gates publishing still refuses it ' +
         '(`publish_gated`). An entry someone already published again just closes its hold.',
     }),
     requireScope(SCOPES.contentPublish),
     async (c) => {
-      await authorizeDecision(c);
+      const unreadable = await authorizeDecision(c);
       const { note } = await parseBody(c, moderationDecisionBody);
       return c.json(
         await republishHeldEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id'), {
-          decidedBy: principalActorId(c.get('principal')),
+          principal: c.get('principal'),
+          unreadable,
           ...(note ? { note } : {}),
         }),
       );
@@ -96,11 +104,12 @@ export function moderationRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.contentPublish),
     async (c) => {
-      await authorizeDecision(c);
+      const unreadable = await authorizeDecision(c);
       const { note } = await parseBody(c, moderationDecisionBody);
       return c.json(
         await keepHeldEntryUnpublished(actingCtx(ctx, c), scopeOf(c), c.req.param('id'), {
-          decidedBy: principalActorId(c.get('principal')),
+          principal: c.get('principal'),
+          unreadable,
           ...(note ? { note } : {}),
         }),
       );

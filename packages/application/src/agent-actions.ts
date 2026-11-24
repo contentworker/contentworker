@@ -6,7 +6,7 @@ import {
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
-import type { AIProvider, ModelTier } from '@contentworker/ports';
+import { type AIProvider, type ModelTier, TransactionConflictError } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
 import { conforms } from './ai-json';
@@ -76,6 +76,8 @@ export interface AgentRunOutcome {
   readonly reviewId?: string;
   /** The categories moderation flagged (when held). */
   readonly flags?: readonly string[];
+  /** The entry's `currentVersion` moderation read, when it ran. */
+  readonly judgedVersion?: number;
 }
 
 export type FindingSeverity = 'info' | 'warning' | 'error';
@@ -307,7 +309,11 @@ export interface PublishAgentRunSummary {
   readonly decisions: readonly string[];
   readonly usage: { inputTokens: number; outputTokens: number };
   readonly flags?: readonly string[];
+  readonly judgedVersion?: number;
 }
+
+/** Attempts at the hold after a held verdict, when a concurrent write wins its commit. */
+const HOLD_ATTEMPTS = 3;
 
 /**
  * The ledger line after a held verdict, by what the hold did; none when the entry was already out
@@ -362,6 +368,7 @@ export async function runPublishAgents(
       decisions: r.decisions,
       usage: r.usage,
       ...(r.flags ? { flags: r.flags } : {}),
+      ...(r.judgedVersion !== undefined ? { judgedVersion: r.judgedVersion } : {}),
     });
   }
 
@@ -370,9 +377,17 @@ export async function runPublishAgents(
   // Approvals for a person to decide; a clean verdict on a later version closes an open one.
   const moderated = runs.find((r) => r.workflow === 'moderate');
   if (moderated?.status === 'held') {
-    const outcome = await holdEntryForModeration(ctx, scope, entryId, {
-      flags: moderated.flags ?? [],
-    });
+    // Only the hold is retried on a lost race: an error escaping here would redeliver the event
+    // and run (and bill) enrich and moderation again, recording each run twice.
+    const hold = { flags: moderated.flags ?? [], judgedVersion: moderated.judgedVersion };
+    let outcome: ModerationHoldOutcome | undefined;
+    for (let attempt = 1; outcome === undefined; attempt++) {
+      try {
+        outcome = await holdEntryForModeration(ctx, scope, entryId, hold);
+      } catch (err) {
+        if (!(err instanceof TransactionConflictError) || attempt >= HOLD_ATTEMPTS) throw err;
+      }
+    }
     const note = HOLD_NOTES[outcome];
     if (note) {
       await recordAgentRun(ctx, scope, {
@@ -384,7 +399,7 @@ export async function runPublishAgents(
       });
     }
   } else if (moderated?.status === 'completed') {
-    await clearModerationHold(ctx, scope, entryId);
+    await clearModerationHold(ctx, scope, entryId, moderated.judgedVersion);
   }
   return runs;
 }

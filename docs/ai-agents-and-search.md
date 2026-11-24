@@ -903,22 +903,33 @@ Scheduled moderation runs record the same way; only the on-publish pass unpublis
 ## Moderation holds
 
 A hold (`ModerationHold`, `packages/domain/src/agents/moderation-hold.ts`) is an entry the
-on-publish moderation pass took offline: its id, type, the `entryVersion` moderation judged, the
-`flags`, and a status of `open`, `republished`, `kept` or `cleared`. Approvals lists the open ones
-and `countPendingApprovals` counts them (`moderationHolds`), filtered to the types a role may read.
+on-publish moderation pass took offline: its id, type, the `entryVersion` that was live (or the
+version the classifier read, when a publish landed while it ran), the `flags`, and a status of
+`open`, `republished`, `kept` or `cleared`. Approvals lists the open ones and
+`countPendingApprovals` counts them (`moderationHolds`), filtered to the types a role may read; a
+decider's `note` is listed only to callers holding `content:write`. A clean verdict clears an open
+hold only when a version newer than the held one is live and the verdict read at least that
+version, so a slow clean pass over an older version leaves it open.
 
 - `republishHeldEntry` publishes the held version again and closes the hold as `republished`, in
-  one unit (the hold's compare-and-set, the publish and its outbox row). It is a `409` when the
-  hold was decided, or when the entry's `currentVersion` moved past `entryVersion` (publish the new
-  version from the entry); an entry already live again only closes its hold. Publish gates apply.
+  one unit (the hold's compare-and-set, the publish and its outbox row). Only a person signed in to
+  the admin may (`isSignedInPerson`): every token, whatever its scopes, gets 403 `person_required`
+  (`PersonRequiredError`), enforced in the use-case. It is a `409` when the hold was decided, or
+  when the entry's `currentVersion` is not `entryVersion` (publish the new version from the entry);
+  an entry already live at the held version only closes its hold. Publish gates apply, and a
+  refusal never names fields the decider's role can't read.
 - `keepHeldEntryUnpublished` closes it as `kept`, and is a `409` when the entry is live again.
-- A lost race at commit (`TransactionConflictError`: another decision, an edit, a publish) answers
-  `409`. Each decision is recorded in the agent ledger (`republished by … over moderation (flagged:
-  …)`, `kept unpublished by …`, with the reason when given) and, as a request, in the audit log.
+- A lost race at commit (`TransactionConflictError`: another decision) answers `409`; inside a
+  unit the hold's compare-and-set is always queued, so the losing unit's publish or unpublish never
+  commits. The publish and unpublish themselves are not compare-and-set against the entry's version
+  (the store has no such guard), so an edit committing between a decision's read and its commit is
+  not caught there. Each decision is recorded in the agent ledger (`republished by … over
+  moderation (flagged: …)`, `kept unpublished by …`, naming the key or OAuth client it came
+  through, with the reason when given) and, as a request, in the audit log.
 - HTTP: `GET …/moderation-holds?status=open` (`preview:read`), `POST …/moderation-holds/:id/republish`
   and `POST …/moderation-holds/:id/keep` (`content:publish`, and publish on the type for a role),
-  each with an optional `{ note }`. MCP: `moderation_hold_list`, `moderation_hold_republish`,
-  `moderation_hold_keep`.
+  each with an optional `{ note }`. MCP: `moderation_hold_list` and `moderation_hold_keep`;
+  Republish has no tool, a deliberate exception to both surfaces (see [MCP](./mcp.md#tools)).
 
 ## Human-in-the-loop reviews
 

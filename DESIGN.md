@@ -507,7 +507,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   the entry, its type, when it was held and what was flagged ("Flagged for Harassment"), under a
   "Held" stamp in the `ai` tone, the one `held` has everywhere (the status table, the run log in
   Settings → AI): a model's decision waiting on a person. Republish (ink) asks in place first, with an optional reason,
-  because it overrides the agent; Keep unpublished (outline) acts in one press. AI usage and recent agent
+  because it overrides the agent (backing out drops the reason); Keep unpublished (outline) acts
+  in one press and sends no reason. AI usage and recent agent
   runs sit under the capabilities in Settings → AI.
 - **Content:** the content types as a catalog (`PageHeader` with New content type): each type's
   icon as its tile (its own, else the one its name suggests, else its initials), its name linked to its entries (a singleton's to its one entry, `/entry`, as the
