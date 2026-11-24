@@ -199,7 +199,7 @@ describe('a locked region on the canvas', () => {
 
     openLayers();
     expect(layer('s1').textContent).toMatch(/Locked by you · Nov 9, 2026/);
-    expect(screen.getByRole('group', { name: 'Items · 1 of 1–2 · locked' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Items · 1/1–2 used · locked' })).toBeTruthy();
     act(() => layer('s1').click());
     expect(
       screen.getByText(

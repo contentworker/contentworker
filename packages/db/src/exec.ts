@@ -98,6 +98,24 @@ export class UnitOfWork implements Exec {
   }
 }
 
+/**
+ * Runs several write statements as one atomic step: inside a unit of work they join its batch;
+ * outside one they go out as a single `db.batch()` (one round trip, all-or-nothing), never
+ * separate auto-committed statements.
+ */
+export async function writeAll(x: Exec, queries: readonly BatchItem<'sqlite'>[]): Promise<void> {
+  if (queries.length === 0) return;
+  if (x.inUnit || queries.length === 1) {
+    for (const q of queries) await x.write(q);
+    return;
+  }
+  try {
+    await x.db.batch(queries as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  } catch (err) {
+    throw mapD1Error(err);
+  }
+}
+
 export const messageOf = (err: unknown): string => {
   const parts: string[] = [];
   let cur: unknown = err;

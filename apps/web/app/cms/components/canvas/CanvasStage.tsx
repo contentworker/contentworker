@@ -440,7 +440,7 @@ function SeamMark({
           data-seam-line
           className={cn(
             'absolute bg-overlay-halo transition-opacity duration-(--motion-instant) group-hover:opacity-100',
-            drop ? 'opacity-90' : 'opacity-60',
+            drop ? 'opacity-90' : 'opacity-80',
             across
               ? 'inset-x-0 top-1/2 h-[3px] -translate-y-1/2'
               : 'inset-y-0 left-1/2 w-[3px] -translate-x-1/2',

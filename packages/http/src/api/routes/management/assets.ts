@@ -1,9 +1,11 @@
 import {
+  ASSET_FROM_URL_MAX_BYTES,
   type AssetBulkAction,
   assetBulkActionPublishes,
   assetSearchDeps,
   auditActor,
   createAsset,
+  createAssetFromUrl,
   createVideoAsset,
   listAssets,
   MAX_PAGE_LIMIT,
@@ -23,6 +25,7 @@ import {
   assetBulkBody,
   assetReindexBody,
   createAssetBody,
+  createAssetFromUrlBody,
   createVideoAssetBody,
   moveAssetsBody,
   parseBody,
@@ -138,6 +141,45 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         ...(folderId ? { folderId } : {}),
       });
       return c.json({ ...created, asset: await signedOne(c, created.asset) }, 201);
+    },
+  );
+  app.post(
+    `${BASE}/assets/from-url`,
+    doc('Assets', 'Create an asset from a file at a URL', {
+      body: createAssetFromUrlBody,
+      ok: assetDocs.assetFromUrl,
+      status: 201,
+      description:
+        'The api downloads the file (GET, no redirects, at most ' +
+        `${ASSET_FROM_URL_MAX_BYTES / 1024 / 1024} MiB, 30 seconds) and stores it as a draft, ` +
+        'then ingest runs as for an upload. A URL that is not http(s) or names a loopback, ' +
+        'link-local or private address is refused (422), as is one that answers anything but ' +
+        '2xx, an empty body or a file over the cap. When an asset in the environment already ' +
+        'holds exactly these bytes (once ingest has hashed it), that asset is returned with ' +
+        'deduplicated: true and status 200, and nothing is created. 501 when the deployment ' +
+        'has no outbound fetcher.',
+    }),
+    requireScope(SCOPES.assetsWrite),
+    async (c) => {
+      if (!deps.remoteFetcher) {
+        throw new NotConfiguredError('outbound fetch', 'This deployment cannot download files');
+      }
+      const { folderId, ...input } = await parseBody(c, createAssetFromUrlBody);
+      const created = await createAssetFromUrl(
+        ctx,
+        {
+          blob,
+          fetcher: deps.remoteFetcher,
+          ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}),
+        },
+        scopeOf(c),
+        { ...input, ...(folderId ? { folderId } : {}) },
+        { createdBy: auditActor(c.get('principal')) },
+      );
+      return c.json(
+        { ...created, asset: await signedOne(c, created.asset) },
+        created.deduplicated ? 200 : 201,
+      );
     },
   );
   app.post(

@@ -746,6 +746,23 @@ export const createAssetBody = z.object({
   description: zLocalized.optional(),
   folderId: zId.optional().describe('File it in this folder (absent: the library root)'),
 });
+export const createAssetFromUrlBody = z.object({
+  url: z
+    .string()
+    .min(1)
+    .max(2048)
+    .describe('A public http(s) URL answering 200 with the file; redirects are not followed'),
+  fileName: z
+    .string()
+    .min(1)
+    .max(1024)
+    .optional()
+    .describe("The stored file name (absent: the URL path's last segment)"),
+  title: z.string().max(1024).optional(),
+  alt: z.string().max(1024).optional().describe('Alt text, kept as given'),
+  locale: zLocale.optional().describe("The locale of title and alt (absent: the space's default)"),
+  folderId: zId.optional().describe('File it in this folder (absent: the library root)'),
+});
 export const moveAssetsBody = z.object({
   ids: z.array(zId).min(1).max(MAX_ASSET_MOVE),
   folderId: zId.nullable().describe('The folder to file them in; null takes them to the root'),

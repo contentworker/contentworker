@@ -199,7 +199,9 @@ import {
   messageOf,
   selectChunked,
   UnitOfWork,
+  writeAll,
 } from './exec';
+import { makeMigrationStore } from './migration-store';
 import { buildFilterPrefilter, buildSearchPrefilter } from './query-pushdown';
 import * as schema from './schema';
 
@@ -211,24 +213,6 @@ const registered = (t: { spaceId: unknown; environmentId: unknown }) =>
 
 const scopeFilter = (t: { spaceId: unknown; environmentId: unknown }, scope: Scope) =>
   and(eq(t.spaceId as never, scope.spaceId), eq(t.environmentId as never, scope.environmentId));
-
-/**
- * Runs several write statements as one atomic step: inside a unit of work they join its batch;
- * outside one they go out as a single `db.batch()` (one round trip, all-or-nothing), never
- * separate auto-committed statements.
- */
-async function writeAll(x: Exec, queries: readonly Query[]): Promise<void> {
-  if (queries.length === 0) return;
-  if (x.inUnit || queries.length === 1) {
-    for (const q of queries) await x.write(q);
-    return;
-  }
-  try {
-    await x.db.batch(queries as unknown as [Query, ...Query[]]);
-  } catch (err) {
-    throw mapD1Error(err);
-  }
-}
 
 /**
  * Guard statements that abort the batch (TransactionConflictError) unless the asset folder exists
@@ -5100,6 +5084,9 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.entryMetadata,
   schema.redirects,
   schema.redirectSets,
+  schema.migrationRuns,
+  schema.migrationTemplates,
+  schema.migrationPages,
   schema.menus,
   schema.blockCatalogs,
   schema.blockConfigs,
@@ -8091,6 +8078,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     members: makeMemberRepo(x),
     aiSettings: { save: makeAiSettingsRepo(x).save },
     aiProjects: makeAiProjectRepo(x),
+    migrations: makeMigrationStore(x),
   };
 }
 
@@ -8151,6 +8139,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     blockConfigs: makeBlockConfigRepo(x),
     aiSettings: makeAiSettingsRepo(x),
     aiProjects: makeAiProjectRepo(x),
+    migrations: makeMigrationStore(x),
     aiReferenceExtractions: makeAiReferenceExtractionRepo(x),
     savedViews: makeSavedViewRepo(x),
     bulkJobs: makeBulkJobRepo(x),

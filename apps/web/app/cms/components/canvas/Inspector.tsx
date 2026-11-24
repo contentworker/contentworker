@@ -232,7 +232,7 @@ export function Inspector(props: InspectorProps) {
           {block.name}
         </h2>
         <p className="text-muted-foreground text-xs">
-          In {where}, {block.index + 1} of {block.slot.blocks.length}
+          Block {block.index + 1} of {block.slot.blocks.length} in {where}
         </p>
       </div>
 

@@ -56,6 +56,18 @@ are `asset_create` (the signed upload), `asset_publish` and `asset_unpublish`, w
 read one asset and `asset_upload_start` for a large file (below); it can also list, file, archive
 and delete assets, replace their files, edit metadata and rights, and create videos.
 
+### Create an asset from a URL
+
+When the file is already on the web, `POST …/assets/from-url` with `{ "url": "https://…" }` and,
+optionally, `fileName`, `title`, `alt`, `locale` (for the title and alt text; the space's default
+otherwise) and `folderId`. ContentWorker downloads the file itself and creates a draft (`201`), and
+processing runs as after any upload. The URL must be public http or https: a loopback, link-local
+or private address is refused, redirects are not followed, and the file must answer `2xx` within 30
+seconds and be at most 50 MiB (`422` otherwise). If an asset in the environment already holds
+exactly these bytes, that asset comes back with `deduplicated: true` (`200`) and nothing is created.
+It needs `assets:write`; over MCP it is `assets_create_from_url`, and in the Management SDK
+`cma.assets.createFromUrl({ url, … })`.
+
 ### Upload a large file
 
 One signed upload takes a file of up to 100 MiB. Past that, upload in parts, up to the

@@ -194,12 +194,18 @@ export function SiteNotice({
             This site isn’t connected for live preview
           </AlertTitle>
           <AlertDescription>
+            {/* A frame can't tell a silent page from the browser's own error page (the site
+                down, or refusing to be framed): both load and never offer, so both are said. */}
             <p>
-              The page loaded but didn’t offer to connect, so it shows the entry as saved. Edits
+              The page didn’t offer to connect. If it shows the entry, it shows it as saved: edits
               appear here as you type once the page calls{' '}
-              <span className="font-mono">connectPreview</span>.
+              <span className="font-mono">connectPreview</span>. If it shows an error instead, the
+              site may be down or may refuse to be framed.
             </p>
-            <p className="flex flex-wrap gap-x-4">
+            <p className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <Button type="button" variant="outline" size="sm" onClick={onReload}>
+                Try again
+              </Button>
               {/* The screen that prints the page's config and checks it connects: in a new tab,
                   so the edit in hand isn't left. */}
               <a
@@ -337,6 +343,12 @@ export function WidthSwitch(props: {
   presets: readonly WidthPreset[];
   value: WidthPreset;
   onChange: (id: string) => void;
+  /**
+   * The device in view named in words beside its icon (from xl), so the switch says it itself
+   * rather than a readout beside it. Its width stays in the tooltip and the accessible name: the
+   * frame scales the page to fit, so a width in the row would read as the size on screen.
+   */
+  named?: boolean;
 }) {
   return (
     <Segmented aria-label="Device width" value={props.value.id} onValueChange={props.onChange}>
@@ -351,6 +363,11 @@ export function WidthSwitch(props: {
             className={Icon ? undefined : 'max-w-32'}
           >
             {Icon ? <Icon aria-hidden="true" /> : <span className="truncate">{p.label}</span>}
+            {Icon && props.named && p.id === props.value.id ? (
+              <span aria-hidden="true" className="hidden xl:inline">
+                {p.label}
+              </span>
+            ) : null}
           </SegmentedItem>
         );
       })}

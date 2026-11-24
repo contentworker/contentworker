@@ -420,7 +420,7 @@ test('the rules set in Build → Blocks narrow the dock and lock a slot on the c
   ]);
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Layers' }).click();
-  await expect(page.getByRole('group', { name: 'Cards · 1 of 2 · locked' })).toBeAttached();
+  await expect(page.getByRole('group', { name: 'Cards · 1/2 used · locked' })).toBeAttached();
   await scan(page, testInfo, 'rules');
 });
 
@@ -576,7 +576,7 @@ test('Coworker fills a seam: its proposal shows as ghosts, Not now takes them of
     // The conversation is shared with tests running beside this one: this entry's card only.
     const card = panel.getByRole('region', { name: 'Change blocks' }).filter({ hasText: title });
     await expect(card.getByText('Coworker suggests this')).toBeVisible({ timeout: 15_000 });
-    await expect(card.getByRole('button', { name: 'Confirm' })).toBeEnabled();
+    await expect(card.getByRole('button', { name: 'Confirm and save draft' })).toBeEnabled();
     return card;
   };
   const ghost = site.locator('[data-cw-proposed]');
@@ -608,7 +608,7 @@ test('Coworker fills a seam: its proposal shows as ghosts, Not now takes them of
   // the entry again, the block now the page's own.
   const second = await ask();
   await expect(ghost).toHaveCount(1);
-  await second.getByRole('button', { name: 'Confirm' }).click();
+  await second.getByRole('button', { name: 'Confirm and save draft' }).click();
   await expect(page.getByText(`v${created + 1}`)).toBeVisible({ timeout: 15_000 });
   await expect(ghost).toHaveCount(0);
   await expect(blocks.nth(1)).toHaveText('Proposed by Coworker');

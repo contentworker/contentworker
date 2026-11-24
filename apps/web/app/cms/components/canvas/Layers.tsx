@@ -18,7 +18,7 @@
 import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
 import { Lock, MonitorSmartphone, Plus } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { ToneBadge } from '~/cms/components/status';
 import type { ActorDirectory } from '~/cms/lib/authorship';
 import { blockIndent } from '~/cms/lib/block-indent';
@@ -266,74 +266,102 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
   const filled = block.slots.filter((s) => s.blocks.length > 0 || s.min !== undefined);
   const ghost = props.marked?.get(block.key);
   const overrides = overrideNames(block.value, block.slot.breakpoints);
+  // Named by its own row (and lock line) only. Its nested blocks sit beside it, owned rather than
+  // inside: inside, they would be part of its visible text, and a name of the row alone would no
+  // longer hold the label it shows (WCAG 2.5.3); named from its content, it read every word run
+  // together ("SectionFeaturesCards · 1/2 usedCardFast").
+  const rowId = useId();
+  const lineId = useId();
+  const groupId = useId();
   return (
-    <div
-      role="treeitem"
-      aria-level={level}
-      aria-selected={isSelected}
-      aria-expanded={filled.length > 0 ? true : undefined}
-      tabIndex={block.key === props.tabStop ? 0 : -1}
-      data-layer={block.key}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (e.shiftKey && props.onExtend) props.onExtend(block.key);
-        else props.onSelect(block.key);
-      }}
-      onKeyDown={() => undefined}
-      className="rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-ring"
-    >
+    <>
       <div
-        className={cn(
-          'flex min-h-8 cursor-default items-center gap-2 rounded-lg py-1 pr-2 text-sm touch:min-h-11',
-          isSelected
-            ? 'bg-accent font-medium text-accent-foreground'
-            : 'text-foreground hover:bg-accent/60',
-        )}
-        style={{ paddingLeft: `${0.5 + blockIndent(level - 1)}rem` }}
+        role="treeitem"
+        aria-labelledby={says ? `${rowId} ${lineId}` : rowId}
+        aria-owns={filled.length > 0 ? groupId : undefined}
+        aria-level={level}
+        aria-selected={isSelected}
+        aria-expanded={filled.length > 0 ? true : undefined}
+        tabIndex={block.key === props.tabStop ? 0 : -1}
+        data-layer={block.key}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (e.shiftKey && props.onExtend) props.onExtend(block.key);
+          else props.onSelect(block.key);
+        }}
+        onKeyDown={() => undefined}
+        className="rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-ring"
       >
-        {lock?.own ? <Lock aria-hidden="true" className="size-3 shrink-0" /> : null}
-        <span className="truncate">{block.name}</span>
-        {block.label ? (
-          <span className="min-w-0 truncate text-muted-foreground text-xs">{block.label}</span>
-        ) : null}
-        {lock?.own && !says ? <span className="sr-only">, locked</span> : null}
-        {overrides.length > 0 ? <span className="sr-only">, </span> : null}
-        {overrides.length > 0 ? (
-          <span
-            role="img"
-            data-overrides
-            aria-label={`Has overrides at ${overrides.join(', ')}`}
-            title={`Has overrides at ${overrides.join(', ')}`}
-            className="inline-flex shrink-0 text-muted-foreground"
-          >
-            <MonitorSmartphone aria-hidden="true" className="size-3" />
-          </span>
-        ) : null}
-        {ghost ? (
-          <span className="ml-auto shrink-0">
-            <span className="sr-only">, </span>
-            <ToneBadge tone="ai" label={ghostLabel(ghost)} />
-          </span>
-        ) : null}
-        {block.variant ? null : (
-          <span className="ml-auto shrink-0">
-            <ToneBadge tone="bad" label="Removed from code" />
-          </span>
-        )}
-      </div>
-      {says ? (
-        <p
-          data-locked-line
-          className="pb-1 text-2xs text-muted-foreground"
+        <div
+          id={rowId}
+          className={cn(
+            'flex min-h-8 cursor-default items-center gap-2 rounded-lg py-1 pr-2 text-sm touch:min-h-11',
+            isSelected
+              ? 'bg-accent font-medium text-accent-foreground'
+              : 'text-foreground hover:bg-accent/60',
+          )}
           style={{ paddingLeft: `${0.5 + blockIndent(level - 1)}rem` }}
         >
-          <span className="sr-only">, </span>
-          {lockedLine(says, props.directory)}
-        </p>
-      ) : null}
+          {lock?.own ? <Lock aria-hidden="true" className="size-3 shrink-0" /> : null}
+          <span className="truncate">{block.name}</span>
+          {block.label ? (
+            <>
+              {' '}
+              <span className="sr-only">, </span>
+            </>
+          ) : null}
+          {block.label ? (
+            <span className="min-w-0 truncate text-muted-foreground text-xs">{block.label}</span>
+          ) : null}
+          {lock?.own && !says ? <span className="sr-only">, locked</span> : null}
+          {overrides.length > 0 ? (
+            <>
+              {' '}
+              <span className="sr-only">, </span>
+            </>
+          ) : null}
+          {overrides.length > 0 ? (
+            <span
+              role="img"
+              data-overrides
+              aria-label={`Has overrides at ${overrides.join(', ')}`}
+              title={`Has overrides at ${overrides.join(', ')}`}
+              className="inline-flex shrink-0 text-muted-foreground"
+            >
+              <MonitorSmartphone aria-hidden="true" className="size-3" />
+            </span>
+          ) : null}
+          {ghost ? (
+            <span className="ml-auto shrink-0">
+              {' '}
+              <span className="sr-only">, </span>
+              <ToneBadge tone="ai" label={ghostLabel(ghost)} />
+            </span>
+          ) : null}
+          {block.variant ? null : (
+            <span className="ml-auto shrink-0">
+              {' '}
+              <span className="sr-only">, </span>
+              <ToneBadge tone="bad" label="Removed from code" />
+            </span>
+          )}
+        </div>
+        {says ? (
+          <p
+            id={lineId}
+            data-locked-line
+            className="pb-1 text-2xs text-muted-foreground"
+            style={{ paddingLeft: `${0.5 + blockIndent(level - 1)}rem` }}
+          >
+            {/* The space keeps the row's words and these apart in the item's visible text. */}{' '}
+            <span className="sr-only">, </span>
+            {lockedLine(says, props.directory)}
+          </p>
+        ) : null}
+      </div>
       {filled.length > 0 ? (
         // biome-ignore lint/a11y/useSemanticElements: a tree item's children, not a form fieldset.
-        <div role="group" className="flex flex-col">
+        <div id={groupId} role="group" className="flex flex-col">
           {filled.map((slot) => (
             <div key={slot.path} role="none">
               <div
@@ -354,6 +382,6 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
           ))}
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
