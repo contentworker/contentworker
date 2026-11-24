@@ -1596,6 +1596,7 @@ export const migrationPages = sqliteTable(
     output: text('output', { mode: 'json' }).$type<MigrationArtifact>(),
     score: text('score', { mode: 'json' }).$type<MigrationScore>(),
     entryId: text('entry_id'),
+    /** 0049_site_migration_load. */
     unresolvedLinks: integer('unresolved_links').notNull().default(0),
     error: text('error'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
@@ -1609,7 +1610,7 @@ export const migrationPages = sqliteTable(
   ],
 );
 
-/** The assets a run created from URLs (0048_site_migrations), one per URL. */
+/** The assets a run created from URLs (0049_site_migration_load), one per URL. */
 export const migrationAssets = sqliteTable(
   'migration_assets',
   {

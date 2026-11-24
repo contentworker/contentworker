@@ -13,7 +13,7 @@ import { createD1Store } from '../src/store';
 import { testDb } from './env';
 
 /**
- * Site migrations on D1 (0048_site_migrations): a run rewritten whole at its version's
+ * Site migrations on D1 (0048_site_migrations, 0049_site_migration_load): a run rewritten whole at its version's
  * compare-and-set, pages added past the 100-parameter cap with one page per URL, pages listed by
  * fetch state and stage, a clustering's templates and assignments replaced in one batch, scope
  * isolation, and the tables cleared with their environment. The file shares one database: each
