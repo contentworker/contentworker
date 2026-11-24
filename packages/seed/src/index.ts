@@ -9,7 +9,7 @@ import {
 import { type ApiKeyKind, scopesForKind } from '@contentworker/domain';
 import { logger } from '@contentworker/telemetry';
 import { seedAgents } from './agents';
-import { seedAssets } from './assets';
+import { restoreSeedFiles, seedAssets } from './assets';
 import { seedAutomation } from './automation';
 import { seedCollaboration } from './collaboration';
 import { seedContentModel } from './content-model';
@@ -62,6 +62,9 @@ const ENTERPRISE_MARKER_TAG = 'enterprise-starter-v1';
 
 /** The extra content types (`seedModelExtras`), marked apart so they reach a dev space already seeded. */
 const MODEL_EXTRAS_MARKER_TAG = 'demo-model-extras-v1';
+
+/** The seeded assets' files (`restoreSeedFiles`), for a space seeded before the seed wrote any. */
+const ASSET_FILES_MARKER_TAG = 'demo-asset-files-v1';
 
 /**
  * Idempotently bootstraps a fully-populated dev environment: the seed space,
@@ -136,6 +139,13 @@ export async function seedDev(
   if (!tags.some((t) => t.name === MODEL_EXTRAS_MARKER_TAG)) {
     await seedModelExtras(run);
     await createTag(ctx, scope, { name: MODEL_EXTRAS_MARKER_TAG });
+  }
+  // Before the dataset's own marker: a space seeded before the seed stored files has every
+  // other part, so only this pass would ever reach it. On a fresh space it finds nothing, and
+  // `seedAssets` below writes the files as it creates the assets.
+  if (deps.blob && !tags.some((t) => t.name === ASSET_FILES_MARKER_TAG)) {
+    await restoreSeedFiles(run, deps.blob);
+    await createTag(ctx, scope, { name: ASSET_FILES_MARKER_TAG });
   }
   if (tags.some((t) => t.name === MARKER_TAG)) return;
 

@@ -54,6 +54,14 @@ describe('generateAltText', () => {
     expect((await getAsset(ctx, scope, id)).metadata.altText).toEqual({});
   });
 
+  it('drops emoji the model adds to alt text', async () => {
+    const id = await newImage(ctx, blob);
+    const ai = new StubAIProvider(() => ({
+      altText: '\u{1F305} Sunset over the bay \u{2728}\u{FE0F}',
+    }));
+    expect((await generateAltText(ctx, ai, scope, id)).altText).toBe('Sunset over the bay');
+  });
+
   it('writes alt text to metadata when apply=true', async () => {
     const id = await newImage(ctx, blob);
     const ai = new StubAIProvider(() => ({ altText: 'Sunset on the coast.' }));
@@ -212,6 +220,15 @@ describe('autoTagAsset', () => {
     expect(result.newTags).toEqual(['Dusk']);
     expect((await listTags(ctx, scope)).map((t) => t.name)).toEqual(['Dusk']);
     expect((await getAsset(ctx, scope, id)).metadata.tags).toHaveLength(1);
+  });
+
+  it('drops emoji from suggested tag names, and a name that was only emoji', async () => {
+    const id = await newImage(ctx, blob);
+    const ai = new StubAIProvider(() => ({
+      existingTags: [],
+      newTags: ['\u{1F3D6}\u{FE0F} beach', '\u{1F389}', 'dusk'],
+    }));
+    expect((await autoTagAsset(ctx, ai, scope, id)).newTags).toEqual(['beach', 'dusk']);
   });
 });
 

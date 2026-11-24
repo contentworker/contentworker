@@ -4,6 +4,7 @@ import type { LiveHubDO } from '@contentworker/platform/do/live-hub';
 import type { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
 import type { SearchShardDO } from '@contentworker/platform/do/search-shard';
 import type { AssistantAgent } from '../src/assistant';
+import type { MigrationTestAgent } from './fixtures/migration';
 
 // Bindings provided by vitest.config.ts (miniflare section), typed as
 // required — unlike EdgeEnv, where every binding is optional.
@@ -23,6 +24,8 @@ declare global {
       readonly ASSET_INGEST_WF: Workflow;
       readonly ASSET_ZIP_WF: Workflow;
       readonly APP_OPERATION_WF: Workflow;
+      readonly MIGRATION_WF: Workflow;
+      readonly MIGRATION_AGENT: DurableObjectNamespace<MigrationTestAgent>;
       readonly MEDIA_BUCKET: R2Bucket;
       readonly ASSISTANT_AGENT: DurableObjectNamespace<AssistantAgent>;
       readonly DB: D1Database;

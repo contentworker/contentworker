@@ -156,7 +156,7 @@ export function ContentTypesOverview() {
     <div>
       <PageHeader
         title="Content"
-        subtitle="Each content type is a schema; its entries are the content. Open one to browse and edit its entries."
+        subtitle="Content types define the fields each kind of entry has. Open one to browse and edit its entries."
         actions={
           <Button size="sm" onClick={() => setDialog({ open: true })}>
             <Plus aria-hidden="true" /> New content type

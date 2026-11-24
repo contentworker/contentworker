@@ -4,6 +4,7 @@ import {
   api,
   asFreshDeployment,
   askCoworker,
+  assetAction,
   createBlocksPage,
   createChanged,
   createDraft,
@@ -377,7 +378,7 @@ test('the asset library, its list view and its bulk bar have no accessibility vi
     .getByRole('button', { name: `A11y ${stamp}`, exact: true })
     .click();
   await library.getByRole('combobox', { name: 'Status' }).selectOption('archived');
-  await library.getByRole('button', { name: `Delete “A11y ${stamp} archived”` }).click();
+  await assetAction(page, library, `A11y ${stamp} archived`, 'Delete…');
   const confirm = page.getByRole('alertdialog', { name: `Delete “A11y ${stamp} archived”?` });
   await expect(confirm.getByRole('button', { name: 'Delete asset' })).toBeVisible();
   await scan(page, testInfo);

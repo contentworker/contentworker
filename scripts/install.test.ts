@@ -73,6 +73,7 @@ test('one install keeps the base names; a named instance carries its name everyw
       'contentworker-asset-ingest-acme',
       'contentworker-asset-zip-acme',
       'contentworker-app-operation-acme',
+      'contentworker-migration-acme',
     ],
   );
   assert.equal(named.d1_databases[0].database_name, n.d1);

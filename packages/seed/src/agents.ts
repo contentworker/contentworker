@@ -6,7 +6,7 @@ import {
   listAgentSchedules,
 } from '@contentworker/application';
 import { logger } from '@contentworker/telemetry';
-import { backdated, localized, pick } from './helpers';
+import { backdated, localized, pick, prose, WORDS } from './helpers';
 import type { SeedRun } from './types';
 
 /**
@@ -23,25 +23,13 @@ export async function seedAgents(run: SeedRun, articleIds: readonly string[]): P
   }
 
   if (articleIds.length >= 8 && (await listAgentReviews(ctx, scope, {})).length === 0) {
-    const proposals = [
-      { field: 'summary', note: 'Tightened the summary to one concrete claim' },
-      { field: 'summary', note: 'Rewrote the summary for a practitioner audience' },
-      { field: 'body', note: 'Flagged an unsourced statistic and proposed neutral wording' },
-      { field: 'summary', note: 'Aligned the summary with the updated title' },
-      { field: 'body', note: 'Proposed splitting the second paragraph' },
-      { field: 'summary', note: 'Added the audience and outcome to the summary' },
-      { field: 'body', note: 'Moderation: softened absolute claims in paragraph three' },
-      { field: 'summary', note: 'Localized-summary parity check produced a revision' },
-    ] as const;
-    for (let i = 0; i < proposals.length; i++) {
-      const p = proposals[i]!;
+    for (let i = 0; i < 8; i++) {
+      const { field, value, note } = articleProposal(i);
       await createAgentReview(ctx, scope, {
         workflow: pick(['enrich', 'moderate', 'curate'] as const, i),
         entryId: articleIds[i]!,
-        proposed: {
-          [p.field]: localized(locale, `Agent proposal #${i + 1}: ${p.note.toLowerCase()}.`),
-        },
-        notes: [p.note, `Seeded review ${i + 1} — approve or reject in the admin.`],
+        proposed: { [field]: localized(locale, value) },
+        notes: [note],
       });
     }
   }
@@ -103,4 +91,80 @@ async function seedAgentRuns(run: SeedRun, articleIds: readonly string[]): Promi
     }
   }
   logger.info({ runs: n }, 'seed: created sample agent runs');
+}
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * The proposal seeded for generated article `i`: a rewrite of that article's real summary or
+ * body (built from the same word lists as the corpus, so it stays deterministic), with the
+ * reason kept for the note. Approvals diffs the proposed value against the entry's current one,
+ * so the value has to read like content an agent would actually write, never like a label.
+ */
+function articleProposal(i: number): {
+  field: 'summary' | 'body';
+  value: string;
+  note: string;
+} {
+  const topic = pick(WORDS.topics, i);
+  const audience = pick(WORDS.audiences, i);
+  const outcome = pick(WORDS.outcomes, i);
+  const body = prose(i);
+  // The corpus body's second paragraph ends on an unattributed result; see `prose`.
+  const claim = `Teams that adopted this ${outcome}.`;
+  // Only the first eight articles get one; article 7 is the corpus's first `changed` entry, whose
+  // draft summary carries the patch's prefix.
+  switch (i) {
+    case 0:
+      return {
+        field: 'summary',
+        value: `${capitalize(audience)} ${outcome} by getting ${topic} right.`,
+        note: 'Tightened the summary to one concrete claim.',
+      };
+    case 1:
+      return {
+        field: 'summary',
+        value: `A working playbook for ${topic}: the steps ${audience} took to ${outcome}.`,
+        note: 'Rewrote the summary for practitioners, leading with what to do.',
+      };
+    case 2:
+      return {
+        field: 'body',
+        value: body.replace(
+          claim,
+          `Teams we spoke to that adopted this report that they ${outcome}.`,
+        ),
+        note: 'The second paragraph states a result without a source; proposed attributed wording.',
+      };
+    case 3:
+      return {
+        field: 'summary',
+        value: `Why ${audience} are ${pick(WORDS.verbs, i).toLowerCase()} ${topic}, and how it helps them ${outcome}.`,
+        note: 'Aligned the summary with the title.',
+      };
+    case 4:
+      return {
+        field: 'body',
+        value: body.replace(` ${claim}`, `\n\n${claim}`),
+        note: 'Split the second paragraph so the result stands on its own.',
+      };
+    case 5:
+      return {
+        field: 'summary',
+        value: `${capitalize(outcome)}: field notes from ${audience} on ${topic}.`,
+        note: 'Led the summary with the outcome.',
+      };
+    case 6:
+      return {
+        field: 'body',
+        value: body.replace('is what separates', 'is often what separates'),
+        note: 'Softened an absolute claim in the opening paragraph.',
+      };
+    default:
+      return {
+        field: 'summary',
+        value: `What ${audience} learned running ${topic} in production.`,
+        note: 'Dropped the “Revised:” prefix, which reads as an editing note rather than a summary.',
+      };
+  }
 }

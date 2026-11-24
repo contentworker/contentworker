@@ -79,3 +79,35 @@ export function AssetPreview(props: { asset: Asset; alt: string; className?: str
     />
   );
 }
+
+/**
+ * A small square thumbnail for an asset in a picker (a Link field's combobox): the image itself,
+ * or its file-type icon for anything else and for an image that fails to load. Decorative: the
+ * asset's name stands beside it.
+ */
+export function AssetThumb(props: { src?: string; contentType?: string; className?: string }) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const box = cn('size-6 shrink-0 rounded-md', props.className);
+  if (!props.src || failedSrc === props.src) {
+    const Icon = fileTypeIcon(props.contentType ?? '');
+    return (
+      <span
+        aria-hidden="true"
+        data-testid="asset-thumb-fallback"
+        className={cn(box, 'grid place-items-center bg-muted text-muted-foreground')}
+      >
+        <Icon className="size-3.5" />
+      </span>
+    );
+  }
+  const src = props.src;
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      onError={() => setFailedSrc(src)}
+      className={cn(box, 'bg-muted object-cover')}
+    />
+  );
+}

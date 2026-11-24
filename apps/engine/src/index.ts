@@ -75,6 +75,7 @@ import {
   sweep,
 } from './heartbeat';
 import { runInLanes } from './lanes';
+import { MigrationTemplateAgent, MigrationWorkflow } from './migrations';
 import { newPurgePlan, planPurges, sendPurges } from './purges';
 import { AgentWorkflow } from './workflows/agent-workflow';
 import { AppOperationWorkflow } from './workflows/app-operation-workflow';
@@ -98,6 +99,8 @@ export {
   EditorialWorkflow,
   HotSetDO,
   LiveHubDO,
+  MigrationTemplateAgent,
+  MigrationWorkflow,
   RateLimiterDO,
   SearchShardDO,
 };

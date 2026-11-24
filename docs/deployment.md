@@ -118,7 +118,9 @@ resource that isn't there fails at the step that binds it.
 A release that needs more than `pnpm contentworker:deploy` is listed here, newest first, with what to do
 before deploying it. A release not listed needs nothing extra.
 
-- None yet.
+- The release that adds site migration's engine (`MigrationWorkflow`, `MigrationTemplateAgent`)
+  adds stateful-object migration tag `v8`. Nothing to do before deploying it, but once the engine
+  is on it, it can't be rolled back past it: a failed deploy of that release is fixed forward.
 
 ## What a deploy does
 

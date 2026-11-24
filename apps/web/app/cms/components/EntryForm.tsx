@@ -58,7 +58,7 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
 import { Textarea } from '@contentworker/ui/textarea';
-import { ArrowDown, ArrowUp, ChevronRight, Lock, Plus } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight, Lock, Plus, X } from 'lucide-react';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import type { ActorDirectory } from '../lib/authorship';
@@ -107,6 +107,8 @@ export interface PickOption {
   readonly contentType?: string;
   /** An asset's file type, so a field limited to some types offers only those. */
   readonly mimeType?: string;
+  /** An image asset's thumbnail (same-origin, signed), drawn beside its name in a picker. */
+  readonly thumbnailUrl?: string;
 }
 
 export interface Pickers {
@@ -2463,11 +2465,11 @@ function SymbolListInput(props: {
                 {item}
                 <button
                   type="button"
-                  className="rounded-full px-1 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                  className="hit-area flex size-4 items-center justify-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
                   aria-label={`Remove “${item}”`}
                   onClick={() => remove(i)}
                 >
-                  ×
+                  <X className="size-3" aria-hidden="true" />
                 </button>
               </Badge>
             </li>

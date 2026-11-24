@@ -211,14 +211,15 @@ delivery bind them by `script_name`) and handles:
   ticks if undelivered and given up after five tries. Every episode is also a log line
   (`scheduler job stale`, `scheduler job recovered`, `scheduler resumed`), with or without email.
 
-| Stateful object  | Keyed by                                             | Purpose                                                             |
-| ---------------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
-| `LiveHubDO`      | space:environment                                    | Live Content SSE fan-out                                            |
-| `SearchShardDO`  | space:environment:shard (8 default, `SEARCH_SHARDS`) | FTS5 lexical index (`packages/platform/src/do/search-shard.ts`)     |
-| `CostGuardDO`    | space                                                | AI request/token budget windows (interactive and background)        |
-| `HotSetDO`       | space:environment                                    | The Delivery URLs readers ask for, warmed after a purge             |
-| `RateLimiterDO`  | client IP                                            | Failed-authentication limiter                                       |
-| `AssistantAgent` | person (`usr_…`, or `local`)                         | The admin's assistant: its conversation, model turns and page edits |
+| Stateful object          | Keyed by                                             | Purpose                                                                                                    |
+| ------------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `LiveHubDO`              | space:environment                                    | Live Content SSE fan-out                                                                                   |
+| `SearchShardDO`          | space:environment:shard (8 default, `SEARCH_SHARDS`) | FTS5 lexical index (`packages/platform/src/do/search-shard.ts`)                                            |
+| `CostGuardDO`            | space                                                | AI request/token budget windows (interactive and background)                                               |
+| `HotSetDO`               | space:environment                                    | The Delivery URLs readers ask for, warmed after a purge                                                    |
+| `RateLimiterDO`          | client IP                                            | Failed-authentication limiter                                                                              |
+| `AssistantAgent`         | person (`usr_…`, or `local`)                         | The admin's assistant: its conversation, model turns and page edits                                        |
+| `MigrationTemplateAgent` | space:environment:run:template                       | A site migration template's authoring agent: its conversation and turns, deleted 30 days after it finishes |
 
 The assistant (`packages/http/src/assistant/`, hosted by `apps/engine/src/assistant.ts`) is an
 AIChatAgent whose tools are the MCP tools `ASSISTANT_TOOLS` names (`@contentworker/domain`), run
@@ -233,7 +234,9 @@ settled however it ends.
 Durable workflows: `AgentWorkflow` (`contentworker-agent`), `EditorialWorkflow`
 (`contentworker-editorial`), `AssetIngestWorkflow` (`contentworker-asset-ingest`) and
 `AssetZipWorkflow` (`contentworker-asset-zip`) and `AppOperationWorkflow` (`contentworker-app-operation`,
-[async plugin operations](./plugins.md#operations)), in `apps/engine/src/workflows/`.
+[async plugin operations](./plugins.md#operations)), in `apps/engine/src/workflows/`, and
+`MigrationWorkflow` (`contentworker-migration`, one run per
+[site migration](./domain-model.md#site-migrations)), in `apps/engine/src/migrations.ts`.
 
 Stateful-object migration tags only ever append (`apps/engine/wrangler.jsonc`, checked by
 `scripts/do-migrations.test.ts`).
@@ -760,11 +763,11 @@ retries, and cannot fail the request. What the outbox cannot do is _change or re
 
 | hook                  | fires                                          | mutate | veto |
 | --------------------- | ---------------------------------------------- | ------ | ---- |
-| `entry:beforeSave`    | `createEntry` / `updateEntry`                  | ✅     | ✅   |
-| `entry:beforePublish` | in `publishEntryTx`, before the unit commits   | —      | ✅   |
-| `entry:beforeTrash`   | `trashEntry`                                   | —      | ✅   |
-| `entry:beforePurge`   | `purgeEntry`                                   | —      | ✅   |
-| `asset:beforeCreate`  | `createAsset`, before the upload URL is minted | ✅     | ✅   |
+| `entry:beforeSave`    | `createEntry` / `updateEntry`                  | yes    | yes  |
+| `entry:beforePublish` | in `publishEntryTx`, before the unit commits   | no     | yes  |
+| `entry:beforeTrash`   | `trashEntry`                                   | no     | yes  |
+| `entry:beforePurge`   | `purgeEntry`                                   | no     | yes  |
+| `asset:beforeCreate`  | `createAsset`, before the upload URL is minted | yes    | yes  |
 
 Rules the seam holds:
 

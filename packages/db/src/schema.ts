@@ -19,6 +19,7 @@ import type {
   BlockManifest,
   BlockNarrowing,
   Breakpoint,
+  ContentTypeDraft,
   ContentTypeGrant,
   ContentTypeLayout,
   DomainEvent,
@@ -28,6 +29,7 @@ import type {
   InviteRole,
   LocalizedValue,
   MenuItem,
+  MigrationActor,
   MigrationArtifact,
   MigrationInventory,
   MigrationPageStage,
@@ -35,6 +37,7 @@ import type {
   MigrationScore,
   MigrationSource,
   MigrationTemplateStatus,
+  MigrationTrySummary,
   PluginManifest,
   PluginSettingValue,
   PromotedBlocks,
@@ -1567,6 +1570,12 @@ export const migrationTemplates = sqliteTable(
     fingerprint: text('fingerprint', { mode: 'json' }).$type<string[]>().notNull(),
     contentTypeId: text('content_type_id'),
     script: text('script', { mode: 'json' }).$type<MigrationArtifact>(),
+    /** 0050_site_migration_authoring. */
+    proposal: text('proposal', { mode: 'json' }).$type<ContentTypeDraft>(),
+    /** 0050_site_migration_authoring. */
+    lastTry: text('last_try', { mode: 'json' }).$type<MigrationTrySummary>(),
+    /** 0050_site_migration_authoring. */
+    approvedBy: text('approved_by', { mode: 'json' }).$type<MigrationActor>(),
     version: integer('version').notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
@@ -1596,6 +1605,8 @@ export const migrationPages = sqliteTable(
     html: text('html', { mode: 'json' }).$type<MigrationArtifact>(),
     fingerprint: text('fingerprint', { mode: 'json' }).$type<string[]>(),
     output: text('output', { mode: 'json' }).$type<MigrationArtifact>(),
+    /** 0050_site_migration_authoring. */
+    outputScript: text('output_script'),
     score: text('score', { mode: 'json' }).$type<MigrationScore>(),
     entryId: text('entry_id'),
     /** 0049_site_migration_load. */

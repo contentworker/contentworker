@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 
 /**
@@ -743,4 +743,19 @@ export async function seedShelfType(request: APIRequestContext) {
   });
   if (![200, 201].includes(res.status())) throw new Error(await res.text());
   await api(request, 'POST', `${MGMT}/content-types/shelf/published`);
+}
+
+/**
+ * Picks `item` from an asset's "More actions" menu in `scope` (the library, or the page). A status
+ * filter refetches the list, and a card re-rendered under an open menu closes it, so the trigger is
+ * pressed again until the item shows.
+ */
+export async function assetAction(page: Page, scope: Locator | Page, name: string, item: string) {
+  const trigger = scope.getByRole('button', { name: `More actions for “${name}”` });
+  const option = page.getByRole('menuitem', { name: item });
+  await expect(async () => {
+    if (!(await option.isVisible())) await trigger.click();
+    await expect(option).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 15_000 });
+  await option.click();
 }
