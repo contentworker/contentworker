@@ -1175,7 +1175,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   the rich text editor's own renderer. **Approving and publishing confirm on the page**, beside what
   they act on: the approval sends the digest of the version that was read, and a template that
   moved on since shows in the warning Alert, asking for the new version to be read ("I've read this
-  version") before Approve works again. A step a role can't take is absent, and what it takes is
+  version") before Approve works again. An approved template offers Reopen for changes… beside its
+  approval, confirmed there with a short list of what it leaves alone; Transform and Load then say
+  how many pages are to transform, and how many were loaded from an earlier version. A step a role can't take is absent, and what it takes is
   said once a section. A loop's failure keeps what its batches did; a publish that failed asks
   again rather than resending.
 

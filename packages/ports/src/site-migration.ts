@@ -47,6 +47,23 @@ export interface MigrationStore {
    * the unit is written). Any number of pages.
    */
   movePages(scope: Scope, runId: string, moves: readonly MigrationPageMove[]): Promise<void>;
+  /**
+   * Marks a template's pages whose `outputScript` is `from` as `to`, touching nothing else of them
+   * (not their `updatedAt`): how reopening a template keeps the version of outputs recorded by
+   * their script alone.
+   */
+  stampOutputs(
+    scope: Scope,
+    runId: string,
+    templateId: string,
+    from: string,
+    to: string,
+  ): Promise<void>;
+  /**
+   * Fails the unit of work with `TransactionConflictError` unless the template is `approved` at
+   * `version` as the unit commits: what keeps a page from moving under an approval since withdrawn.
+   */
+  expectApproved(scope: Scope, runId: string, templateId: string, version: number): Promise<void>;
   getPage(scope: Scope, runId: string, id: string): Promise<MigrationPage | null>;
   /** The entries the run's pages at `urls` were loaded as (any number of URLs; none, absent). */
   entriesByUrl(
@@ -75,6 +92,16 @@ export interface MigrationStore {
   /** Pages in id order (discovery order), after the `after` id. */
   listPages(scope: Scope, runId: string, query: MigrationPageQuery): Promise<MigrationPage[]>;
   countPages(scope: Scope, runId: string): Promise<MigrationPageCounts>;
+  /**
+   * A template's fetched pages by stage, and how many of each have an output of one of `versions`
+   * (`outputScript`).
+   */
+  countOutputs(
+    scope: Scope,
+    runId: string,
+    templateId: string,
+    versions: readonly string[],
+  ): Promise<MigrationOutputCount[]>;
 
   /** The run's templates, largest first. */
   listTemplates(scope: Scope, runId: string): Promise<MigrationTemplate[]>;
@@ -176,6 +203,8 @@ export interface MigrationPageQuery {
   readonly after?: string;
   readonly stage?: MigrationPageStage;
   readonly templateId?: string;
+  /** Only pages whose `outputScript` is one of these. */
+  readonly outputScript?: readonly string[];
   /** Only pages whose entry holds links the relink pass may still resolve (`unresolvedLinks`). */
   readonly unresolvedLinks?: true;
   /** `false`: only pages whose last step didn't fail (`error` unset); `true`, only those that did. */
@@ -185,6 +214,13 @@ export interface MigrationPageQuery {
    * clustering reads). Absent, either.
    */
   readonly fetch?: 'pending' | 'fetched';
+}
+
+export interface MigrationOutputCount {
+  readonly stage: MigrationPageStage;
+  readonly pages: number;
+  /** Of them, those whose output is of one of the versions asked for. */
+  readonly current: number;
 }
 
 export interface MigrationPageCounts {

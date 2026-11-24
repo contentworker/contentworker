@@ -10,7 +10,7 @@ import {
   type MigrationTemplateView,
   refusedSave,
 } from '~/cms/lib/management';
-import { approvalLine, retryingConflicts } from '~/cms/lib/migrations';
+import { approvalLine, isReopened, retryingConflicts } from '~/cms/lib/migrations';
 import { useScopedQuery } from '~/cms/lib/queries';
 import { HELD, StepNotice, sentence } from './step-parts';
 import { stepFailure } from './use-step-runner';
@@ -20,6 +20,9 @@ import { stepFailure } from './use-step-runner';
  * beside what is being approved, naming the content type it creates or revises. It sends the digest
  * of the version the person read; a version that moved on while the page was open has to be read
  * (and said to be) before it can be approved, whether this page noticed or the API's 409 did.
+ *
+ * Approved, it can be reopened for changes, confirmed here too, saying what that leaves alone; then
+ * it is reviewed and approved again as any other.
  */
 export function TemplateApproval({
   template: t,
@@ -32,6 +35,7 @@ export function TemplateApproval({
   runFailed,
   reload,
   onApproved,
+  onReopened,
 }: {
   template: MigrationTemplateView;
   /** Content types the run's templates already hold: a type of that API ID is revised. */
@@ -47,6 +51,7 @@ export function TemplateApproval({
   runFailed: boolean;
   reload: () => Promise<unknown>;
   onApproved: (a: MigrationApproval) => void;
+  onReopened: (t: MigrationTemplateView) => void;
 }) {
   const { client } = useClient();
   const types = useScopedQuery(['content-types'], () => client.listContentTypes(), {
@@ -56,7 +61,10 @@ export function TemplateApproval({
   const [busy, setBusy] = useState(false);
   const [answer, setAnswer] = useState<MigrationApproval | null>(null);
   const [failed, setFailed] = useState<{ title: string; message: string } | null>(null);
+  // Reopened in this visit, so it is said once where the confirm was.
+  const [reopened, setReopened] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const reopener = useRef<HTMLButtonElement>(null);
   const said = useRef<HTMLParagraphElement>(null);
   const changed = t.status !== 'approved' && t.reviewDigest !== reviewed;
   // The changed version the notice was raised for. Reading is said of that one only: if it changes
@@ -72,8 +80,9 @@ export function TemplateApproval({
     if (changed) setAsking(false);
   }, [changed]);
   useEffect(() => {
-    if (answer) said.current?.focus();
-  }, [answer]);
+    // Each is said where the template's new status draws it, once it is read.
+    if (t.status === 'approved' ? answer : reopened) said.current?.focus();
+  }, [answer, reopened, t.status]);
 
   const approve = async (digest: string) => {
     if (busy) return;
@@ -84,6 +93,7 @@ export function TemplateApproval({
         client.approveMigrationTemplate(t.runId, t.id, digest),
       );
       setAnswer(a);
+      setReopened(false);
       onApproved(a);
     } catch (err) {
       await reload();
@@ -98,6 +108,31 @@ export function TemplateApproval({
           : told
             ? 'It may not have been told'
             : 'The approval didn’t confirm',
+        message: refusedSave(err)
+          ? stepFailure(err)
+          : `${sentence(stepFailure(err))}Its status above is read again: press again if it hasn’t changed.`,
+      });
+    } finally {
+      setBusy(false);
+      setAsking(false);
+    }
+  };
+
+  const reopen = async () => {
+    if (busy) return;
+    setBusy(true);
+    setFailed(null);
+    try {
+      const next = await retryingConflicts(() =>
+        client.reopenMigrationTemplate(t.runId, t.id, t.reviewDigest),
+      );
+      setAnswer(null);
+      setReopened(true);
+      onReopened(next);
+    } catch (err) {
+      await reload();
+      setFailed({
+        title: refusedSave(err) ? 'It wasn’t reopened' : 'The reopening didn’t confirm',
         message: refusedSave(err)
           ? stepFailure(err)
           : `${sentence(stepFailure(err))}Its status above is read again: press again if it hasn’t changed.`,
@@ -137,25 +172,77 @@ export function TemplateApproval({
             </Link>
           ) : null}
         </p>
-        {(answer === null || answer.reason === 'unreachable') && canApprove ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            aria-disabled={busy || undefined}
-            className={HELD}
-            onClick={() => {
-              if (!busy) void approve(t.reviewDigest);
+        {asking ? (
+          <InlineConfirm
+            message={<>Reopen “{t.label}” for changes?</>}
+            note="Its model and script can be edited again."
+            details={
+              <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+                <li>Pages not loaded yet are transformed again after it is approved again.</li>
+                <li>Loaded and published pages, and their entries, stay as they are.</li>
+                <li>A background run waits for the new approval.</li>
+              </ul>
+            }
+            onCancel={() => {
+              if (!busy) setAsking(false);
             }}
+            returnFocus={() => reopener.current}
           >
-            {busy ? 'Telling it…' : answer ? 'Tell it again' : 'Tell its background run'}
-          </Button>
-        ) : null}
+            <Button
+              type="button"
+              size="sm"
+              aria-disabled={busy || undefined}
+              className={HELD}
+              onClick={() => void reopen()}
+            >
+              {busy ? 'Reopening…' : 'Reopen template'}
+            </Button>
+          </InlineConfirm>
+        ) : canApprove ? (
+          <div className="flex flex-wrap gap-2 touch:gap-5">
+            {answer === null || answer.reason === 'unreachable' ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-disabled={busy || undefined}
+                className={HELD}
+                onClick={() => {
+                  if (!busy) void approve(t.reviewDigest);
+                }}
+              >
+                {busy ? 'Telling it…' : answer ? 'Tell it again' : 'Tell its background run'}
+              </Button>
+            ) : null}
+            {runFailed ? null : (
+              <Button
+                ref={reopener}
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-disabled={busy || undefined}
+                className={HELD}
+                onClick={() => {
+                  if (busy) return;
+                  setFailed(null);
+                  setAsking(true);
+                }}
+              >
+                Reopen for changes…
+              </Button>
+            )}
+          </div>
+        ) : canApprove === undefined ? (
+          <SkeletonPill aria-hidden="true" />
+        ) : (
+          <p className="text-muted-foreground text-xs">Reopening takes content:manage.</p>
+        )}
         {failed ? <StepNotice title={failed.title}>{failed.message}</StepNotice> : null}
       </div>
     );
   }
 
+  const isAgain = isReopened(t);
   const why = runFailed
     ? 'The run failed, so its templates can’t be approved.'
     : !t.proposal
@@ -211,9 +298,22 @@ export function TemplateApproval({
       ) : failed ? (
         <StepNotice title={failed.title}>{failed.message}</StepNotice>
       ) : null}
+      {isAgain ? (
+        <p
+          ref={said}
+          tabIndex={-1}
+          role="status"
+          className="max-w-measure text-sm outline-none wrap-anywhere"
+        >
+          {reopened
+            ? 'Reopened. Edit its model or script above, then approve it again.'
+            : 'Reopened for changes after it was approved.'}
+        </p>
+      ) : null}
       <p className="max-w-measure text-muted-foreground text-sm">
-        Approving creates and publishes its content type, and settles its model and script: neither
-        can be changed after that. Its pages are only taken in once it is approved.
+        {isAgain
+          ? 'Approving it again saves its content type as this model, replacing what was changed on the type since (field help, say), and publishes it. Its pages not loaded yet are transformed again; loaded and published pages, and their entries, stay as they are.'
+          : 'Approving creates and publishes its content type, and holds its model and script until someone reopens it. Its pages are only taken in once it is approved.'}
       </p>
       {asking && apiId ? (
         <InlineConfirm
@@ -223,7 +323,7 @@ export function TemplateApproval({
               <span>{t.proposal?.name}</span> (<code className="font-mono">{apiId}</code>).
             </>
           }
-          note="Its model and script can’t be changed afterwards. No entries are made yet."
+          note="Its model and script are held as approved until someone reopens it. No entries are made yet."
           details={
             exists && !mine ? (
               <p className="text-ui text-wait">

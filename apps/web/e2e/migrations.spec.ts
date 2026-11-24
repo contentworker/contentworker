@@ -312,6 +312,11 @@ async function stubRun(page: Page) {
           if (body.reviewed !== t?.reviewDigest) return json(route, {}, 409);
           write({ status: 'approved', contentTypeId: 'page' }, false);
           return json(route, { template: t, signalled: false, reason: 'no-driver' });
+        case 'reopen':
+          if (body.reviewed !== t?.reviewDigest) return json(route, {}, 409);
+          write({ status: 'authoring', approvedBy: null }, false);
+          for (const p of mine('validated')) p.stage = 'clustered';
+          return json(route, t);
         case 'transform': {
           const batch = mine('clustered').slice(0, 10);
           for (const p of batch) p.stage = 'validated';
@@ -334,6 +339,7 @@ async function stubRun(page: Page) {
             assetFailures: [],
             unresolvedLinks: 0,
             deferred: [],
+            stale: 0,
             more: mine('validated').length > 0,
           });
         }
@@ -464,6 +470,26 @@ test('a website migration: list, a new run, and its steps', async ({ page }, tes
   await expect(page.getByText(/^Approved\. Nothing is running this/)).toBeVisible();
   expect(calls.approve).toBe(2);
   await expect(page.getByRole('button', { name: 'Edit script' })).toHaveCount(0);
+
+  // Reopened for changes, confirmed on the page, edited under the same API ID and approved again.
+  await page.getByRole('button', { name: 'Reopen for changes…' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('stay as they are');
+  await scan(page, testInfo);
+  await page.getByRole('button', { name: 'Reopen template' }).click();
+  const reopened = page.getByText('Reopened. Edit its model or script above');
+  await expect(reopened).toBeFocused();
+  await page.getByRole('button', { name: 'Edit model' }).click();
+  const model = page.getByLabel('Content model as JSON');
+  const text = await model.inputValue();
+  await model.fill(text.replace('"apiId": "page"', '"apiId": "story"'));
+  await page.getByRole('button', { name: 'Propose model' }).click();
+  await expect(page.getByText(/apiId: must stay “page”/)).toBeVisible();
+  await model.fill(text);
+  await page.getByRole('button', { name: 'Propose model' }).click();
+  await scan(page, testInfo);
+  await page.getByRole('button', { name: 'Approve…' }).click();
+  await page.getByRole('button', { name: 'Approve template' }).click();
+  await expect(page.getByText(/^Approved\. Nothing is running this/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Transform until done' }).click();
   await expect(page.getByText('Transformed 20 pages: 20 validated, 0 need a fix.')).toBeVisible();

@@ -1385,6 +1385,8 @@ export type MigrationTemplateView = Omit<MigrationTemplate, 'script' | 'fingerpr
   readonly script: MigrationFile | null;
   /** What an approval names as the version a person read: its proposal and script, as one hash. */
   readonly reviewDigest: string;
+  /** On a read of one template, once approved: where its pages stand against what is approved. */
+  readonly pageVersions?: { readonly toTransform: number; readonly loadedEarlier: number } | null;
 };
 
 /** A template's import script as text, and its hash; both null before one is written. */
@@ -1445,6 +1447,8 @@ export interface MigrationLoadResult {
   readonly assetFailures: readonly MigrationPageFailure[];
   readonly unresolvedLinks: number;
   readonly deferred: readonly MigrationPageFailure[];
+  /** Pages an earlier version transformed, left as they are. */
+  readonly stale: number;
   readonly more: boolean;
 }
 
@@ -2967,6 +2971,14 @@ export function createManagementClient(
       reviewed: string,
     ): Promise<MigrationApproval> {
       return req('POST', `${templatePath(run, template)}/approve`, { reviewed });
+    },
+    /** Reopens an approved template as read at `reviewed`, to be changed (content:manage). */
+    reopenMigrationTemplate(
+      run: string,
+      template: string,
+      reviewed: string,
+    ): Promise<MigrationTemplateView> {
+      return req('POST', `${templatePath(run, template)}/reopen`, { reviewed });
     },
     /** Runs the approved script on a bounded batch of the template's pages (migration:run). */
     transformMigrationPages(

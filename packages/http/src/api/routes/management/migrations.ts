@@ -20,6 +20,7 @@ import {
   proposeTemplateModel,
   publishMigration,
   relinkMigratedPages,
+  reopenTemplate,
   type SiteMigrationDeps,
   setImportScript,
   startMigration,
@@ -64,6 +65,7 @@ import {
   migrationPublishBody,
   migrationRedirectsBody,
   migrationRelinkBody,
+  migrationReopenBody,
   migrationRunBody,
   migrationScriptBody,
   migrationTransformBody,
@@ -87,7 +89,8 @@ const TAG = 'Site migration';
  * who will approve its templates can follow it without being able to make it fetch. Each step
  * that writes content needs what that write needs as well: approving `content:manage`, loading
  * `content:write` and `assets:write`, relinking `content:write`, redirects `content:manage`, and
- * publishing `content:publish` (and `content:write` through a release). The use-cases check those
+ * publishing `content:publish` (and `content:write` through a release); reopening a template needs
+ * `content:manage`, as approving it does. The use-cases check those
  * again. Who acts is the authenticated caller, never a value from the body.
  *
  * Nothing here returns a page's HTML: a page names its stored copy by hash and size, and a
@@ -309,7 +312,8 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Checked as the type will be created: a unique `sourceUrl` field (added when left out), ' +
         'exactly one top-level blocks field for the body, and a URL pattern. Preview, agent ' +
         'instructions, layout and field help are dropped. Nothing in the model changes until ' +
-        'the template is approved. 400 (`invalid_state`) once it is being approved or approved.',
+        'the template is approved. 400 (`invalid_state`) once it is being approved or approved; ' +
+        'reopen it first (`…/reopen`). A reopened template’s `apiId` can’t change (422).',
     }),
     requireScope(SCOPES.migrationRun),
     async (c) => {
@@ -346,7 +350,8 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: migrationDocs.migrationTemplate,
       description:
         'Stores a new version (at most 256 KiB) without running it; try it next. A new version ' +
-        'changes the template’s `reviewDigest`. 400 (`invalid_state`) once it is being approved.',
+        'changes the template’s `reviewDigest`. 400 (`invalid_state`) once it is being approved ' +
+        'or approved (`…/reopen` it first).',
     }),
     requireScope(SCOPES.migrationRun),
     async (c) => {
@@ -396,7 +401,8 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'you, and approves the template; then tells the run’s driver (`signalled`, or `reason`: ' +
         '`no-driver`, `driver-finished`, `unreachable`). 409 when the template changed since ' +
         'the `reviewDigest` you name, or an unrelated type has its apiId. Approving an approved ' +
-        'template answers it again, and tells the driver again.',
+        'template at the same `reviewDigest` answers it again, and tells the driver again. A ' +
+        'reopened template’s type is revised, through the type’s own checks.',
     }),
     readScopes,
     async (c) => {
@@ -415,6 +421,33 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
     },
   );
 
+  app.post(
+    `${TEMPLATE}/reopen`,
+    doc(TAG, 'Reopen an approved template', {
+      body: migrationReopenBody,
+      ok: migrationDocs.migrationTemplate,
+      description:
+        'Needs `content:manage`. Back to `authoring`, so its model and script can be changed and ' +
+        'approved again; it keeps its content type, whose `apiId` can’t change. The type, its ' +
+        'entries and its pages stay as they are. Once approved again, its pages not loaded yet ' +
+        'are transformed again; loaded and published ones never are. A background run waits for ' +
+        'the new approval. 409 when it isn’t the version you read; 400 (`invalid_state`) unless ' +
+        'it is approved.',
+    }),
+    readScopes,
+    async (c) => {
+      const { reviewed } = await parseBody(c, migrationReopenBody);
+      return c.json(
+        migrationTemplateResponse(
+          await reopenTemplate(actingCtx(ctx, c), c.get('principal'), scopeOf(c), {
+            ...ref(c),
+            reviewed,
+          }),
+        ),
+      );
+    },
+  );
+
   // --- transform and load ---------------------------------------------------
   app.post(
     `${TEMPLATE}/transform`,
@@ -424,8 +457,9 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         `Runs the approved script on up to \`limit\` (default and most ${MIGRATION_TRANSFORM_REQUEST_MAX}) ` +
         'pages after `after`, scores each and moves it to `validated` or `needs-fix`. Call ' +
-        'again with `next` while `more` is true. Pages already transformed by this script ' +
-        'version are skipped. For a whole site, use `…/start`.',
+        'again with `next` while `more` is true. Pages already transformed by this approved ' +
+        'version (model and script) are skipped, as are loaded and published ones. 409 when the ' +
+        'template is reopened meanwhile. For a whole site, use `…/start`.',
     }),
     requireScope(SCOPES.migrationRun),
     async (c) => {
@@ -448,7 +482,9 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Needs `content:write` and `assets:write` too. Brings in the assets each output names ' +
         'and writes the entries as you, matched on `sourceUrl` (loading a page again updates ' +
         `its entry). Up to \`limit\` (default and most ${MIGRATION_LOAD_REQUEST_MAX}) pages; call ` +
-        'again while `more` is true. A refused page moves to `needs-fix` with the reason.',
+        'again while `more` is true. A refused page moves to `needs-fix` with the reason; one an ' +
+        'earlier approved version transformed is left, and counted as `stale`. 409 when the ' +
+        'template is reopened meanwhile.',
     }),
     requireScope(SCOPES.migrationRun),
     requireScope(SCOPES.contentWrite),

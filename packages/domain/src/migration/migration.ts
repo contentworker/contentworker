@@ -1,5 +1,5 @@
 import type { ContentTypeDraft } from '../content-type/content-type';
-import { type FieldIssue, InvalidStateError, ValidationError } from '../errors';
+import { ConflictError, type FieldIssue, InvalidStateError, ValidationError } from '../errors';
 import { compileWildcard, matchWildcard, type Wildcard } from './wildcard';
 
 /**
@@ -74,6 +74,19 @@ export class MigrationDriverFinishedError extends InvalidStateError {
   constructor(runId: string) {
     super(
       `The migration run "${runId}" has a driver that has finished: take the run on step by step`,
+    );
+  }
+}
+
+/**
+ * The template's approval a step began under no longer holds: it was reopened, or reopened and
+ * approved again, meanwhile. Nothing of the step was recorded; it starts over from the template
+ * as it is now.
+ */
+export class MigrationApprovalChangedError extends ConflictError {
+  constructor() {
+    super(
+      'The template was reopened while its pages were being taken on: go on once it is approved again',
     );
   }
 }
@@ -168,9 +181,10 @@ export interface MigrationPage {
   /** The import script's structured output for it; null until transformed. */
   readonly output: MigrationArtifact | null;
   /**
-   * SHA-256 of the script version its last transform ran (whether it produced `output` or
-   * failed); null until transformed. A page whose template's script has changed since is
-   * transformed again.
+   * The version of its template its last transform ran (whether it produced `output` or failed):
+   * the review digest of the model and script as approved. Null until transformed. A page
+   * transformed before templates could be reopened holds the script's SHA-256 alone. A page of an
+   * earlier version than the approved one is transformed again, unless it is loaded.
    */
   readonly outputScript: string | null;
   readonly score: MigrationScore | null;
@@ -188,6 +202,7 @@ export interface MigrationPage {
 }
 
 /**
+ * An approved template goes back to `authoring` when it is reopened, keeping its `contentTypeId`.
  * `approving`: an approval holds the template while it writes the content type; authoring writes
  * are refused until it finishes or lets go.
  */
@@ -204,7 +219,10 @@ export interface MigrationTemplate {
   readonly samplePageIds: readonly string[];
   /** The structure its pages share: the first page's fingerprint, which others were matched to. */
   readonly fingerprint: readonly string[];
-  /** The content type its pages become, once chosen. */
+  /**
+   * The content type its pages become, once approved. Kept when the template is reopened: pages
+   * loaded already are entries of that type, so a new approval revises it rather than another.
+   */
   readonly contentTypeId: string | null;
   /** Its import script, once written. */
   readonly script: MigrationArtifact | null;
@@ -215,7 +233,7 @@ export interface MigrationTemplate {
   readonly proposal: ContentTypeDraft | null;
   /** How its script did the last time it was tried on the sample pages. */
   readonly lastTry: MigrationTrySummary | null;
-  /** Who approved it: its pages are loaded as them. Null until approved. */
+  /** Who approved it: its pages are loaded as them. Null until approved, and while reopened. */
   readonly approvedBy: MigrationActor | null;
   readonly version: number;
   readonly createdAt: string;

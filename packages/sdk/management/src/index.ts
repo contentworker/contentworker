@@ -466,7 +466,7 @@ export interface MigrationTemplate {
   readonly id: string;
   readonly runId: string;
   readonly label: string;
-  /** `approving` while an approval writes its content type. */
+  /** `approving` while an approval writes its content type; `authoring` again once reopened. */
   readonly status: 'pending' | 'authoring' | 'approving' | 'approved';
   readonly pageCount: number;
   readonly samplePageIds: readonly string[];
@@ -479,6 +479,11 @@ export interface MigrationTemplate {
   readonly approvedBy: MigrationActor | null;
   /** What `approve` takes as `reviewed`: the proposal and script version as you read them. */
   readonly reviewDigest: string;
+  /**
+   * On a read of one template, once approved: pages the transform would take, and pages loaded or
+   * published from an earlier approved version (left as they are).
+   */
+  readonly pageVersions?: { readonly toTransform: number; readonly loadedEarlier: number } | null;
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -533,6 +538,8 @@ export interface MigrationLoadResult {
   readonly assetFailures: readonly MigrationPageFailure[];
   readonly unresolvedLinks: number;
   readonly deferred: readonly MigrationPageFailure[];
+  /** Pages left as they are because an earlier version made their output: transform them first. */
+  readonly stale: number;
   readonly more: boolean;
 }
 
@@ -3014,6 +3021,13 @@ export function createManagementClient(opts: ManagementClientOptions) {
           /** Why the driver wasn't told: approve again to retry an `unreachable` one. */
           reason?: 'no-driver' | 'driver-finished' | 'unreachable';
         }>(`${tplBase(run, template)}/approve`, { reviewed }),
+      /**
+       * Needs `content:manage`: an approved template goes back to `authoring`, to be changed and
+       * approved again over the content type it holds. `reviewed` is the `reviewDigest` you read
+       * (409 for another). Its pages, entries and type stay as they are.
+       */
+      reopen: (run: string, template: string, reviewed: string) =>
+        post<MigrationTemplate>(`${tplBase(run, template)}/reopen`, { reviewed }),
       /** At most 10 pages a call; go on with `after: next` while `more`. */
       transform: (
         run: string,

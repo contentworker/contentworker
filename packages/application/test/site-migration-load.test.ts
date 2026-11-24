@@ -3,6 +3,7 @@ import {
   ForbiddenError,
   type ImportScriptOutput,
   InvalidStateError,
+  MigrationApprovalChangedError,
   type MigrationPage,
   type MigrationRun,
   type MigrationTemplate,
@@ -31,8 +32,10 @@ import {
   publishMigration,
   publishRelease,
   relinkMigratedPages,
+  reopenTemplate,
   SYSTEM_CALLER,
   sha256Hex,
+  templateReviewDigest,
   updateEntry,
 } from '../src/index';
 
@@ -167,9 +170,11 @@ async function seed(
     title: null,
     lastModified: null,
     httpStatus: 200,
-    html: null,
+    // Fetched: named, not stored, since a load never reads it.
+    html: { key: 'html', sha256: 'html', bytes: 4 },
     fingerprint: null,
     output: null,
+    outputScript: null,
     score: null,
     entryId: null,
     unresolvedLinks: 0,
@@ -188,6 +193,9 @@ async function seed(
     fingerprint: [],
     contentTypeId: 'article',
     script: null,
+    proposal: null,
+    lastTry: null,
+    approvedBy: null,
     version: 1,
     createdAt: at,
     updatedAt: at,
@@ -199,11 +207,12 @@ async function seed(
     [{ template: t, pageIds: list.map((p) => p.id) }],
     at,
   );
+  const version = templateReviewDigest(t);
   const transformed = await Promise.all(
     list.map(async (p) => {
       const output = pages[p.path];
       if (output === null || output === undefined) {
-        return { ...p, templateId: t.id, stage: 'validated' as const };
+        return { ...p, templateId: t.id, stage: 'validated' as const, outputScript: version };
       }
       const raw = typeof output === 'string' ? output : JSON.stringify(output);
       const sha256 = sha256Hex(raw);
@@ -214,6 +223,7 @@ async function seed(
         templateId: t.id,
         stage: 'validated' as const,
         output: { key, sha256, bytes: raw.length },
+        outputScript: version,
       };
     }),
   );
@@ -979,5 +989,144 @@ describe('publishing a migration', () => {
       stage: 'loaded',
       error: 'The page’s entry no longer exists',
     });
+  });
+});
+
+describe('loading a template that is reopened', () => {
+  /** A template approved as `script` made it: its pages are of that version. */
+  const script = { key: 's', sha256: 'sha-1', bytes: 1 };
+  const reopen = (run: MigrationRun, t: MigrationTemplate) =>
+    reopenTemplate(ctx, admin, scope, {
+      runId: run.id,
+      templateId: t.id,
+      reviewed: templateReviewDigest(t),
+    });
+  /** Approved again with another script, as `approveTemplate` leaves it. */
+  async function approveAgain(run: MigrationRun, t: MigrationTemplate) {
+    const now = await store.migrations.getTemplate(scope, run.id, t.id);
+    const next: MigrationTemplate = {
+      ...(now as MigrationTemplate),
+      status: 'approved',
+      script: { ...script, sha256: 'sha-2' },
+      approvedBy: { kind: 'deployment' },
+      version: (now?.version ?? 0) + 1,
+    };
+    await store.migrations.saveTemplate(scope, run.id, next);
+    return next;
+  }
+  /** The run as clustering leaves it, so its templates can be written. */
+  async function seeded() {
+    const seedling = await seed(SITE, { script });
+    const now = await store.migrations.getRun(scope, seedling.run.id);
+    if (!now) throw new Error('no run');
+    await store.migrations.saveRun(
+      scope,
+      { ...now, status: 'clustered', version: now.version + 1 },
+      now.version,
+    );
+    return seedling;
+  }
+
+  it('loads nothing while it is reopened, and leaves an earlier version’s pages for a transform', async () => {
+    const { run, template } = await seeded();
+    const ref = { runId: run.id, templateId: template.id };
+    await loadTemplatePages(ctx, deps, admin, scope, { ...ref, batchSize: 1 });
+    const loaded = await pageAt(run, '/blog/one');
+    await updateEntry(ctx, scope, loaded.entryId as string, {
+      ...(await entryOf(run, '/blog/one')).fields,
+      title: { 'en-US': 'Edited by a person' },
+    });
+    await reopen(run, template);
+    await expect(loadTemplatePages(ctx, deps, admin, scope, ref)).rejects.toThrow(
+      InvalidStateError,
+    );
+    await approveAgain(run, template);
+    const result = await loadTemplatePages(ctx, deps, admin, scope, {
+      ...ref,
+      includeNeedsFix: true,
+    });
+    expect(result).toMatchObject({ loaded: 0, failed: [], stale: 2, more: false });
+    expect((await pageAt(run, '/blog/two')).stage).toBe('validated');
+    expect(await pageAt(run, '/blog/one')).toEqual(loaded);
+    expect((await entryOf(run, '/blog/one')).fields.title).toEqual({
+      'en-US': 'Edited by a person',
+    });
+    expect(await articles()).toBe(1);
+  });
+
+  it('moves no page under an approval withdrawn as the load commits', async () => {
+    const { run, template } = await seeded();
+    const unit = store.withTransaction.bind(store);
+    let overtaken = false;
+    vi.spyOn(store, 'withTransaction').mockImplementation(async (fn) => {
+      if (!overtaken) {
+        // The load's own unit is the one that moves pages: its entries are written by now.
+        const pages = await store.migrations.listPages(scope, run.id, { limit: 1 });
+        if ((await articles()) === 3 && pages[0]?.stage === 'validated') {
+          overtaken = true;
+          await reopen(run, template);
+        }
+      }
+      return unit(fn);
+    });
+    await expect(
+      loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id }),
+    ).rejects.toThrow(MigrationApprovalChangedError);
+    vi.restoreAllMocks();
+    expect(overtaken).toBe(true);
+    for (const path of Object.keys(SITE)) {
+      expect((await pageAt(run, path)).stage).toBe('validated');
+    }
+    // Approved as it was and loaded again: the entries that load wrote are found, not doubled.
+    const now = await store.migrations.getTemplate(scope, run.id, template.id);
+    await store.migrations.saveTemplate(scope, run.id, {
+      ...(now as MigrationTemplate),
+      status: 'approved',
+      version: (now?.version ?? 0) + 1,
+    });
+    expect(
+      await loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id }),
+    ).toMatchObject({ loaded: 3, stale: 0 });
+    expect(await articles()).toBe(3);
+  });
+
+  it('writes no entry once it is reopened while files download', async () => {
+    const { run, template } = await seeded();
+    const getBytes = files.getBytes.bind(files);
+    let overtaken = false;
+    vi.spyOn(files, 'getBytes').mockImplementation(async (...args) => {
+      if (!overtaken) {
+        overtaken = true;
+        await reopen(run, template);
+        await approveAgain(run, template);
+      }
+      return getBytes(...args);
+    });
+    await expect(
+      loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id }),
+    ).rejects.toThrow(MigrationApprovalChangedError);
+    expect(await articles()).toBe(0);
+  });
+
+  it('refuses to run under another approval than the one it was given', async () => {
+    const { run, template } = await seeded();
+    const ref = { runId: run.id, templateId: template.id };
+    await reopen(run, template);
+    await approveAgain(run, template);
+    await expect(
+      loadTemplatePages(ctx, deps, admin, scope, { ...ref, approval: template.version }),
+    ).rejects.toThrow(MigrationApprovalChangedError);
+  });
+
+  it('takes a page recorded by its script alone', async () => {
+    const { run, template, pages } = await seeded();
+    await store.migrations.savePages(
+      scope,
+      run.id,
+      pages.map((p) => ({ ...p, outputScript: script.sha256 })),
+    );
+    expect(
+      await loadTemplatePages(ctx, deps, admin, scope, { runId: run.id, templateId: template.id }),
+    ).toMatchObject({ loaded: 3, stale: 0 });
   });
 });

@@ -12,6 +12,7 @@ import {
   fetchSourcePages,
   inventorySite,
   proposeTemplateModel,
+  reopenTemplate,
   setImportScript,
   templateReviewDigest,
 } from '@contentworker/application';
@@ -179,6 +180,74 @@ describe('MigrationWorkflow on Cloudflare Workflows', () => {
     await runner.templateApproved(scope, run.id, templateId, {});
     await instance.waitForStepResult({ name: 'relink 0' });
     expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({ loaded: 2 });
+
+    await runner.publishApproved(scope, run.id, { approvedBy: { kind: 'deployment' } });
+    await instance.waitForStatus('complete');
+    expect(await instance.getOutput()).toMatchObject({
+      status: 'published',
+      templates: [{ templateId, status: 'loaded' }],
+    });
+    expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({
+      published: 2,
+    });
+  });
+});
+
+describe('MigrationWorkflow with a template reopened', () => {
+  it('waits again, takes each version approved again through, and completes with waits open', async () => {
+    const { ctx, scope } = context();
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: O } });
+    const runner = new CloudflareMigrationRunner(env.MIGRATION_WF);
+    const editor = {
+      spaceId: scope.spaceId,
+      kind: 'admin' as const,
+      scopes: scopesForKind('cma'),
+    };
+    await using instance = await introspectWorkflowInstance(
+      env.MIGRATION_WF,
+      migrationInstanceId(run.id),
+    );
+    await runner.start({ scope, runId: run.id, startedBy: { kind: 'deployment' } });
+    const clustered = (await instance.waitForStepResult({ name: 'cluster' })) as {
+      ok: { id: string }[];
+    };
+    const templateId = clustered.ok[0]?.id as string;
+    const ref = { runId: run.id, templateId };
+    const blob = migrationTestState.blob as FakeBlobStore;
+    const reviewed = async () => {
+      const t = await ctx.store.migrations.getTemplate(scope, run.id, templateId);
+      return { ...ref, reviewed: templateReviewDigest(t as never) };
+    };
+    await proposeTemplateModel(ctx, scope, { ...ref, model: MODEL });
+    await setImportScript(ctx, { blob }, scope, { ...ref, script: 'export default () => ({})' });
+    // Approved and reopened before the driver looks: its event finds nothing to act on.
+    await approveTemplate(ctx, editor, scope, await reviewed());
+    await reopenTemplate(ctx, editor, scope, await reviewed());
+    await runner.templateApproved(scope, run.id, templateId, {});
+    await instance.waitForStepResult({ name: `approver ${templateId}` });
+    expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({
+      clustered: 2,
+    });
+
+    await setImportScript(ctx, { blob }, scope, {
+      ...ref,
+      script: 'export default () => ({ a: 1 })',
+    });
+    await approveTemplate(ctx, editor, scope, await reviewed());
+    await runner.templateApproved(scope, run.id, templateId, {});
+    await instance.waitForStepResult({ name: `load ${templateId} 0 round 2` });
+    await instance.waitForStepResult({ name: 'relink 0' });
+    expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({ loaded: 2 });
+
+    // Reopened and approved again while it waits for the go-ahead: the next round hears of it.
+    await reopenTemplate(ctx, editor, scope, await reviewed());
+    await setImportScript(ctx, { blob }, scope, {
+      ...ref,
+      script: 'export default () => ({ a: 2 })',
+    });
+    await approveTemplate(ctx, editor, scope, await reviewed());
+    await runner.templateApproved(scope, run.id, templateId, {});
+    await instance.waitForStepResult({ name: `redirects ${templateId} round 3` });
 
     await runner.publishApproved(scope, run.id, { approvedBy: { kind: 'deployment' } });
     await instance.waitForStatus('complete');

@@ -86,10 +86,15 @@ export const migrationTemplate = z.object({
   label: z.string(),
   status: z
     .enum(['pending', 'authoring', 'approving', 'approved'])
-    .describe('`approving` while an approval writes its content type'),
+    .describe(
+      '`approving` while an approval writes its content type; `authoring` again once reopened',
+    ),
   pageCount: z.int(),
   samplePageIds: z.array(z.string()).describe('Representative pages, spread over the template'),
-  contentTypeId: z.string().nullable().describe('The content type its pages become, once chosen'),
+  contentTypeId: z
+    .string()
+    .nullable()
+    .describe('The content type its pages become, once approved; kept when it is reopened'),
   script: artifact.nullable().describe('Its import script, once written'),
   proposal: z
     .record(z.string(), z.unknown())
@@ -100,6 +105,18 @@ export const migrationTemplate = z.object({
   reviewDigest: z
     .string()
     .describe('SHA-256 of the proposal and script version: what `reviewed` names to approve it'),
+  pageVersions: z
+    .object({
+      toTransform: z
+        .int()
+        .describe('Pages never transformed, or transformed by an earlier approved version'),
+      loadedEarlier: z
+        .int()
+        .describe('Pages loaded or published from an earlier version, left as they are'),
+    })
+    .nullable()
+    .optional()
+    .describe('On a read of one template, once approved: where its pages stand against it'),
   version: z.int(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -221,6 +238,9 @@ export const migrationLoadResult = z.object({
   assetFailures: z.array(pageFailure).describe('Files not brought in; their pages loaded without'),
   unresolvedLinks: z.int().describe('Links to pages with no entry yet, for the relink pass'),
   deferred: z.array(pageFailure).describe('Pages that kept losing a race, left for the next call'),
+  stale: z
+    .int()
+    .describe('Pages left as they are: an earlier version made their output. Transform them first'),
   more: z.boolean(),
 });
 

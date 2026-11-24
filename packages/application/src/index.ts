@@ -113,6 +113,7 @@ export * from './site-migration-driver';
 export * from './site-migration-load';
 export * from './site-migration-run';
 export * from './site-migration-templates';
+export * from './site-migration-version';
 export * from './site-migrations';
 export * from './site-routes';
 export * from './snapshot-jobs';

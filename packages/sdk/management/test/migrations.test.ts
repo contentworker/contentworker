@@ -51,6 +51,7 @@ describe('@contentworker/sdk-management migrations', () => {
     await m.setScript('r1', 't1', 'export default () => ({})');
     await m.tryScript('r1', 't1', { pageIds: ['p1'] });
     await m.approve('r1', 't1', 'd'.repeat(64));
+    await m.reopen('r1', 't1', 'd'.repeat(64));
     await m.transform('r1', 't1', { after: 'p9' });
     await m.load('r1', 't1', { includeNeedsFix: true });
     await m.relink('r1');
@@ -65,6 +66,7 @@ describe('@contentworker/sdk-management migrations', () => {
       'PUT /r1/templates/t1/script {"script":"export default () => ({})"}',
       'POST /r1/templates/t1/try {"pageIds":["p1"]}',
       `POST /r1/templates/t1/approve {"reviewed":"${'d'.repeat(64)}"}`,
+      `POST /r1/templates/t1/reopen {"reviewed":"${'d'.repeat(64)}"}`,
       'POST /r1/templates/t1/transform {"after":"p9"}',
       'POST /r1/templates/t1/load {"includeNeedsFix":true}',
       'POST /r1/relink {}',

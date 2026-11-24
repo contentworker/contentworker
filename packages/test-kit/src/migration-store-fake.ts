@@ -1,6 +1,7 @@
 import {
   ConflictError,
   type MigrationPage,
+  type MigrationPageStage,
   type MigrationRun,
   type MigrationTemplate,
   type MigrationTrySummary,
@@ -8,6 +9,7 @@ import {
 } from '@contentworker/domain';
 import {
   type MigrationCluster,
+  type MigrationOutputCount,
   type MigrationPageCounts,
   type MigrationPageMove,
   type MigrationPageQuery,
@@ -116,6 +118,29 @@ export class InMemoryMigrationStore implements MigrationStore {
     }
   }
 
+  async stampOutputs(
+    scope: Scope,
+    runId: string,
+    templateId: string,
+    from: string,
+    to: string,
+  ): Promise<void> {
+    for (const page of this.pagesOf(scope, runId)) {
+      if (page.templateId !== templateId || page.outputScript !== from) continue;
+      this.pageData.set(`${scopeKey(scope)}::${runId}::${page.id}`, { ...page, outputScript: to });
+    }
+  }
+
+  async expectApproved(
+    scope: Scope,
+    runId: string,
+    templateId: string,
+    version: number,
+  ): Promise<void> {
+    const t = this.templateData.get(`${scopeKey(scope)}::${runId}::${templateId}`);
+    if (t?.status !== 'approved' || t.version !== version) throw new TransactionConflictError();
+  }
+
   async entriesByUrl(
     scope: Scope,
     runId: string,
@@ -170,6 +195,8 @@ export class InMemoryMigrationStore implements MigrationStore {
           (query.after === undefined || p.id > query.after) &&
           (query.stage === undefined || p.stage === query.stage) &&
           (query.templateId === undefined || p.templateId === query.templateId) &&
+          (!query.outputScript ||
+            (p.outputScript !== null && query.outputScript.includes(p.outputScript))) &&
           (!query.unresolvedLinks || p.unresolvedLinks > 0) &&
           (query.failed === undefined || query.failed === (p.error !== null)) &&
           (query.fetch === undefined ||
@@ -189,6 +216,23 @@ export class InMemoryMigrationStore implements MigrationStore {
       failed: pages.filter((p) => p.error !== null).length,
       byStage,
     };
+  }
+
+  async countOutputs(
+    scope: Scope,
+    runId: string,
+    templateId: string,
+    versions: readonly string[],
+  ): Promise<MigrationOutputCount[]> {
+    const counts = new Map<MigrationPageStage, { pages: number; current: number }>();
+    for (const p of this.pagesOf(scope, runId)) {
+      if (p.templateId !== templateId || p.html === null) continue;
+      const held = counts.get(p.stage) ?? { pages: 0, current: 0 };
+      held.pages += 1;
+      if (p.outputScript !== null && versions.includes(p.outputScript)) held.current += 1;
+      counts.set(p.stage, held);
+    }
+    return [...counts].map(([stage, c]) => ({ stage, ...c }));
   }
 
   async listTemplates(scope: Scope, runId: string): Promise<MigrationTemplate[]> {

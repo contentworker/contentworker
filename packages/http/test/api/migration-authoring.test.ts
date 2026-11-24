@@ -489,6 +489,59 @@ describe('a driver that has finished', () => {
   });
 });
 
+describe('reopening an approved template', () => {
+  it('changes it, approves it again and takes its pages that aren’t loaded again', async () => {
+    const { send, runner } = makeApp();
+    const c = await authored(send);
+    // Nothing to reopen before it is approved.
+    const early = await send('POST', `${c.t}/reopen`, { reviewed: c.digest }, 'manager');
+    expect(early.status).toBe(400);
+    expect((await json<{ error: { code: string } }>(early)).error.code).toBe('invalid_state');
+    await send('POST', `${c.t}/approve`, { reviewed: c.digest }, 'manager');
+    await send('POST', `${c.t}/transform`, {});
+
+    expect(
+      (await send('POST', `${c.t}/reopen`, { reviewed: '0'.repeat(64) }, 'manager')).status,
+    ).toBe(409);
+    expect((await send('POST', `${c.t}/reopen`, { reviewed: 'short' }, 'manager')).status).toBe(
+      422,
+    );
+    const reopened = await send('POST', `${c.t}/reopen`, { reviewed: c.digest }, 'manager');
+    expect(reopened.status).toBe(200);
+    expect(await json(reopened)).toMatchObject({
+      status: 'authoring',
+      contentTypeId: MODEL.apiId,
+      approvedBy: null,
+    });
+    expect((await send('POST', `${c.t}/transform`, {})).status).toBe(400);
+    const renamed = await send('POST', `${c.t}/proposal`, { model: { ...MODEL, apiId: 'other' } });
+    expect(renamed.status).toBe(422);
+    expect(await renamed.text()).toContain('must stay');
+    expect((await send('PUT', `${c.t}/script`, { script: `${SCRIPT}\n// v2` })).status).toBe(200);
+    const read = await json<Template>(await send('GET', c.t, undefined, 'manager'));
+    // The approver who read the first version isn't told they approved this one.
+    expect((await send('POST', `${c.t}/approve`, { reviewed: c.digest }, 'manager')).status).toBe(
+      409,
+    );
+    await send('POST', `${c.t}/approve`, { reviewed: read.reviewDigest }, 'manager');
+    expect((await send('POST', `${c.t}/approve`, { reviewed: c.digest }, 'manager')).status).toBe(
+      409,
+    );
+    expect(runner.calls.map((call) => call.kind)).toEqual(['templateApproved', 'templateApproved']);
+    const now = await json<{ pageVersions: { toTransform: number; loadedEarlier: number } }>(
+      await send('GET', c.t),
+    );
+    expect(now.pageVersions).toEqual({ toTransform: expect.any(Number), loadedEarlier: 0 });
+    expect(now.pageVersions.toTransform).toBeGreaterThan(0);
+    expect(await json(await send('POST', `${c.t}/load`, {}, 'loader'))).toMatchObject({
+      loaded: 0,
+    });
+    expect(
+      (await json<{ transformed: number }>(await send('POST', `${c.t}/transform`, {}))).transformed,
+    ).toBeGreaterThan(0);
+  });
+});
+
 describe('authorization and isolation', () => {
   it('checks each step’s scopes, sending nothing when it refuses', async () => {
     const { send, runner } = makeApp();
@@ -502,6 +555,8 @@ describe('authorization and isolation', () => {
       ['POST', `${c.t}/approve`, { reviewed: c.digest }, 'editor'],
       // Reaches the route, but approving needs content:manage.
       ['POST', `${c.t}/approve`, { reviewed: c.digest }, 'runner'],
+      ['POST', `${c.t}/reopen`, { reviewed: c.digest }, 'editor'],
+      ['POST', `${c.t}/reopen`, { reviewed: c.digest }, 'runner'],
       ['POST', `${c.t}/transform`, {}, 'manager'],
       ['POST', `${c.t}/load`, {}, 'runner'],
       ['POST', `${c.t}/load`, {}, 'editor'],
@@ -543,6 +598,7 @@ describe('authorization and isolation', () => {
       ['PUT', `${c.t}/script`, { script: SCRIPT }],
       ['POST', `${c.t}/try`, {}],
       ['POST', `${c.t}/approve`, { reviewed: c.digest }],
+      ['POST', `${c.t}/reopen`, { reviewed: c.digest }],
       ['POST', `${c.t}/transform`, {}],
       ['POST', `${c.t}/load`, {}],
       ['POST', `/${c.run}/relink`, {}],

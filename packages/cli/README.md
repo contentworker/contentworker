@@ -22,6 +22,7 @@ npx contentworker migrate step <run>
 npx contentworker migrate cluster <run>
 npx contentworker migrate script set <run> <template> import.js
 npx contentworker migrate approve <run> <template>
+npx contentworker migrate reopen <run> <template>
 npx contentworker migrate start <run>
 ```
 

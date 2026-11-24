@@ -274,9 +274,9 @@ function Review({
         {editing?.what === 'model' ? (
           <TextEdit
             label="Content model as JSON"
-            hint="A content type’s definition. It needs a URL pattern and exactly one blocks field; sourceUrl is added when left out. Preview, layout, agent instructions and field help are dropped: add them on the content type after it is approved."
+            hint={`${t.contentTypeId ? `Its apiId stays “${t.contentTypeId}”: the template was approved as that content type. ` : ''}A content type’s definition. It needs a URL pattern and exactly one blocks field; sourceUrl is added when left out. Preview, layout, agent instructions and field help are dropped: add them on the content type after it is approved.`}
             initial={JSON.stringify(t.proposal ?? MODEL_SCAFFOLD, null, 2)}
-            check={modelProblem}
+            check={(json) => modelProblem(json, t.contentTypeId)}
             changedUnder={JSON.stringify(t.proposal) !== editing.from}
             saveLabel="Propose model"
             onDirty={setDirty}
@@ -406,8 +406,16 @@ function Review({
           reload={refetch}
           onApproved={(a) => {
             show(a.template);
+            // Read again for what its pages are waiting on, which an approval doesn't answer.
+            void refetch();
             void refreshRun();
             void invalidate(['content-types']);
+          }}
+          onReopened={(next) => {
+            // What was approved is what was read: it is on screen, and nothing has changed it.
+            setReviewed(next.reviewDigest);
+            show(next);
+            void refreshRun();
           }}
         />
       </Section>
@@ -530,12 +538,16 @@ function TemplateTry({
 }
 
 /** Why the model's text can't be sent: JSON, and an object. What it must hold is the API's to say. */
-function modelProblem(text: string): string | undefined {
+function modelProblem(text: string, held: string | null): string | undefined {
   try {
     const v: unknown = JSON.parse(text);
-    return typeof v === 'object' && v !== null && !Array.isArray(v)
-      ? undefined
-      : 'The model must be a JSON object.';
+    if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+      return 'The model must be a JSON object.';
+    }
+    const { apiId } = v as { apiId?: unknown };
+    return held !== null && apiId !== held
+      ? `apiId: must stay “${held}”. The template was approved as that content type, and its loaded entries are of it.`
+      : undefined;
   } catch (err) {
     return `This isn’t valid JSON: ${err instanceof Error ? err.message : 'it couldn’t be read'}`;
   }

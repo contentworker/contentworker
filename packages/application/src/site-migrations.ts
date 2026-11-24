@@ -28,6 +28,7 @@ import type {
   SiteSource,
 } from '@contentworker/ports';
 import type { AppContext } from './context';
+import { outputVersions } from './site-migration-version';
 import { sha256Hex } from './token-crypto';
 import { assertSafeExternalUrl } from './url-safety';
 
@@ -193,17 +194,40 @@ export async function listMigrationTemplates(
   return { items: await ctx.store.migrations.listTemplates(scope, runId) };
 }
 
-/** One template of a run: its proposal, script version, last try and status. */
+/** A template as one read of it answers: the record, and where its pages stand against it. */
+export interface MigrationTemplateDetail extends MigrationTemplate {
+  /**
+   * Once approved: its pages the transform would take (never transformed, or transformed by an
+   * earlier approved version), and those loaded or published from an earlier one, which are left
+   * as they are. Null while it isn't approved.
+   */
+  readonly pageVersions: { readonly toTransform: number; readonly loadedEarlier: number } | null;
+}
+
+/** One template of a run: its proposal, script version, last try, status and its pages' versions. */
 export async function getMigrationTemplate(
   ctx: AppContext,
   scope: Scope,
   runId: string,
   templateId: string,
-): Promise<MigrationTemplate> {
+): Promise<MigrationTemplateDetail> {
   await requireRun(ctx, scope, runId);
   const template = await ctx.store.migrations.getTemplate(scope, runId, templateId);
   if (!template) throw new NotFoundError('Migration template', templateId);
-  return template;
+  if (template.status !== 'approved') return { ...template, pageVersions: null };
+  const counts = await ctx.store.migrations.countOutputs(
+    scope,
+    runId,
+    templateId,
+    outputVersions(template),
+  );
+  let toTransform = 0;
+  let loadedEarlier = 0;
+  for (const { stage, pages, current } of counts) {
+    if (stage === 'loaded' || stage === 'published') loadedEarlier += pages - current;
+    else toTransform += pages - current;
+  }
+  return { ...template, pageVersions: { toTransform, loadedEarlier } };
 }
 
 function clampLimit(limit: number | undefined, fallback: number, max: number): number {
