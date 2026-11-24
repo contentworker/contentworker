@@ -15,26 +15,26 @@ catalog:
   react-dom: ^19.2.8
   "@types/react": ^19.2.0
   "@types/react-dom": ^19.2.0
-  react-router: ^8.4.0
-  "@react-router/dev": ^8.4.0
-  "@tanstack/react-query": ^5.107.1
-  isbot: ^5.1.36
+  react-router: ^8.5.2
+  "@react-router/dev": ^8.5.2
+  "@tanstack/react-query": ^5.108.2
+  isbot: ^5.2.3
 
   # shadcn/ui primitives (packages/ui and apps/web)
   class-variance-authority: ^0.7.1
   clsx: ^2.1.1
-  lucide-react: ^1.70.0
+  lucide-react: ^1.77.0
   radix-ui: ^1.6.0
-  tailwind-merge: ^3.0.2
-  recharts: ^3.10.1
+  tailwind-merge: ^3.7.1
+  recharts: ^3.11.0
 
   # Admin UI (apps/web)
   "@xyflow/react": ^12.12.1
-  "@tiptap/core": 3.33.0
-  "@tiptap/extension-table": 3.33.0
-  "@tiptap/pm": 3.33.0
-  "@tiptap/react": 3.33.0
-  "@tiptap/starter-kit": 3.33.0
+  "@tiptap/core": 3.35.0
+  "@tiptap/extension-table": 3.35.0
+  "@tiptap/pm": 3.35.0
+  "@tiptap/react": 3.35.0
+  "@tiptap/starter-kit": 3.35.0
   # The block config as code (Build → Blocks), loaded only when its Code view opens
   "@codemirror/lang-json": ^6.0.2
   "@codemirror/language": ^6.13.1
@@ -44,7 +44,7 @@ catalog:
   "@lezer/highlight": ^1.2.5
   "@simplewebauthn/browser": 14.0.0
   "@simplewebauthn/server": 14.1.0
-  jose: 6.2.15
+  jose: 6.2.18
   uqr: 0.1.3
   use-stick-to-bottom: ^1.1.6
   tw-animate-css: ^1.4.0
@@ -58,13 +58,13 @@ catalog:
   # Data, validation, HTTP
   drizzle-orm: ^0.45.4
   zod: ^4.6.7
-  hono: ^4.13.17
+  hono: ^4.13.19
   graphql: ^17.1.0
-  hono-openapi: ^1.3.1
+  hono-openapi: ^1.6.0
   zod-openapi: ^6.0.1
   "@hono/standard-validator": ^0.4.0
-  "@scalar/hono-api-reference": ^0.12.18
-  "@scalar/api-reference": ^1.77.0
+  "@scalar/hono-api-reference": ^0.12.23
+  "@scalar/api-reference": ^1.82.1
 
   # Image placeholders (asset ingest): pure JS, so they run on workerd
   fast-png: ^8.0.0
@@ -76,23 +76,23 @@ catalog:
   esbuild: ^0.28.2
 
   # AI and MCP
-  ai: 7.0.165
-  agents: 0.33.0
-  "@cloudflare/ai-chat": 0.12.2
-  "@ai-sdk/react": 4.0.169
-  streamdown: 2.7.1
+  ai: 7.0.179
+  agents: 0.34.0
+  "@cloudflare/ai-chat": 0.12.3
+  "@ai-sdk/react": 4.0.183
+  streamdown: 2.8.0
   "@modelcontextprotocol/server": 2.4.0
   "@modelcontextprotocol/client": ^2.4.0
 
   # Build toolchain
   typescript: ^7.0.2
-  vitest: 5.1.0
-  vite: ^8.3.6
+  vitest: 5.1.1
+  vite: ^8.3.8
   tsup: ^9.0.0
   # TypeScript 7 ships no compiler JS API, so tsup bundles JS only and `tsc` emits the .d.ts
   tsx: ^4.23.15
-  turbo: ^2.11.7
-  "@biomejs/biome": ^2.6.6
+  turbo: ^2.11.13
+  "@biomejs/biome": ^2.6.8
   "@types/node": ^26.6.6 # tracks the Node major in .nvmrc and CI, not npm latest
   jsonc-parser: 3.3.1
 
@@ -100,22 +100,22 @@ catalog:
   jsdom: ^30.0.1
   "@testing-library/dom": ^10.4.1
   "@testing-library/react": ^16.3.2
-  "@playwright/test": 1.65.0
+  "@playwright/test": 1.65.1
   "@axe-core/playwright": ^4.13.0
 
   # Docs site (apps/docs)
-  astro: ^7.4.7
-  "@astrojs/starlight": ^0.42.10
-  lucide: 1.70.0
+  astro: ^7.4.13
+  "@astrojs/starlight": ^0.43.1
+  lucide: 1.77.0
 
   # SDKs
-  vue: ^3.5.45
+  vue: ^3.5.46
 
   # Cloudflare
-  wrangler: ^4.158.0
-  "@cloudflare/workers-types": ^5.20261107.1
-  "@cloudflare/vitest-plugin": ^1.6.0
-  "@cloudflare/vite-plugin": ^1.67.0
+  wrangler: ^4.166.0
+  "@cloudflare/workers-types": ^5.20261121.1
+  "@cloudflare/vitest-plugin": ^1.9.0
+  "@cloudflare/vite-plugin": ^1.70.1
   # Pinned to the exact build wrangler depends on, so the adapters' Worker Loader suite runs the
   # same workerd as `wrangler dev` (miniflare's 5.x line ships as a beta tag)
   miniflare: 5.20261104.0-beta
