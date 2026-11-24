@@ -303,10 +303,15 @@ Webhooks are not part of environment snapshots (export, import, clone): their se
 credentials.
 
 `url` is screened on create and update with `assertSafeExternalUrl`
-(`packages/application/src/url-safety.ts`, shared with function endpoints): `http`/`https` only,
-and no loopback, link-local or private literal address, `localhost`, `*.local` or `*.internal`
-(a `ValidationError`, 422). It is DNS-free, so the sender complements it by not following
-redirects.
+(`packages/application/src/url-safety.ts`, shared with function endpoints and every other
+outbound URL): `http`/`https` only, and no IP literal in an IANA special-purpose range (loopback,
+private, link-local, CGNAT, documentation, benchmarking, multicast, reserved; IPv6 forms that
+wrap one of those IPv4 addresses, such as IPv4-mapped, NAT64 and 6to4), and no `localhost` or
+local-only name (`*.local`, `*.internal`, `*.lan`, `*.home.arpa`, wildcard-DNS services), with or
+without a trailing dot (a `ValidationError`, 422). The lists are `isSpecialPurposeAddress` and
+`isInternalHostname` in `@contentworker/domain`, which the admin's egress policy uses too. It is
+DNS-free: the Workers' `global_fetch_strictly_public` flag covers a public name that resolves
+inside, and the sender does not follow redirects.
 
 Routes and MCP tools (all scope `space:admin`; `packages/http/src/api/routes/management/webhooks.ts`
 and `packages/http/src/mcp/tools/webhooks.ts`, on the same use-cases and body schemas). Both return the hook

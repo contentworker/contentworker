@@ -1678,6 +1678,15 @@ exact event type. `coversEnvironment(webhook, environmentId)` is true when the w
 space-wide (`environmentId: null`) or scoped to that environment; dispatch and every webhook read
 under a scope apply it. Delivery attempts are recorded as `WebhookDelivery` rows for observability.
 
+Outbound URLs (webhook targets and every other URL the system fetches for someone) are screened
+against two pure lists in `network/special-addresses.ts`. `isSpecialPurposeAddress(host)` is
+true for an IP literal in an IANA special-purpose range, or an IPv6 address that wraps one
+(IPv4-mapped and -translated, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`; the IPv4-compatible
+`::/96`, NAT64 local-use `64:ff9b:1::/48` and `2001::/23`, Teredo included, are refused whatever
+they carry), and any IPv6 address outside global unicast `2000::/3`. `isInternalHostname(host)` is true for `localhost` and local-only names, ignoring a
+trailing dot. The application's `assertSafeExternalUrl` and the admin's egress policy both read
+them.
+
 ## AI settings
 
 `AiSettings` (`packages/domain/src/ai/ai-settings.ts`): a space's settings per AI capability

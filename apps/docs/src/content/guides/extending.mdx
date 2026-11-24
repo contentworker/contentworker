@@ -42,8 +42,9 @@ curl -s "$API/spaces/$SPACE/environments/main/functions" \
 
 - **`eventPattern`** is matched against the event type: `*` (or empty) for every event, a trailing
   `*` for a prefix (`entry.*`), otherwise an exact type such as `entry.published`.
-- **`url`** must be an absolute public `http` or `https` address. Loopback, link-local and private
-  addresses, `localhost`, `.local` and `.internal` names are refused with a 422.
+- **`url`** must be an absolute public `http` or `https` address. Loopback, link-local, private and
+  other special-purpose addresses, and `localhost` and local-only names such as `.local` and
+  `.internal` (with or without a trailing dot), are refused with a 422.
 - **`active`** defaults to `true`; `active: false` registers it without calling it.
 
 Each matching event is POSTed to the URL as JSON, with the event type in an
