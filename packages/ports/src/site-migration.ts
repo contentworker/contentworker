@@ -16,7 +16,8 @@ import type {
  * The run's `version` guards its templates: every template write rides in one unit of work with
  * the run's {@link MigrationStore.saveRun} compare-and-set, so two writers can't interleave a
  * run's templates. Page writes don't need it: each is a whole page, and a page's step is safe to
- * repeat.
+ * repeat. A step whose effects reach past the page (a load writes entries) moves its pages with
+ * {@link MigrationStore.movePages} instead, at a compare-and-set on each page's `updatedAt`.
  */
 export interface MigrationStore {
   createRun(scope: Scope, run: MigrationRun): Promise<void>;
@@ -38,7 +39,36 @@ export interface MigrationStore {
   addPages(scope: Scope, runId: string, pages: readonly MigrationPage[]): Promise<void>;
   /** Rewrites pages the run holds, whole (a fetch's result, a stage move). Unknown ids are skipped. */
   savePages(scope: Scope, runId: string, pages: readonly MigrationPage[]): Promise<void>;
+  /**
+   * Rewrites pages whole, each only while it is as it was read: its stored `updatedAt` is the
+   * move's `expected`. A page written meanwhile (another step moved or rescored it) fails the
+   * whole call with `TransactionConflictError` (inside a unit of work, at commit, so nothing of
+   * the unit is written). Any number of pages.
+   */
+  movePages(scope: Scope, runId: string, moves: readonly MigrationPageMove[]): Promise<void>;
   getPage(scope: Scope, runId: string, id: string): Promise<MigrationPage | null>;
+  /** The entries the run's pages at `urls` were loaded as (any number of URLs; none, absent). */
+  entriesByUrl(
+    scope: Scope,
+    runId: string,
+    urls: readonly string[],
+  ): Promise<{ url: string; entryId: string }[]>;
+  /**
+   * The assets the run created from `urls` (any number of URLs), so a file a run has brought in
+   * is not downloaded again for another page or a second load.
+   */
+  assetsByUrl(
+    scope: Scope,
+    runId: string,
+    urls: readonly string[],
+  ): Promise<{ url: string; assetId: string }[]>;
+  /** Records assets the run created from URLs; a URL it already holds keeps its asset. */
+  addAssets(
+    scope: Scope,
+    runId: string,
+    assets: readonly { url: string; assetId: string }[],
+    at: string,
+  ): Promise<void>;
   /** Which of `urls` the run already holds (any number of URLs). */
   knownUrls(scope: Scope, runId: string, urls: readonly string[]): Promise<string[]>;
   /** Pages in id order (discovery order), after the `after` id. */
@@ -117,11 +147,21 @@ export interface MigrationCluster {
   readonly pageIds: readonly string[];
 }
 
+/** A page to write, and the `updatedAt` it must still have ({@link MigrationStore.movePages}). */
+export interface MigrationPageMove {
+  readonly page: MigrationPage;
+  readonly expected: string;
+}
+
 export interface MigrationPageQuery {
   readonly limit: number;
   readonly after?: string;
   readonly stage?: MigrationPageStage;
   readonly templateId?: string;
+  /** Only pages whose entry holds links the relink pass may still resolve (`unresolvedLinks`). */
+  readonly unresolvedLinks?: true;
+  /** `false`: only pages whose last step didn't fail (`error` unset); `true`, only those that did. */
+  readonly failed?: boolean;
   /**
    * `pending`: not fetched yet and not failed (the fetch step's work). `fetched`: with HTML (what
    * clustering reads). Absent, either.

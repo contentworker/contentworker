@@ -91,6 +91,11 @@ export interface MigrationRun {
   readonly inventory: MigrationInventory | null;
   /** Why the run failed, when it did. */
   readonly error: string | null;
+  /**
+   * The release its entries were added to when publishing goes through one: an add run again
+   * reuses it while it is open, rather than opening another.
+   */
+  readonly releaseId: string | null;
   /** Counts up from 1 with every write; the compare-and-set each write rides with. */
   readonly version: number;
   readonly createdAt: string;
@@ -152,6 +157,11 @@ export interface MigrationPage {
   readonly score: MigrationScore | null;
   /** The entry it was loaded as. */
   readonly entryId: string | null;
+  /**
+   * Links in its entry to pages of the run that had no entry when it was loaded, left as
+   * hyperlinks for the relink pass to point at their entries; 0 when there are none.
+   */
+  readonly unresolvedLinks: number;
   /** Why its last step failed (a fetch that answered 404, a script that threw). */
   readonly error: string | null;
   readonly createdAt: string;

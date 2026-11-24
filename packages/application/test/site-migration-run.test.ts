@@ -2,6 +2,7 @@ import { type ContentTypeDraft, type Principal, scopesForKind } from '@contentwo
 import type { MigrationRunParams } from '@contentworker/ports';
 import {
   FakeBlobStore,
+  FakeRemoteFetcher,
   FakeSiteSource,
   FakeWorkflowSteps,
   FixedClock,
@@ -16,7 +17,6 @@ import {
   MIGRATION_AGENTS_PER_RUN,
   MIGRATION_DRIVEN_TEMPLATES,
   MIGRATION_PUBLISH_EVENT,
-  type MigrationLoadSteps,
   migrationTemplateApprovedEvent,
   proposeTemplateModel,
   runSiteMigration,
@@ -86,41 +86,19 @@ const SCRIPT = `export default (page) => ({
 })`;
 const editor: Principal = { spaceId: 'site', kind: 'admin', scopes: scopesForKind('cma') };
 
-/** Load steps that record who they acted as. */
-class RecordingLoad implements MigrationLoadSteps {
-  readonly calls: { step: string; as: string; input: unknown }[] = [];
-  private loads = 0;
-  async loadTemplatePages(p: Principal, _s: unknown, input: unknown) {
-    this.calls.push({ step: 'load', as: p.kind, input });
-    this.loads += 1;
-    return { loaded: 2, more: this.loads < 2 };
-  }
-  async relinkMigratedPages(p: Principal, _s: unknown, input: unknown) {
-    this.calls.push({ step: 'relink', as: p.kind, input });
-    return {};
-  }
-  async importMigrationRedirects(p: Principal, _s: unknown, input: unknown) {
-    this.calls.push({ step: 'redirects', as: p.kind, input });
-    return {};
-  }
-  async publishMigration(p: Principal, _s: unknown, input: unknown) {
-    this.calls.push({ step: 'publish', as: p.kind, input });
-    return { published: 3 };
-  }
-}
-
-async function harness(withLoad = true) {
+async function harness() {
   let n = 0;
   const clock = new FixedClock(new Date('2026-11-20T00:00:00.000Z'));
+  const store = new InMemoryContentStore();
+  store.seedSpace({ spaceId: 'site', defaultLocale: 'en-US', locales: ['en-US'] });
   const ctx: AppContext = {
-    store: new InMemoryContentStore(),
+    store,
     clock,
     ids: { newId: () => `id-${String(++n).padStart(4, '0')}` },
   };
   const blob = new FakeBlobStore();
   const source = new FakeSiteSource(SITE);
   const started: string[] = [];
-  const load = new RecordingLoad();
   const host: SiteMigrationRunHost = {
     ctx,
     site: { source, blob },
@@ -130,12 +108,12 @@ async function harness(withLoad = true) {
         started.push(input.templateId);
       },
     },
-    ...(withLoad ? { load } : {}),
+    load: { blob, fetcher: new FakeRemoteFetcher() },
   };
   const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: O } });
   const params: MigrationRunParams = { scope, runId: run.id, startedBy: { kind: 'deployment' } };
   const steps = new FakeWorkflowSteps(clock);
-  return { ctx, clock, host, params, steps, started, load, source, run };
+  return { ctx, clock, host, params, steps, started, source, run };
 }
 
 /** What the template's agent and its reviewer do, between the driver's passes. */
@@ -150,9 +128,12 @@ async function authorAndApprove(
   await approveTemplate(ctx, editor, scope, { ...ref, reviewed: templateReviewDigest(t as never) });
 }
 
+const stages = async (ctx: AppContext, runId: string) =>
+  (await ctx.store.migrations.countPages(scope, runId)).byStage;
+
 describe('a migration run’s driver', () => {
   it('inventories, clusters, starts an agent per template and waits for approval', async () => {
-    const { ctx, host, params, steps, started, load } = await harness();
+    const { ctx, host, params, steps, started } = await harness();
     const first = await steps.run(() => runSiteMigration(steps, host, params));
     expect(first.status).toBe('waiting');
     const templates = await ctx.store.migrations.listTemplates(scope, params.runId);
@@ -171,10 +152,12 @@ describe('a migration run’s driver', () => {
     });
     const second = await steps.run(() => runSiteMigration(steps, host, params));
     expect(second).toMatchObject({ status: 'waiting', on: ['publish approval'] });
-    expect((await ctx.store.migrations.countPages(scope, params.runId)).byStage).toEqual({
-      validated: 3,
-    });
-    expect(load.calls.map((c) => c.step)).toEqual(['load', 'load', 'redirects', 'relink']);
+    // Transformed, loaded as entries of the approved type, and redirected.
+    expect(await stages(ctx, params.runId)).toEqual({ loaded: 3 });
+    const pages = await ctx.store.migrations.listPages(scope, params.runId, { limit: 10 });
+    expect(pages.every((p) => p.entryId !== null)).toBe(true);
+    expect(steps.executed.some((n) => n.startsWith('redirects '))).toBe(true);
+    expect(steps.executed.some((n) => n.startsWith('relink '))).toBe(true);
     // A replay (the instance woken again) starts no second agent and redoes no step.
     expect(started).toEqual([templateId]);
 
@@ -184,25 +167,10 @@ describe('a migration run’s driver', () => {
       status: 'complete',
       value: { status: 'published', templates: [{ templateId, status: 'loaded' }] },
     });
-    expect(load.calls.at(-1)).toMatchObject({ step: 'publish', as: 'admin' });
+    expect(await stages(ctx, params.runId)).toEqual({ published: 3 });
     const executed = steps.executed.length;
     await steps.run(() => runSiteMigration(steps, host, params));
     expect(steps.executed.length).toBe(executed);
-  });
-
-  it('transforms without loading while the load steps are not wired', async () => {
-    const { ctx, host, params, steps } = await harness(false);
-    await steps.run(() => runSiteMigration(steps, host, params));
-    const [t] = await ctx.store.migrations.listTemplates(scope, params.runId);
-    await authorAndApprove(ctx, host, { runId: params.runId, templateId: t?.id as string });
-    steps.sendEvent(migrationTemplateApprovedEvent(t?.id as string), {
-      approvedBy: { kind: 'deployment' },
-    });
-    const done = await steps.run(() => runSiteMigration(steps, host, params));
-    expect(done).toMatchObject({
-      status: 'complete',
-      value: { status: 'transformed', templates: [{ status: 'transformed' }] },
-    });
   });
 
   it('waits out a site that can’t be read now, then goes on', async () => {
@@ -218,7 +186,7 @@ describe('a migration run’s driver', () => {
   });
 
   it('lets a template whose approval never comes time out, and finishes', async () => {
-    const { clock, host, params, steps, load } = await harness();
+    const { ctx, clock, host, params, steps } = await harness();
     await steps.run(() => runSiteMigration(steps, host, params));
     clock.advance(15 * 24 * 60 * 60_000);
     const done = await steps.run(() => runSiteMigration(steps, host, params));
@@ -226,11 +194,11 @@ describe('a migration run’s driver', () => {
       status: 'complete',
       value: { status: 'clustered', templates: [{ status: 'timed-out' }] },
     });
-    expect(load.calls).toEqual([]);
+    expect(await stages(ctx, params.runId)).toEqual({ clustered: 3 });
   });
 
   it('fails a template alone when its recorded approver can no longer act', async () => {
-    const { ctx, host, params, steps, load } = await harness();
+    const { ctx, host, params, steps } = await harness();
     await steps.run(() => runSiteMigration(steps, host, params));
     const [t] = await ctx.store.migrations.listTemplates(scope, params.runId);
     const ref = { runId: params.runId, templateId: t?.id as string };
@@ -248,14 +216,11 @@ describe('a migration run’s driver', () => {
       value: { status: 'clustered', templates: [{ status: 'failed' }] },
     });
     // Transformed, but loaded as nobody.
-    expect(load.calls).toEqual([]);
-    expect((await ctx.store.migrations.countPages(scope, params.runId)).byStage).toEqual({
-      validated: 3,
-    });
+    expect(await stages(ctx, params.runId)).toEqual({ validated: 3 });
   });
 
   it('takes an approval event as a wake-up only: the store says who approved, and whether', async () => {
-    const { ctx, host, params, steps, load } = await harness();
+    const { ctx, host, params, steps } = await harness();
     await steps.run(() => runSiteMigration(steps, host, params));
     const [t] = await ctx.store.migrations.listTemplates(scope, params.runId);
     // An event for a template nobody approved: nothing is transformed or loaded.
@@ -267,14 +232,11 @@ describe('a migration run’s driver', () => {
       status: 'complete',
       value: { status: 'clustered', templates: [{ status: 'failed' }] },
     });
-    expect(load.calls).toEqual([]);
-    expect((await ctx.store.migrations.countPages(scope, params.runId)).byStage).toEqual({
-      clustered: 3,
-    });
+    expect(await stages(ctx, params.runId)).toEqual({ clustered: 3 });
   });
 
   it('publishes nothing on a go-ahead that names no approver', async () => {
-    const { ctx, host, params, steps, load } = await harness();
+    const { ctx, host, params, steps } = await harness();
     await steps.run(() => runSiteMigration(steps, host, params));
     const [t] = await ctx.store.migrations.listTemplates(scope, params.runId);
     await authorAndApprove(ctx, host, { runId: params.runId, templateId: t?.id as string });
@@ -283,7 +245,7 @@ describe('a migration run’s driver', () => {
     steps.sendEvent(MIGRATION_PUBLISH_EVENT, {});
     const done = await steps.run(() => runSiteMigration(steps, host, params));
     expect(done).toMatchObject({ status: 'complete', value: { status: 'failed' } });
-    expect(load.calls.some((c) => c.step === 'publish')).toBe(false);
+    expect(await stages(ctx, params.runId)).toEqual({ loaded: 3 });
     expect((await ctx.store.migrations.getRun(scope, params.runId))?.status).toBe('failed');
   });
 

@@ -32,7 +32,11 @@ export class MigrationWorkflow extends MigrationWorkflowBase<EdgeEnv> {
         sandbox: wired.importScriptSandbox ?? unavailableImportScriptSandbox,
       },
       agents: templateAgentStarter(env.MIGRATION_AGENT),
-      // The load, relink, redirect and publish steps are bound here once the load use-cases land.
+      load: {
+        blob: wired.blob,
+        fetcher: wired.remoteFetcher,
+        ...(wired.assetIngest ? { ingest: wired.assetIngest } : {}),
+      },
       close: () => wired.close(),
     };
   }

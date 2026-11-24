@@ -5,11 +5,17 @@ import {
   MigrationWorkflowBase,
   type TemplateAgentWiring,
 } from '@contentworker/platform/site-migration';
-import type { AIProvider, BlobStore, ImportScriptSandbox, SiteSource } from '@contentworker/ports';
+import type {
+  AIProvider,
+  BlobStore,
+  ImportScriptSandbox,
+  RemoteFetcher,
+  SiteSource,
+} from '@contentworker/ports';
 
 /**
  * What the test's migration driver and template agents run against: the test's in-memory store,
- * a fake site, a scripted sandbox and model, and a record of the agents the driver started.
+ * a fake site, a scripted sandbox, model and fetcher, and a record of the agents the driver started.
  * Workers AI and Worker Loader can't run in the pool (see vitest.config.ts), so both are stubs.
  */
 export const migrationTestState: {
@@ -18,6 +24,7 @@ export const migrationTestState: {
   source?: SiteSource;
   sandbox?: ImportScriptSandbox;
   ai?: AIProvider;
+  fetcher?: RemoteFetcher;
   started: string[];
 } = { started: [] };
 
@@ -39,6 +46,7 @@ export class MigrationTestWorkflow extends MigrationWorkflowBase<Cloudflare.Env>
           migrationTestState.started.push(input.templateId);
         },
       },
+      load: { blob, fetcher: migrationTestState.fetcher as RemoteFetcher },
       close: async () => {},
     };
   }

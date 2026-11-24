@@ -26,6 +26,7 @@ import type {
 } from '@contentworker/ports';
 import {
   FakeBlobStore,
+  FakeRemoteFetcher,
   FakeSiteSource,
   InMemoryContentStore,
   SequenceIdGenerator,
@@ -111,8 +112,10 @@ let seq = 0;
 
 function context(): { ctx: AppContext; scope: { spaceId: string; environmentId: string } } {
   seq += 1;
+  const store = new InMemoryContentStore();
+  store.seedSpace({ spaceId: `mig${seq}`, defaultLocale: 'en-US', locales: ['en-US'] });
   const ctx: AppContext = {
-    store: new InMemoryContentStore(),
+    store,
     clock: { now: () => new Date() },
     ids: new SequenceIdGenerator(`mig${seq}`),
   };
@@ -121,6 +124,7 @@ function context(): { ctx: AppContext; scope: { spaceId: string; environmentId: 
   migrationTestState.source = new FakeSiteSource(SITE);
   migrationTestState.sandbox = sandbox;
   migrationTestState.started = [];
+  migrationTestState.fetcher = new FakeRemoteFetcher();
   return { ctx, scope: { spaceId: `mig${seq}`, environmentId: 'main' } };
 }
 
@@ -129,7 +133,7 @@ describe('MigrationWorkflow on Cloudflare Workflows', () => {
     migrationTestState.ai = undefined;
   });
 
-  it('runs inventory to transform, waiting for the template’s approval', async () => {
+  it('runs inventory to publish, waiting for the template’s approval and the go-ahead', async () => {
     const { ctx, scope } = context();
     const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: O } });
     const runner = new CloudflareMigrationRunner(env.MIGRATION_WF);
@@ -163,14 +167,17 @@ describe('MigrationWorkflow on Cloudflare Workflows', () => {
       { ...ref, reviewed: templateReviewDigest(authored as never) },
     );
     await runner.templateApproved(scope, run.id, templateId, {});
+    await instance.waitForStepResult({ name: 'relink 0' });
+    expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({ loaded: 2 });
 
+    await runner.publishApproved(scope, run.id, { approvedBy: { kind: 'deployment' } });
     await instance.waitForStatus('complete');
     expect(await instance.getOutput()).toMatchObject({
-      status: 'transformed',
-      templates: [{ templateId, status: 'transformed' }],
+      status: 'published',
+      templates: [{ templateId, status: 'loaded' }],
     });
     expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({
-      validated: 2,
+      published: 2,
     });
   });
 });

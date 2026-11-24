@@ -38,6 +38,7 @@ const toRun = (r: RunRow): MigrationRun => ({
   threshold: r.threshold,
   inventory: r.inventory ?? null,
   error: r.error ?? null,
+  releaseId: r.releaseId ?? null,
   version: r.version,
   createdAt: r.createdAt.toISOString(),
   createdBy: r.createdBy ?? null,
@@ -81,6 +82,7 @@ const toPage = (r: PageRow): MigrationPage => ({
   outputScript: r.outputScript ?? null,
   score: r.score ?? null,
   entryId: r.entryId ?? null,
+  unresolvedLinks: r.unresolvedLinks,
   error: r.error ?? null,
   createdAt: r.createdAt.toISOString(),
   updatedAt: r.updatedAt.toISOString(),
@@ -101,20 +103,24 @@ const pageValues = (p: MigrationPage) => ({
   outputScript: p.outputScript,
   score: p.score,
   entryId: p.entryId,
+  unresolvedLinks: p.unresolvedLinks,
   error: p.error,
   updatedAt: new Date(p.updatedAt),
 });
 
 /**
- * Site migration records on D1 (0048_site_migrations, 0050_site_migration_authoring). A run is rewritten whole at its version's
+ * Site migration records on D1 (0048_site_migrations, 0049_site_migration_load,
+ * 0050_site_migration_authoring). A run is rewritten whole at its version's
  * compare-and-set; pages are added past the 100-parameter cap in chunks that skip a URL the run
- * already has; a clustering replaces a run's templates and its pages' assignments in one batch.
+ * already has; a clustering replaces a run's templates and its pages' assignments in one batch; a
+ * load moves its pages at a compare-and-set on each page's `updatedAt`.
  */
 export function makeMigrationStore(x: Exec): MigrationStore {
   const db = x.db;
   const runs = schema.migrationRuns;
   const templates = schema.migrationTemplates;
   const pages = schema.migrationPages;
+  const assets = schema.migrationAssets;
   const ofRun = <T extends { spaceId: unknown; environmentId: unknown; runId: unknown }>(
     t: T,
     scope: Scope,
@@ -134,6 +140,7 @@ export function makeMigrationStore(x: Exec): MigrationStore {
           threshold: run.threshold,
           inventory: run.inventory,
           error: run.error,
+          releaseId: run.releaseId,
           version: run.version,
           createdAt: new Date(run.createdAt),
           createdBy: run.createdBy,
@@ -167,6 +174,7 @@ export function makeMigrationStore(x: Exec): MigrationStore {
           threshold: run.threshold,
           inventory: run.inventory,
           error: run.error,
+          releaseId: run.releaseId,
           version: run.version,
           updatedAt: new Date(run.updatedAt),
         })
@@ -215,6 +223,83 @@ export function makeMigrationStore(x: Exec): MigrationStore {
         ),
       );
     },
+    async movePages(scope, runId, moves) {
+      const statements: Query[] = [];
+      for (const { page: p, expected } of moves) {
+        statements.push(
+          db
+            .update(pages)
+            .set(pageValues(p))
+            .where(
+              and(
+                ofRun(pages, scope, runId),
+                eq(pages.id, p.id),
+                eq(pages.updatedAt, new Date(expected)),
+              ),
+            ),
+          // Aborts the batch (TransactionConflictError) when the page was written since it was read.
+          db.insert(schema.guard).select(sql`SELECT changes() = 1 AS ok`),
+        );
+      }
+      if (statements.length === 0) return;
+      statements.push(db.delete(schema.guard));
+      await writeAll(x, statements);
+    },
+    async entriesByUrl(scope, runId, urls) {
+      const found: { url: string; entryId: string }[] = [];
+      const distinct = [...new Set(urls)];
+      for (let at = 0; at < distinct.length; at += IDS_PER_STATEMENT) {
+        const list = JSON.stringify(distinct.slice(at, at + IDS_PER_STATEMENT));
+        const rows = await db
+          .select({ url: pages.url, entryId: pages.entryId })
+          .from(pages)
+          .where(
+            and(
+              ofRun(pages, scope, runId),
+              isNotNull(pages.entryId),
+              sql`${pages.url} IN (SELECT value FROM json_each(${list}))`,
+            ),
+          );
+        for (const r of rows) if (r.entryId) found.push({ url: r.url, entryId: r.entryId });
+      }
+      return found;
+    },
+    async assetsByUrl(scope, runId, urls) {
+      const found: { url: string; assetId: string }[] = [];
+      const distinct = [...new Set(urls)];
+      for (let at = 0; at < distinct.length; at += IDS_PER_STATEMENT) {
+        const list = JSON.stringify(distinct.slice(at, at + IDS_PER_STATEMENT));
+        found.push(
+          ...(await db
+            .select({ url: assets.url, assetId: assets.assetId })
+            .from(assets)
+            .where(
+              and(
+                ofRun(assets, scope, runId),
+                sql`${assets.url} IN (SELECT value FROM json_each(${list}))`,
+              ),
+            )),
+        );
+      }
+      return found;
+    },
+    async addAssets(scope, runId, list, at) {
+      const rows = list.map((a) => ({
+        spaceId: scope.spaceId,
+        environmentId: scope.environmentId,
+        runId,
+        url: a.url,
+        assetId: a.assetId,
+        createdAt: new Date(at),
+      }));
+      const perRow = Object.keys(getTableColumns(assets)).length;
+      await writeAll(
+        x,
+        chunked(rows, perRow, 0)
+          .filter((c) => c.length > 0)
+          .map((chunk) => db.insert(assets).values(chunk).onConflictDoNothing()),
+      );
+    },
     async getPage(scope, runId, id) {
       const [row] = await db
         .select()
@@ -245,6 +330,10 @@ export function makeMigrationStore(x: Exec): MigrationStore {
       if (query.after !== undefined) conds.push(gt(pages.id, query.after));
       if (query.stage !== undefined) conds.push(eq(pages.stage, query.stage));
       if (query.templateId !== undefined) conds.push(eq(pages.templateId, query.templateId));
+      if (query.unresolvedLinks) conds.push(gt(pages.unresolvedLinks, 0));
+      if (query.failed !== undefined) {
+        conds.push(query.failed ? isNotNull(pages.error) : isNull(pages.error));
+      }
       if (query.fetch === 'fetched') conds.push(isNotNull(pages.html));
       if (query.fetch === 'pending') conds.push(isNull(pages.html), isNull(pages.error));
       const rows = await db

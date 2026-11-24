@@ -108,6 +108,7 @@ export * from './secrets-at-rest';
 export * from './semantics';
 export * from './seo';
 export * from './site-migration-agent';
+export * from './site-migration-load';
 export * from './site-migration-run';
 export * from './site-migration-templates';
 export * from './site-migrations';

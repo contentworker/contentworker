@@ -15,8 +15,15 @@ import {
   TransactionConflictError,
   type WorkflowSteps,
 } from '@contentworker/ports';
-import type { AppContext } from './context';
+import { type AppContext, actingAs } from './context';
 import { resolveStarter } from './job-starter';
+import {
+  importMigrationRedirects,
+  loadTemplatePages,
+  type MigrationLoadDeps,
+  publishMigration,
+  relinkMigratedPages,
+} from './site-migration-load';
 import { type TemplateAuthoringDeps, transformTemplatePages } from './site-migration-templates';
 import {
   clusterPages,
@@ -73,39 +80,6 @@ const STEP = {
 const FETCH_STEP = { ...STEP, timeout: '30 minutes' } as const;
 const MAX_ERROR_LENGTH = 500;
 
-/**
- * The load, relink, redirect and publish steps, over the use-cases that do them (they come with
- * the site migration load). Each acts as `principal`, who must hold what the use-case asks.
- */
-export interface MigrationLoadSteps {
-  loadTemplatePages(
-    principal: Principal,
-    scope: Scope,
-    input: { readonly runId: string; readonly templateId: string },
-  ): Promise<{ readonly loaded: number; readonly more: boolean }>;
-  relinkMigratedPages(
-    principal: Principal,
-    scope: Scope,
-    input: { readonly runId: string; readonly after?: string },
-  ): Promise<{ readonly next?: string }>;
-  importMigrationRedirects(
-    principal: Principal,
-    scope: Scope,
-    input: { readonly runId: string; readonly templateId?: string },
-  ): Promise<unknown>;
-  publishMigration(
-    principal: Principal,
-    scope: Scope,
-    input: {
-      readonly runId: string;
-      readonly viaRelease?: boolean;
-      readonly releaseId?: string;
-      readonly releaseTitle?: string;
-      readonly after?: string;
-    },
-  ): Promise<{ readonly published: number; readonly next?: string }>;
-}
-
 /** Starts a template's authoring agent; starting one that runs already changes nothing. */
 export interface TemplateAgentStarter {
   start(input: {
@@ -121,21 +95,21 @@ export interface SiteMigrationRunHost {
   readonly site: SiteMigrationDeps;
   readonly authoring: TemplateAuthoringDeps;
   readonly agents: TemplateAgentStarter;
-  /** Absent: approved templates are transformed, and loading and publishing wait for it. */
-  readonly load?: MigrationLoadSteps;
+  /** The load's ports: the blob store, the fetcher assets are brought in with, asset ingest. */
+  readonly load: MigrationLoadDeps;
 }
 
 export interface TemplateOutcome {
   readonly templateId: string;
   /** `not-driven`: past {@link MIGRATION_DRIVEN_TEMPLATES}, left for its callers to take through. */
-  readonly status: 'loaded' | 'transformed' | 'timed-out' | 'failed' | 'not-driven';
+  readonly status: 'loaded' | 'timed-out' | 'failed' | 'not-driven';
   readonly error?: string;
   /** Who approved it. */
   readonly approvedBy?: MigrationActor;
 }
 
 export interface SiteMigrationRunResult {
-  readonly status: 'published' | 'loaded' | 'transformed' | 'clustered' | 'failed' | 'gone';
+  readonly status: 'published' | 'loaded' | 'clustered' | 'failed' | 'gone';
   readonly templates: readonly TemplateOutcome[];
   readonly error?: string;
 }
@@ -202,7 +176,7 @@ export async function runSiteMigration(
     const templates = unwrap(
       await steps.do('cluster', STEP, () =>
         settle(async () => {
-          await actingAs(ctx, scope, params.startedBy);
+          await principalFor(ctx, scope, params.startedBy);
           const run = await requireRun(ctx, scope, runId);
           const view =
             run.status === 'clustered'
@@ -225,7 +199,7 @@ export async function runSiteMigration(
       unwrap(
         await steps.do(`start agent ${t.id}`, STEP, () =>
           settle(async () => {
-            await actingAs(ctx, scope, params.startedBy);
+            await principalFor(ctx, scope, params.startedBy);
             await host.agents.start({
               scope,
               runId,
@@ -268,7 +242,6 @@ export async function runSiteMigration(
     );
     outcomes.push(...skipped);
 
-    const load = host.load;
     // Links between templates' pages are pointed at each other once every template is in, as
     // whoever approved the first (relinking edits only the run's own entries).
     // In the templates' order, not the order approvals came in: a replay resolves its waits in
@@ -276,22 +249,20 @@ export async function runSiteMigration(
     const ordered = templates.flatMap((t) => outcomes.filter((o) => o.templateId === t.id));
     outcomes.splice(0, outcomes.length, ...ordered);
     const relinker = outcomes.find((o) => o.status === 'loaded')?.approvedBy;
-    if (!load || !relinker) {
-      return {
-        status: outcomes.some((o) => o.status === 'transformed') ? 'transformed' : 'clustered',
-        templates: outcomes,
-      };
+    if (!relinker) {
+      return { status: 'clustered', templates: outcomes };
     }
     let after: string | undefined;
     for (let i = 0; i < MAX_BATCHES; i++) {
       const relinked = unwrap(
         await steps.do(`relink ${i}`, STEP, () =>
           settle(async () => {
-            const principal = await actingAs(ctx, scope, relinker);
-            return load.relinkMigratedPages(principal, scope, {
+            const principal = await principalFor(ctx, scope, relinker);
+            const { next } = await relinkMigratedPages(actingAs(ctx, principal), principal, scope, {
               runId,
               ...(after ? { after } : {}),
             });
+            return next ? { next } : {};
           }),
         ),
       );
@@ -316,14 +287,20 @@ export async function runSiteMigration(
       const published = unwrap(
         await steps.do(`publish ${i}`, STEP, () =>
           settle(async () => {
-            const principal = await actingAs(ctx, scope, go.approvedBy);
-            return load.publishMigration(principal, scope, {
-              runId,
-              ...(go.viaRelease ? { viaRelease: true } : {}),
-              ...(go.releaseId ? { releaseId: go.releaseId } : {}),
-              ...(go.releaseTitle ? { releaseTitle: go.releaseTitle } : {}),
-              ...(cursor ? { after: cursor } : {}),
-            });
+            const principal = await principalFor(ctx, scope, go.approvedBy);
+            const { published, next } = await publishMigration(
+              actingAs(ctx, principal),
+              principal,
+              scope,
+              {
+                runId,
+                ...(go.viaRelease ? { viaRelease: true } : {}),
+                ...(go.releaseId ? { releaseId: go.releaseId } : {}),
+                ...(go.releaseTitle ? { releaseTitle: go.releaseTitle } : {}),
+                ...(cursor ? { after: cursor } : {}),
+              },
+            );
+            return { published, ...(next ? { next } : {}) };
           }),
         ),
       );
@@ -377,7 +354,7 @@ async function inventoryAndFetch(
     const inventoried = unwrap(
       await steps.do(`inventory ${attempt}`, STEP, () =>
         settle(async () => {
-          await actingAs(ctx, scope, params.startedBy);
+          await principalFor(ctx, scope, params.startedBy);
           const now = await requireRun(ctx, scope, runId);
           if (now.status !== 'created') return { unavailable: null };
           try {
@@ -399,7 +376,7 @@ async function inventoryAndFetch(
     const fetched = unwrap(
       await steps.do(`fetch ${i}`, FETCH_STEP, () =>
         settle(async () => {
-          await actingAs(ctx, scope, params.startedBy);
+          await principalFor(ctx, scope, params.startedBy);
           return fetchSourcePages(ctx, site, scope, runId);
         }),
       ),
@@ -414,7 +391,7 @@ async function inventoryAndFetch(
   }
 }
 
-/** An approved template: its pages transformed, then loaded and redirected (when it can load). */
+/** An approved template: its pages transformed, then loaded, then its redirects imported. */
 async function processTemplate(
   steps: WorkflowSteps,
   host: SiteMigrationRunHost,
@@ -452,16 +429,20 @@ async function processTemplate(
       after = batch.next;
       if (!batch.more) break;
     }
-    if (!load) return { templateId, status: 'transformed', approvedBy };
     for (let i = 0; i < MAX_BATCHES; i++) {
       const batch = unwrap(
         await steps.do(`load ${templateId} ${i}`, STEP, () =>
-          settle(async () =>
-            load.loadTemplatePages(await actingAs(ctx, scope, approvedBy), scope, {
-              runId,
-              templateId,
-            }),
-          ),
+          settle(async () => {
+            const principal = await principalFor(ctx, scope, approvedBy);
+            const { loaded, more } = await loadTemplatePages(
+              actingAs(ctx, principal),
+              load,
+              principal,
+              scope,
+              { runId, templateId },
+            );
+            return { loaded, more };
+          }),
         ),
       );
       if (!batch.more) break;
@@ -469,7 +450,8 @@ async function processTemplate(
     unwrap(
       await steps.do(`redirects ${templateId}`, STEP, () =>
         settle(async () => {
-          await load.importMigrationRedirects(await actingAs(ctx, scope, approvedBy), scope, {
+          const principal = await principalFor(ctx, scope, approvedBy);
+          await importMigrationRedirects(actingAs(ctx, principal), principal, scope, {
             runId,
             templateId,
           });
@@ -486,7 +468,11 @@ async function processTemplate(
   }
 }
 
-async function actingAs(ctx: AppContext, scope: Scope, actor: MigrationActor): Promise<Principal> {
+async function principalFor(
+  ctx: AppContext,
+  scope: Scope,
+  actor: MigrationActor,
+): Promise<Principal> {
   const principal = await migrationActorPrincipal(ctx, scope, actor);
   if (!principal) {
     throw new InvalidStateError('Whoever this step acts for no longer has access to the space');

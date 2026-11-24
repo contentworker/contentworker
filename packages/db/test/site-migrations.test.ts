@@ -13,7 +13,8 @@ import { createD1Store } from '../src/store';
 import { testDb } from './env';
 
 /**
- * Site migrations on D1 (0048_site_migrations): a run rewritten whole at its version's
+ * Site migrations on D1 (0048_site_migrations, 0049_site_migration_load): a run rewritten whole at
+ * its version's
  * compare-and-set, pages added past the 100-parameter cap with one page per URL, pages listed by
  * fetch state and stage, a clustering's templates and assignments replaced in one batch, scope
  * isolation, a template rewritten whole at the run's compare-and-set (0050_site_migration_authoring),
@@ -38,6 +39,7 @@ const run = (over: Partial<MigrationRun> = {}): MigrationRun => ({
   threshold: 0.8,
   inventory: null,
   error: null,
+  releaseId: null,
   version: 1,
   createdAt: AT,
   createdBy: 'ed@example.com',
@@ -62,6 +64,7 @@ const page = (runId: string, n: number, over: Partial<MigrationPage> = {}): Migr
   outputScript: null,
   score: null,
   entryId: null,
+  unresolvedLinks: 0,
   error: null,
   createdAt: AT,
   updatedAt: AT,
@@ -109,6 +112,11 @@ describe('site migrations on D1', () => {
     };
     await store.migrations.saveRun(scope, inventoried, 1);
     expect(await store.migrations.getRun(scope, r.id)).toEqual(inventoried);
+    // The release its entries go through rides on the run (0049).
+    const released: MigrationRun = { ...inventoried, releaseId: 'rel-1', version: 3 };
+    await store.migrations.saveRun(scope, released, 2);
+    expect((await store.migrations.getRun(scope, r.id))?.releaseId).toBe('rel-1');
+    await store.migrations.saveRun(scope, { ...released, releaseId: null, version: 4 }, 3);
     // A stale writer loses, directly and inside a unit of work (at commit).
     await expect(store.migrations.saveRun(scope, { ...r, version: 2 }, 1)).rejects.toThrow(
       TransactionConflictError,
@@ -260,6 +268,12 @@ describe('site migrations on D1', () => {
     const r = run();
     await store.migrations.createRun(scope, r);
     await store.migrations.addPages(scope, r.id, [page(r.id, 1)]);
+    await store.migrations.addAssets(
+      scope,
+      r.id,
+      [{ url: 'https://site.test/a.png', assetId: 'a1' }],
+      AT,
+    );
     await store.migrations.replaceTemplates(
       scope,
       r.id,
@@ -276,7 +290,12 @@ describe('site migrations on D1', () => {
       status: 200,
     });
     while ((await store.spaces.purgeEnvironmentStep(spaceId, env, 500, clock.now())) > 0) {}
-    for (const table of ['migration_runs', 'migration_templates', 'migration_pages']) {
+    for (const table of [
+      'migration_runs',
+      'migration_templates',
+      'migration_pages',
+      'migration_assets',
+    ]) {
       const n = await testDb
         .prepare(`SELECT count(*) AS n FROM ${table} WHERE space_id = ? AND environment_id = ?`)
         .bind(spaceId, env)
@@ -428,5 +447,110 @@ describe('site migrations on D1', () => {
       page(r.id, 1, { templateId: t.id, stage: 'needs-fix', outputScript: 'abc', error: 'threw' }),
     ]);
     expect((await store.migrations.getPage(scope, r.id, 'p-00001'))?.outputScript).toBe('abc');
+  });
+
+  it('moves pages only while each is as it was read, directly and in a unit', async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    const all = Array.from({ length: 120 }, (_, i) => page(r.id, i, { stage: 'validated' }));
+    await store.migrations.addPages(scope, r.id, all);
+    const loaded = (p: MigrationPage, n: number): MigrationPage => ({
+      ...p,
+      stage: 'loaded',
+      entryId: `e-${n}`,
+      unresolvedLinks: n % 3,
+      updatedAt: LATER,
+    });
+    // More pages than one statement binds, each with its own compare-and-set.
+    await store.migrations.movePages(
+      scope,
+      r.id,
+      all.map((p, i) => ({ page: loaded(p, i), expected: AT })),
+    );
+    expect(await store.migrations.getPage(scope, r.id, 'p-00004')).toEqual(
+      loaded(all[4] as MigrationPage, 4),
+    );
+    expect((await store.migrations.countPages(scope, r.id)).byStage).toEqual({ loaded: 120 });
+
+    // One page written since it was read: none of the moves land, directly or in a unit.
+    const back = (p: MigrationPage): MigrationPage => ({ ...p, stage: 'needs-fix', updatedAt: AT });
+    const stale = [
+      { page: back(all[0] as MigrationPage), expected: LATER },
+      { page: back(all[1] as MigrationPage), expected: AT },
+    ];
+    await expect(store.migrations.movePages(scope, r.id, stale)).rejects.toThrow(
+      TransactionConflictError,
+    );
+    await expect(
+      store.withTransaction(async (tx) => {
+        await tx.migrations.movePages(scope, r.id, stale);
+      }),
+    ).rejects.toThrow(TransactionConflictError);
+    expect((await store.migrations.getPage(scope, r.id, 'p-00000'))?.stage).toBe('loaded');
+    // Another scope's page of the same id is not this one.
+    await expect(
+      store.migrations.movePages({ ...scope, environmentId: 'other' }, r.id, [
+        { page: back(all[0] as MigrationPage), expected: LATER },
+      ]),
+    ).rejects.toThrow(TransactionConflictError);
+    const left = await testDb.prepare('SELECT count(*) AS n FROM _guard').first<{ n: number }>();
+    expect(left?.n).toBe(0);
+  });
+
+  it('lists pages by unresolved links and by whether their last step failed', async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    await store.migrations.addPages(scope, r.id, [
+      page(r.id, 1, { stage: 'loaded', entryId: 'e1', unresolvedLinks: 2 }),
+      page(r.id, 2, { stage: 'loaded', entryId: 'e2' }),
+      page(r.id, 3, { stage: 'needs-fix', error: 'refused' }),
+      page(r.id, 4, { stage: 'needs-fix' }),
+    ]);
+    const ids = async (q: Parameters<typeof store.migrations.listPages>[2]) =>
+      (await store.migrations.listPages(scope, r.id, q)).map((p) => p.id);
+    expect(await ids({ limit: 10, unresolvedLinks: true })).toEqual(['p-00001']);
+    expect(await ids({ limit: 10, stage: 'needs-fix', failed: false })).toEqual(['p-00004']);
+    expect(await ids({ limit: 10, failed: true })).toEqual(['p-00003']);
+    expect((await store.migrations.getPage(scope, r.id, 'p-00001'))?.unresolvedLinks).toBe(2);
+  });
+
+  it('finds the entries and assets a run holds by URL, past the cap', async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    await store.migrations.addPages(
+      scope,
+      r.id,
+      Array.from({ length: 150 }, (_, i) =>
+        page(r.id, i, i % 2 === 0 ? { stage: 'loaded', entryId: `e-${i}` } : {}),
+      ),
+    );
+    const asked = Array.from({ length: 700 }, (_, i) => `https://site.test/blog/${i}`);
+    const entries = await store.migrations.entriesByUrl(scope, r.id, asked);
+    expect(entries).toHaveLength(75);
+    expect(entries).toContainEqual({ url: 'https://site.test/blog/4', entryId: 'e-4' });
+    expect(
+      await store.migrations.entriesByUrl({ ...scope, environmentId: 'x' }, r.id, asked),
+    ).toEqual([]);
+
+    const files = Array.from({ length: 130 }, (_, i) => ({
+      url: `https://cdn.test/${i}.png`,
+      assetId: `a-${i}`,
+    }));
+    await store.migrations.addAssets(scope, r.id, files, AT);
+    // Recorded again with other assets (a batch run twice): the first asset stays.
+    await store.migrations.addAssets(
+      scope,
+      r.id,
+      files.slice(0, 10).map((f) => ({ ...f, assetId: 'other' })),
+      LATER,
+    );
+    const urls = Array.from({ length: 600 }, (_, i) => `https://cdn.test/${i}.png`);
+    const found = await store.migrations.assetsByUrl(scope, r.id, urls);
+    expect(found).toHaveLength(130);
+    expect(found).toContainEqual({ url: 'https://cdn.test/3.png', assetId: 'a-3' });
+    expect(await store.migrations.assetsByUrl(scope, 'another-run', urls)).toEqual([]);
   });
 });

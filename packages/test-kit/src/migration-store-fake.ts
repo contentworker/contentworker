@@ -8,6 +8,7 @@ import {
 import {
   type MigrationCluster,
   type MigrationPageCounts,
+  type MigrationPageMove,
   type MigrationPageQuery,
   type MigrationStore,
   TransactionConflictError,
@@ -30,9 +31,15 @@ export class InMemoryMigrationStore implements MigrationStore {
   /** `space::env::run::page` → page. */
   readonly pageData = new JournaledMap<string, MigrationPage>();
 
+  /** `space::env::run::url` → asset id. */
+  readonly assetData = new JournaledMap<string, string>();
+
   /** The collections a transaction can change, and the purge clears. */
   collections(): JournaledMap<string, unknown>[] {
-    return [this.runData, this.templateData, this.pageData] as JournaledMap<string, unknown>[];
+    return [this.runData, this.templateData, this.pageData, this.assetData] as JournaledMap<
+      string,
+      unknown
+    >[];
   }
 
   private pagesOf(scope: Scope, runId: string): MigrationPage[] {
@@ -94,6 +101,53 @@ export class InMemoryMigrationStore implements MigrationStore {
     }
   }
 
+  async movePages(scope: Scope, runId: string, moves: readonly MigrationPageMove[]): Promise<void> {
+    const key = (id: string) => `${scopeKey(scope)}::${runId}::${id}`;
+    // As D1: all or nothing, refused when any page was written since it was read.
+    for (const { page, expected } of moves) {
+      if (this.pageData.get(key(page.id))?.updatedAt !== expected) {
+        throw new TransactionConflictError();
+      }
+    }
+    for (const { page } of moves) {
+      const current = this.pageData.get(key(page.id));
+      if (current) this.pageData.set(key(page.id), clone({ ...page, runId, url: current.url }));
+    }
+  }
+
+  async entriesByUrl(
+    scope: Scope,
+    runId: string,
+    urls: readonly string[],
+  ): Promise<{ url: string; entryId: string }[]> {
+    const wanted = new Set(urls);
+    return this.pagesOf(scope, runId).flatMap((p) =>
+      wanted.has(p.url) && p.entryId ? [{ url: p.url, entryId: p.entryId }] : [],
+    );
+  }
+
+  async assetsByUrl(
+    scope: Scope,
+    runId: string,
+    urls: readonly string[],
+  ): Promise<{ url: string; assetId: string }[]> {
+    return [...new Set(urls)].flatMap((url) => {
+      const assetId = this.assetData.get(`${scopeKey(scope)}::${runId}::${url}`);
+      return assetId ? [{ url, assetId }] : [];
+    });
+  }
+
+  async addAssets(
+    scope: Scope,
+    runId: string,
+    assets: readonly { url: string; assetId: string }[],
+  ): Promise<void> {
+    for (const { url, assetId } of assets) {
+      const key = `${scopeKey(scope)}::${runId}::${url}`;
+      if (!this.assetData.has(key)) this.assetData.set(key, assetId);
+    }
+  }
+
   async getPage(scope: Scope, runId: string, id: string): Promise<MigrationPage | null> {
     const page = this.pageData.get(`${scopeKey(scope)}::${runId}::${id}`);
     return page ? clone(page) : null;
@@ -115,6 +169,8 @@ export class InMemoryMigrationStore implements MigrationStore {
           (query.after === undefined || p.id > query.after) &&
           (query.stage === undefined || p.stage === query.stage) &&
           (query.templateId === undefined || p.templateId === query.templateId) &&
+          (!query.unresolvedLinks || p.unresolvedLinks > 0) &&
+          (query.failed === undefined || query.failed === (p.error !== null)) &&
           (query.fetch === undefined ||
             (query.fetch === 'fetched' ? p.html !== null : p.html === null && p.error === null)),
       )
