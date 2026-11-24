@@ -1,10 +1,13 @@
 import type {
+  ArrayItemType,
   AssetPlaceholder,
   AssetShareTargetType,
   AssetVideoStatus,
   DomainEvent,
   FieldIssue,
+  FieldType,
   FocalPoint,
+  LinkType,
   Scope,
   Webhook,
 } from '@contentworker/domain';
@@ -924,6 +927,79 @@ export interface PluginOperationInvocation {
   readonly timeoutMs?: number;
   readonly scope?: Scope;
 }
+
+/**
+ * Runs a site migration's import script on one source page, in isolation.
+ *
+ * The script is code an agent or an operator wrote: implementations MUST run it with no network,
+ * no bindings and no ambient authority, bound it in time and in output size, and never let one
+ * space's runs share state with another's. `run` resolves with the script's outcome, failures
+ * included; it rejects only when the input is over the sandbox's limits or the sandbox itself
+ * cannot run.
+ *
+ * The output is whatever the script returned, parsed from JSON and otherwise unchecked: checking
+ * it against the import-script contract and the template's content type is the caller's job.
+ */
+export interface ImportScriptSandbox {
+  run(input: ImportScriptRun): Promise<ImportScriptResult>;
+}
+
+export interface ImportScriptRun {
+  readonly scope: Scope;
+  /** The script, an ES module exporting `default` (or `transform`): `(page, ctx) => output`. */
+  readonly script: string;
+  /** The source page as fetched: its URL resolves the page's relative links. */
+  readonly page: { readonly url: string; readonly html: string };
+  /** The template's content type, as the script sees it in `ctx.contentType`. */
+  readonly contentType: ImportScriptContentType;
+  /** How long the run may take, wall clock; an implementation may cap it lower. */
+  readonly timeoutMs: number;
+}
+
+/** The part of a content type an import script needs to fill it: names, types and shapes. */
+export interface ImportScriptContentType {
+  readonly apiId: string;
+  readonly name: string;
+  readonly fields: readonly ImportScriptFieldSummary[];
+}
+
+export interface ImportScriptFieldSummary {
+  readonly apiId: string;
+  readonly name: string;
+  readonly type: FieldType;
+  readonly required: boolean;
+  /** For a Link field. */
+  readonly linkType?: LinkType;
+  /** For a Component field: its nested fields. */
+  readonly fields?: readonly ImportScriptFieldSummary[];
+  /** For an Array field: what each element is; a blocks field lists its variants. */
+  readonly items?: {
+    readonly type: ArrayItemType;
+    readonly linkType?: LinkType;
+    readonly fields?: readonly ImportScriptFieldSummary[];
+    readonly variants?: readonly {
+      readonly apiId: string;
+      readonly name: string;
+      readonly fields: readonly ImportScriptFieldSummary[];
+    }[];
+  };
+}
+
+/**
+ * Why a run produced no output: the module did not parse (`syntax`), it threw or exported no
+ * transform (`runtime`), it ran out of time or CPU (`timeout`), or what it returned is not JSON
+ * or is over the size limit (`invalid-output`).
+ */
+export type ImportScriptErrorKind = 'syntax' | 'runtime' | 'timeout' | 'invalid-output';
+
+export type ImportScriptResult =
+  | { readonly ok: true; readonly output: unknown; readonly logs: readonly string[] }
+  | {
+      readonly ok: false;
+      readonly error: { readonly kind: ImportScriptErrorKind; readonly message: string };
+      /** What the script logged before it failed, bounded. */
+      readonly logs: readonly string[];
+    };
 
 /**
  * What the media origin needs to serve one published asset, kept where it can read it on a cache

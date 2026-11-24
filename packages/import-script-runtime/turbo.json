@@ -1,0 +1,12 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // The bundle is built from this package's own sources and linkedom (in the lockfile, which
+    // every task's hash already covers).
+    "generate": {
+      "inputs": ["scripts/bundle.ts", "src/**", "!src/bundle.generated.ts"],
+      "outputs": ["src/bundle.generated.ts"]
+    }
+  }
+}

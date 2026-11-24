@@ -17,7 +17,8 @@
       "!**/node_modules",
       "!**/worker-configuration.d.ts",
       "!packages/docs/src/generated.ts",
-      "!packages/http/src/mcp/skills.generated.ts"
+      "!packages/http/src/mcp/skills.generated.ts",
+      "!packages/import-script-runtime/src/bundle.generated.ts"
     ]
   },
   "formatter": {

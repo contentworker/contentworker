@@ -7,6 +7,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./import-script": {
+      "types": "./src/import-script-fake.ts",
+      "default": "./src/import-script-fake.ts"
     }
   },
   "scripts": {
@@ -16,6 +20,7 @@
   },
   "dependencies": {
     "@contentworker/domain": "workspace:*",
+    "@contentworker/import-script-runtime": "workspace:*",
     "@contentworker/ports": "workspace:*"
   },
   "devDependencies": {
