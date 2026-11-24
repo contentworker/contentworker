@@ -236,7 +236,8 @@ export function registerMigrationTools(server: McpServer, t: ToolContext): void 
       description:
         'Group the run’s fetched pages into templates by HTML structure, replacing any earlier ' +
         'grouping. A lower threshold makes fewer, broader templates. Refused before an ' +
-        'inventory and once a template is being authored or approved. Then migration_templates.',
+        'inventory, once a template is being authored or approved, and once a background run has ' +
+        'taken the templates on (clusteringHeldAt). Then migration_templates.',
       inputSchema: toolSchema('migration_cluster', () =>
         z.object({ ...runArgs, ...migrationClusterBody.shape, ...scopeArgs }),
       ),

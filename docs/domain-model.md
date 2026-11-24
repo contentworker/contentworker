@@ -1734,7 +1734,8 @@ it as a `MigrationArtifact` (`{ key, sha256, bytes }`).
   a `status` (`created` → `inventoried` → `clustered`, then `stopped` when its background driver
   ended without publishing, or `failed`), the score `threshold` (default
   `MIGRATION_DEFAULT_THRESHOLD`, 0.8), the last `inventory` (`MigrationInventory`: pages found,
-  added, and skipped by robots.txt, globs, origin, limit or an unusable URL, with warnings) and a
+  added, and skipped by robots.txt, globs, origin, limit or an unusable URL, with warnings), `clusteringHeldAt`
+  (when its driver took its templates on, or null) and a
   `version` that every write's compare-and-set uses. Every template write rides with that
   compare-and-set, and the store refuses to replace templates once one is past `pending`.
   `checkMigrationSource` and `checkMigrationRunInput` check a new run, and refuse a URL that
@@ -1844,6 +1845,17 @@ approved, `pageVersions`: its pages to transform, and those loaded from an earli
   - It reports `more` while pages are waiting. When the site is unavailable it reports
     `unavailable`, writes nothing, and the batch waits.
 
+- `clusterPages` groups the fetched pages into templates, replacing an earlier grouping whole. It is
+  refused once a template is past `pending`, and (`MigrationClusteringHeldError`, an
+  `InvalidStateError`) once the run's driver has taken its templates on.
+- `takeClustering` is how the driver does: it clusters a run that isn't clustered, or takes the
+  templates it has, and sets `clusteringHeldAt` at the run's compare-and-set. Whichever of a
+  clustering and a taking commits first stands: the driver takes the clustering that beat it, and a
+  clustering it beat is refused. The hold is never cleared, since a driver can end (terminated, out
+  of retries) with nothing recorded on the run: the templates are taken on step by step, or by
+  another driver once the first one's instance is past its retention, and another grouping is
+  another run.
+
 Authoring a template (`packages/application/src/site-migration-templates.ts`). Every template
 write rides with the run's compare-and-set; a lost race is read again and made over, up to four
 times, then reported as a `ConflictError`. Scripts and outputs are artifacts beside the page HTML
@@ -1899,7 +1911,7 @@ two at a time.
 `runSiteMigration` (`site-migration-run.ts`) is the body of `MigrationWorkflow`, one Workflows
 instance per run (`migration-<runId>`), started once the run exists. Its steps: inventory (a site
 that can't be read is waited out, ten minutes at a time, twelve times) → `fetchSourcePages` a batch
-per step → `clusterPages` → one template agent per template not approved → for each template,
+per step → `takeClustering` → one template agent per template not approved → for each template,
 `waitForEvent` on `template-approved-<templateId>` (14 days; Workflows event types take only
 letters, digits, `-` and `_`) → its transforms a batch per step, then its load and redirects → one
 relink pass → `waitForEvent` on `publish-approved` → publish. A driver that ends without

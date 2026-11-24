@@ -109,6 +109,7 @@ const client = {
       inventory: null,
       error: status === 'stopped' ? 'no go-ahead came' : null,
       releaseId: null,
+      clusteringHeldAt: null,
       version: 1,
       createdAt: T0,
       createdBy: null,

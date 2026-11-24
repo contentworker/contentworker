@@ -34,19 +34,19 @@ import {
 } from './site-migration-templates';
 import { assertSameApproval } from './site-migration-version';
 import {
-  clusterPages,
   fetchSourcePages,
   inventorySite,
   MIGRATION_FETCH_BATCH_MAX,
   type SiteMigrationDeps,
   SiteUnavailableError,
+  takeClustering,
 } from './site-migrations';
 
 /**
  * A site migration run, driven start to finish: one Workflow instance per run.
  *
  * inventory → fetch the pages a batch per step (waiting out a site that can't be read now) →
- * cluster → one template agent per template, to propose its model and write its script → for
+ * cluster, taking the templates on ({@link takeClustering}) → one template agent per template, to propose its model and write its script → for
  * each template, wait for a person to approve it, then transform its pages a batch per step and
  * load them → wait for the go-ahead to publish → publish. A template that is reopened on the way is
  * waited for again, and its newer version taken through ({@link DrivenTemplate}).
@@ -154,12 +154,19 @@ type Settled<T> = { readonly ok: T } | { readonly failed: string };
  * run is gone, in the wrong state, the actor lost access) is a failure no retry fixes: returned
  * as one, so the step is recorded and not retried. Anything else throws, and the step retries.
  */
-async function settle<T>(fn: () => Promise<T>): Promise<Settled<T>> {
+async function settle<T>(
+  fn: () => Promise<T>,
+  /** What the last lost race is: a failure, or thrown, for the step's own retries to take over. */
+  lost: 'fails' | 'throws' = 'fails',
+): Promise<Settled<T>> {
   for (let attempt = 1; ; attempt++) {
     try {
       return { ok: await fn() };
     } catch (err) {
-      if (err instanceof TransactionConflictError && attempt < 3) continue;
+      if (err instanceof TransactionConflictError) {
+        if (attempt < 3) continue;
+        if (lost === 'throws') throw err;
+      }
       if (err instanceof DomainError) return { failed: err.message.slice(0, MAX_ERROR_LENGTH) };
       throw err;
     }
@@ -209,18 +216,16 @@ export async function runSiteMigration(
       await steps.do('cluster', STEP, () =>
         settle(async () => {
           await principalFor(ctx, scope, params.startedBy);
-          const run = await requireRun(ctx, scope, runId);
-          const view =
-            run.status === 'clustered'
-              ? { templates: await ctx.store.migrations.listTemplates(scope, runId) }
-              : await clusterPages(ctx, scope, runId);
-          return view.templates.map((t) => ({
+          // Held from here on: what is waited for below is these templates, by id.
+          const taken = await takeClustering(ctx, scope, runId);
+          return taken.map((t) => ({
             id: t.id,
             status: t.status,
             // Held by an approval: reopened by hand before the driver started.
             held: t.contentTypeId !== null,
           }));
-        }),
+          // Templates being written, or grouped again, as it takes them are no reason to fail.
+        }, 'throws'),
       ),
     );
     if (templates.length === 0) return { status: 'clustered', templates: [] };

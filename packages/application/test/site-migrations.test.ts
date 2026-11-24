@@ -1,6 +1,7 @@
 import {
   InvalidStateError,
   MIGRATION_MAX_CRAWL_DEPTH,
+  MigrationClusteringHeldError,
   type MigrationTemplate,
   NotFoundError,
   ValidationError,
@@ -25,6 +26,7 @@ import {
   listMigrationTemplates,
   SiteUnavailableError,
   sha256Hex,
+  takeClustering,
 } from '../src/index';
 
 const scope = { spaceId: 'site', environmentId: 'main' };
@@ -96,6 +98,7 @@ describe('site migration runs', () => {
       inventory: null,
       error: null,
       releaseId: null,
+      clusteringHeldAt: null,
       version: 1,
       createdAt: '2026-11-20T00:00:00.000Z',
       createdBy: 'ed@example.com',
@@ -340,6 +343,124 @@ describe('inventory, fetch and cluster, end to end', () => {
     expect(await store.migrations.listTemplates(scope, run.id)).toEqual([]);
     expect((await store.migrations.countPages(scope, run.id)).byStage).toEqual({ discovered: 6 });
     expect((await store.migrations.getRun(scope, run.id))?.status).toBe('inventoried');
+  });
+});
+
+describe('a clustering the run’s driver takes on', () => {
+  async function fetched() {
+    const h = harness(SITE);
+    const run = await createMigrationRun(h.ctx, scope, {
+      source: { kind: 'sitemap', url: `${O}/` },
+    });
+    await inventorySite(h.ctx, h.deps, scope, run.id);
+    await fetchSourcePages(h.ctx, h.deps, scope, run.id, { limit: 50 });
+    const ids = async () =>
+      (await h.store.migrations.listTemplates(scope, run.id)).map((t) => t.id).sort();
+    const heldAt = async () =>
+      (await h.store.migrations.getRun(scope, run.id))?.clusteringHeldAt ?? null;
+    /** Runs `fn` once, after the next `listPages`: a clustering has read the run, and not written. */
+    const midway = (fn: () => Promise<unknown>) => {
+      const listPages = h.store.migrations.listPages.bind(h.store.migrations);
+      let done = false;
+      h.store.migrations.listPages = async (...args) => {
+        const read = await listPages(...args);
+        if (!done) {
+          done = true;
+          await fn();
+        }
+        return read;
+      };
+    };
+    return { ...h, run, ids, heldAt, midway };
+  }
+  const taken = (list: readonly MigrationTemplate[]) => list.map((t) => t.id).sort();
+
+  it('is the one it groups, and isn’t replaced', async () => {
+    const { ctx, run, ids, heldAt } = await fetched();
+    const templates = await takeClustering(ctx, scope, run.id);
+    expect(templates).toHaveLength(2);
+    expect(await heldAt()).toBe('2026-11-20T00:00:00.000Z');
+    await expect(clusterPages(ctx, scope, run.id, { threshold: 0.9 })).rejects.toThrow(
+      MigrationClusteringHeldError,
+    );
+    expect(await ids()).toEqual(taken(templates));
+    // Taken again (the step run again, or a later driver): the same ones, and nothing written.
+    const before = await ctx.store.migrations.getRun(scope, run.id);
+    expect(taken(await takeClustering(ctx, scope, run.id))).toEqual(taken(templates));
+    expect(await ctx.store.migrations.getRun(scope, run.id)).toEqual(before);
+  });
+
+  it('is the one a person made by hand, which they could replace until then', async () => {
+    const { ctx, run, ids, heldAt } = await fetched();
+    const first = await clusterPages(ctx, scope, run.id);
+    const second = await clusterPages(ctx, scope, run.id);
+    expect(second.run.clusteringHeldAt).toBeNull();
+    expect(taken(second.templates)).not.toEqual(taken(first.templates));
+    expect(taken(await takeClustering(ctx, scope, run.id))).toEqual(taken(second.templates));
+    expect(await heldAt()).not.toBeNull();
+    await expect(clusterPages(ctx, scope, run.id)).rejects.toThrow(MigrationClusteringHeldError);
+    expect(await ids()).toEqual(taken(second.templates));
+  });
+
+  it('beats a clustering that began before it and commits after', async () => {
+    const { ctx, run, ids, midway } = await fetched();
+    const { templates } = await clusterPages(ctx, scope, run.id);
+    midway(() => takeClustering(ctx, scope, run.id));
+    await expect(clusterPages(ctx, scope, run.id)).rejects.toThrow(MigrationClusteringHeldError);
+    expect(await ids()).toEqual(taken(templates));
+  });
+
+  it('beats a first clustering that began before it, too', async () => {
+    const { ctx, run, ids, midway } = await fetched();
+    let driver: readonly MigrationTemplate[] = [];
+    midway(async () => {
+      driver = await takeClustering(ctx, scope, run.id);
+    });
+    await expect(clusterPages(ctx, scope, run.id)).rejects.toThrow(MigrationClusteringHeldError);
+    expect(driver).toHaveLength(2);
+    expect(await ids()).toEqual(taken(driver));
+  });
+
+  it('loses to one that commits first, which it takes when it reads again', async () => {
+    const { ctx, store, run, ids, heldAt, midway } = await fetched();
+    // The driver was grouping the pages itself.
+    let hand: readonly MigrationTemplate[] = [];
+    midway(async () => {
+      hand = (await clusterPages(ctx, scope, run.id)).templates;
+    });
+    await expect(takeClustering(ctx, scope, run.id)).rejects.toThrow(TransactionConflictError);
+    expect(await heldAt()).toBeNull();
+    expect(await ids()).toEqual(taken(hand));
+
+    // It was taking what a person had made, as they made it again: after it read the run, and
+    // after it read the templates.
+    for (const read of ['getRun', 'listTemplates'] as const) {
+      const repo = store.migrations as unknown as Record<string, (...a: unknown[]) => unknown>;
+      const inner = repo[read]?.bind(store.migrations) as (...a: unknown[]) => Promise<unknown>;
+      repo[read] = async (...args) => {
+        const result = await inner(...args);
+        repo[read] = inner;
+        hand = (await clusterPages(ctx, scope, run.id)).templates;
+        return result;
+      };
+      await expect(takeClustering(ctx, scope, run.id)).rejects.toThrow(TransactionConflictError);
+      expect(await heldAt()).toBeNull();
+    }
+    expect(taken(await takeClustering(ctx, scope, run.id))).toEqual(taken(hand));
+    expect(await heldAt()).not.toBeNull();
+    expect(await ids()).toEqual(taken(hand));
+  });
+
+  it('is left unheld when it has no templates, and the run’s state is refused as before', async () => {
+    const { ctx, deps } = harness({ [`${O}/gone`]: 404 });
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: `${O}/` } });
+    await expect(takeClustering(ctx, scope, run.id)).rejects.toThrow(InvalidStateError);
+    await inventorySite(ctx, deps, scope, run.id);
+    await fetchSourcePages(ctx, deps, scope, run.id, { limit: 50 });
+    expect(await takeClustering(ctx, scope, run.id)).toEqual([]);
+    expect(await takeClustering(ctx, scope, run.id)).toEqual([]);
+    expect((await clusterPages(ctx, scope, run.id)).run.clusteringHeldAt).toBeNull();
+    await expect(takeClustering(ctx, other, run.id)).rejects.toThrow(NotFoundError);
   });
 });
 

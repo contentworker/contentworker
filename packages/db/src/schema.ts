@@ -1577,6 +1577,8 @@ export const migrationRuns = sqliteTable(
     error: text('error'),
     /** 0049_site_migration_load. */
     releaseId: text('release_id'),
+    /** 0052_migration_clustering_hold. */
+    clusteringHeldAt: integer('clustering_held_at', { mode: 'timestamp_ms' }),
     version: integer('version').notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     createdBy: text('created_by'),

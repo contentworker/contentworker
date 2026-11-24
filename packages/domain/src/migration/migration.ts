@@ -91,6 +91,18 @@ export class MigrationApprovalChangedError extends ConflictError {
   }
 }
 
+/**
+ * The run's background driver has taken its templates on (`clusteringHeldAt`): it waits for their
+ * approvals by id, so grouping the pages again would leave it waiting for templates that are gone.
+ */
+export class MigrationClusteringHeldError extends InvalidStateError {
+  constructor() {
+    super(
+      'The run’s templates were taken on in the background, so its pages can’t be clustered again: go on with these templates, or create another run to group the pages another way',
+    );
+  }
+}
+
 /** What an inventory found, and what it left out and why. */
 export interface MigrationInventory {
   /** Pages the source listed or the crawl reached, before filtering. */
@@ -128,6 +140,12 @@ export interface MigrationRun {
    * reuses it while it is open, rather than opening another.
    */
   readonly releaseId: string | null;
+  /**
+   * When the run's driver took its templates on, from when its pages aren't clustered again. Null
+   * until one does. It is never cleared: what ends a driver may not be recorded on the run, and the
+   * templates can be taken on step by step, or by another driver, as they are.
+   */
+  readonly clusteringHeldAt: string | null;
   /** Counts up from 1 with every write; the compare-and-set each write rides with. */
   readonly version: number;
   readonly createdAt: string;

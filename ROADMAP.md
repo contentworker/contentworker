@@ -65,7 +65,7 @@ Everything below is built and tested on v2.
   (matched on `sourceUrl`, so a load repeats safely), relinked, redirected and published, or added
   to a release. Step by step in bounded batches, or in the background (`…/start`), where the
   engine runs every step, starts an authoring agent per template and waits for each approval and
-  the go-ahead to publish. An approved template
+  the go-ahead to publish; the templates it has taken on aren't clustered again. An approved template
   can be reopened, changed and approved again: its pages not loaded yet are transformed again,
   loaded ones are left alone, and a background run waits for the new approval. REST, 14 more MCP
   tools, the SDK, `contentworker migrate` and the

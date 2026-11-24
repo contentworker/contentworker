@@ -1,5 +1,10 @@
-import { type ContentTypeDraft, type Principal, scopesForKind } from '@contentworker/domain';
-import type { MigrationRunParams } from '@contentworker/ports';
+import {
+  type ContentTypeDraft,
+  MigrationClusteringHeldError,
+  type Principal,
+  scopesForKind,
+} from '@contentworker/domain';
+import { type MigrationRunParams, TransactionConflictError } from '@contentworker/ports';
 import {
   FakeBlobStore,
   FakeRemoteFetcher,
@@ -13,7 +18,10 @@ import { describe, expect, it } from 'vitest';
 import {
   type AppContext,
   approveTemplate,
+  clusterPages,
   createMigrationRun,
+  fetchSourcePages,
+  inventorySite,
   MIGRATION_AGENTS_PER_RUN,
   MIGRATION_APPROVAL_WAITS,
   MIGRATION_DRIVEN_TEMPLATES,
@@ -373,6 +381,147 @@ describe('a migration run’s driver', () => {
   });
 });
 
+describe('clustering a run its driver has taken on', () => {
+  type H = Awaited<ReturnType<typeof harness>>;
+  const pass = (h: H) => h.steps.run(() => runSiteMigration(h.steps, h.host, h.params));
+  const ids = async (h: H) =>
+    (await h.ctx.store.migrations.listTemplates(scope, h.run.id)).map((t) => t.id);
+  const byHand = async (h: H) => {
+    await inventorySite(h.ctx, h.host.site, scope, h.run.id);
+    while ((await fetchSourcePages(h.ctx, h.host.site, scope, h.run.id)).more) {}
+    return clusterPages(h.ctx, scope, h.run.id);
+  };
+  const recluster = (h: H) => clusterPages(h.ctx, scope, h.run.id, { threshold: 0.9 });
+
+  it('is refused while it waits, so its templates and approvals stand', async () => {
+    const h = await harness();
+    await pass(h);
+    const before = await ids(h);
+    await expect(recluster(h)).rejects.toThrow(MigrationClusteringHeldError);
+    expect(await ids(h)).toEqual(before);
+    const templateId = before[0] as string;
+    await authorAndApprove(h.ctx, h.host, { runId: h.run.id, templateId });
+    h.steps.sendEvent(migrationTemplateApprovedEvent(templateId), {});
+    await pass(h);
+    expect(await stages(h.ctx, h.run.id)).toEqual({ loaded: 3 });
+  });
+
+  it('is open on a run clustered by hand until it is started, and refused from then on', async () => {
+    const h = await harness();
+    const first = await byHand(h);
+    const second = await recluster(h);
+    expect(await ids(h)).not.toContain(first.templates[0]?.id);
+    const templateId = second.templates[0]?.id;
+    expect(await pass(h)).toMatchObject({ on: [`approval ${templateId}`] });
+    expect(h.started).toEqual([templateId]);
+    await expect(recluster(h)).rejects.toThrow(MigrationClusteringHeldError);
+  });
+
+  it('that commits as the driver takes the templates is the one the driver takes', async () => {
+    const h = await harness();
+    await byHand(h);
+    // Between the step's read of the templates and its hold.
+    const save = h.ctx.store.migrations.saveRun.bind(h.ctx.store.migrations);
+    let raced = false;
+    h.ctx.store.migrations.saveRun = async (...args) => {
+      if (!raced) {
+        raced = true;
+        await recluster(h);
+      }
+      return save(...args);
+    };
+    const now = await pass(h);
+    const [templateId] = await ids(h);
+    expect(now).toMatchObject({ on: [`approval ${templateId}`] });
+    expect(h.started).toEqual([templateId]);
+    await expect(recluster(h)).rejects.toThrow(MigrationClusteringHeldError);
+  });
+
+  it('leaves a taking that keeps losing its race to the step’s retries', async () => {
+    const h = await harness();
+    await byHand(h);
+    const save = h.ctx.store.migrations.saveRun.bind(h.ctx.store.migrations);
+    let losses = 4;
+    h.ctx.store.migrations.saveRun = async (...args) => {
+      if (losses > 0) {
+        losses -= 1;
+        throw new TransactionConflictError();
+      }
+      return save(...args);
+    };
+    expect((await pass(h)).status).toBe('waiting');
+    expect(losses).toBe(0);
+    expect(await h.ctx.store.migrations.getRun(scope, h.run.id)).toMatchObject({
+      status: 'clustered',
+      clusteringHeldAt: expect.any(String),
+    });
+  });
+
+  it('stays refused when the step that took it runs again, its result lost', async () => {
+    const h = await harness();
+    await pass(h);
+    const before = await ids(h);
+    const run = await h.ctx.store.migrations.getRun(scope, h.run.id);
+    h.steps.journal.delete('cluster');
+    expect(await pass(h)).toMatchObject({ on: [`approval ${before[0]}`] });
+    expect(await ids(h)).toEqual(before);
+    expect(await h.ctx.store.migrations.getRun(scope, h.run.id)).toEqual(run);
+  });
+
+  it('leaves a run whose driver is gone with its templates to take on by hand, or drive again', async () => {
+    const h = await harness();
+    await pass(h);
+    // Terminated: nothing more is recorded on the run.
+    const [templateId] = await ids(h);
+    await expect(recluster(h)).rejects.toThrow(MigrationClusteringHeldError);
+    // Another driver, once the first one's instance is past its retention, takes the same ones.
+    const again = { ...h, steps: new FakeWorkflowSteps(h.clock) };
+    expect(await pass(again)).toMatchObject({ on: [`approval ${templateId}`] });
+    await authorAndApprove(h.ctx, h.host, { runId: h.run.id, templateId: templateId as string });
+    expect(
+      (await h.ctx.store.migrations.getTemplate(scope, h.run.id, templateId as string))?.status,
+    ).toBe('approved');
+  });
+
+  it('is refused by a stopped run’s state, and a failed one’s, as it was', async () => {
+    const stopped = await harness();
+    await pass(stopped);
+    stopped.clock.advance(15 * 24 * 60 * 60_000);
+    await pass(stopped);
+    await expect(recluster(stopped)).rejects.toThrow('the run is stopped');
+
+    const failed = await harness();
+    await byHand(failed);
+    failed.host.agents.start = async () => {
+      throw new TransactionConflictError();
+    };
+    await pass(failed);
+    expect((await failed.ctx.store.migrations.getRun(scope, failed.run.id))?.status).toBe('failed');
+    await expect(recluster(failed)).rejects.toThrow('the run is failed');
+  });
+
+  it('goes on with a driver that recorded its clustering before there was a hold', async () => {
+    const h = await harness();
+    const { run } = await byHand(h);
+    const [templateId] = await ids(h);
+    h.steps.journal.set('read run', { ok: true, value: { ...run } });
+    h.steps.journal.set('cluster', {
+      ok: true,
+      value: { ok: [{ id: templateId, status: 'pending', held: false }] },
+    });
+    expect(await pass(h)).toMatchObject({ on: [`approval ${templateId}`] });
+    expect(h.steps.executed).not.toContain('cluster');
+    // Nothing held it, so nothing refuses this but a template being authored.
+    expect((await h.ctx.store.migrations.getRun(scope, h.run.id))?.clusteringHeldAt).toBeNull();
+    await proposeTemplateModel(h.ctx, scope, {
+      runId: h.run.id,
+      templateId: templateId as string,
+      model: MODEL,
+    });
+    await expect(recluster(h)).rejects.toThrow('already being authored');
+  });
+});
+
 describe('a template reopened while its run is driven', () => {
   type H = Awaited<ReturnType<typeof harness>>;
   const pass = (h: H) => h.steps.run(() => runSiteMigration(h.steps, h.host, h.params));
@@ -711,7 +860,6 @@ describe('a template reopened while its run is driven', () => {
 
   it('starts no agent on a template reopened before the driver was', async () => {
     const h = await harness();
-    const { inventorySite, fetchSourcePages, clusterPages } = await import('../src/index');
     await inventorySite(h.ctx, h.host.site, scope, h.run.id);
     while ((await fetchSourcePages(h.ctx, h.host.site, scope, h.run.id)).more) {}
     await clusterPages(h.ctx, scope, h.run.id);

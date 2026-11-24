@@ -27,6 +27,7 @@ const run = (over: Partial<MigrationRun> = {}): MigrationRun => ({
   inventory: null,
   error: null,
   releaseId: null,
+  clusteringHeldAt: null,
   version: 1,
   createdAt: '2026-11-20T10:00:00.000Z',
   createdBy: null,
@@ -124,6 +125,32 @@ describe('a run’s steps', () => {
     const unread = runSteps(view({ status: 'inventoried' }, { total: 5, failed: 5 }));
     expect(unread.cluster.available).toBe(true);
     expect(unread.next).toBeNull();
+  });
+
+  it('keeps a grouping a background run has taken on, saying so', () => {
+    const held = runSteps(
+      view(
+        { status: 'clustered', clusteringHeldAt: '2026-11-24T10:00:00.000Z' },
+        { total: 5, fetched: 5 },
+      ),
+    );
+    expect(held.cluster).toEqual({
+      available: false,
+      reason: 'A background run has taken the templates on, so the grouping is kept.',
+    });
+    // A page still waiting would join no template: fetching it isn't the primary.
+    const waiting = runSteps(
+      view(
+        { status: 'clustered', clusteringHeldAt: '2026-11-24T10:00:00.000Z' },
+        { total: 5, fetched: 3 },
+      ),
+    );
+    expect(waiting.fetch.available).toBe(true);
+    expect(waiting.next).toBeNull();
+    // One that stopped or failed says that instead.
+    const at = { clusteringHeldAt: '2026-11-24T10:00:00.000Z' };
+    expect(runSteps(view({ status: 'stopped', ...at })).cluster.reason).toMatch(/stopped/);
+    expect(runSteps(view({ status: 'failed', ...at })).cluster.reason).toBe('The run failed.');
   });
 
   it('neither inventories nor clusters once the run failed, as the API refuses both', () => {

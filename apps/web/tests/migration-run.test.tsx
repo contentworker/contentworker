@@ -84,6 +84,7 @@ function seed(status: MigrationRun['status'], total: number, fetched = 0) {
             },
       error: null,
       releaseId: null,
+      clusteringHeldAt: null,
       version: 1,
       createdAt: T0,
       createdBy: null,
@@ -312,6 +313,33 @@ describe('a migration run', () => {
       within(alert).getByText('A template is already being authored or approved'),
     ).toBeTruthy();
     expect(within(alert).queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+
+  it('says a clustering the background run took on first, and keeps focus on the steps', async () => {
+    seed('inventoried', 3, 3);
+    client.clusterMigrationRun.mockImplementationOnce(async () => {
+      state.run = {
+        ...state.run,
+        status: 'clustered',
+        clusteringHeldAt: '2026-11-24T10:00:00.000Z',
+      };
+      throw new ApiError(400, 'POST … → 400', {
+        error: { code: 'invalid_state', message: 'Taken on in the background' },
+      });
+    });
+    open();
+    await waitFor(() => expect(button('Cluster')).toBeTruthy());
+    fireEvent.click(button('Cluster'));
+    const alert = (await screen.findByText('Clustering didn’t finish')).closest(
+      '[data-slot=alert]',
+    ) as HTMLElement;
+    expect(within(alert).getByText('Taken on in the background')).toBeTruthy();
+    expect(within(alert).queryByRole('button', { name: 'Try again' })).toBeNull();
+    await waitFor(() => expect((button('Cluster again') as HTMLButtonElement).disabled).toBe(true));
+    expect(
+      steps().getByText('A background run has taken the templates on, so the grouping is kept.'),
+    ).toBeTruthy();
+    await waitFor(() => expect(document.activeElement?.getAttribute('role')).toBe('status'));
   });
 
   it('fetches one bounded batch a press', async () => {

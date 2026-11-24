@@ -20,6 +20,7 @@ const run = (id: string, name: string, over: Partial<MigrationRun> = {}): Migrat
   inventory: null,
   error: null,
   releaseId: null,
+  clusteringHeldAt: null,
   version: 1,
   createdAt: new Date(Date.now() - 3 * 60_000).toISOString(),
   createdBy: null,

@@ -108,7 +108,8 @@ export interface RunSteps {
 /**
  * What a run can do next, as the API decides it: an inventory before clustering and never on a
  * failed run (`inventorySite`), clustering after an inventory and never over a template past
- * `pending` (`clusterPages`). Fetching is refused by nothing but having no page left to fetch.
+ * `pending` or taken on by a background run (`clusterPages`). Fetching is refused by nothing but
+ * having no page left to fetch.
  */
 export function runSteps(view: MigrationRunView): RunSteps {
   const { run, pages, templates } = view;
@@ -136,19 +137,25 @@ export function runSteps(view: MigrationRunView): RunSteps {
       ? { available: false, reason: 'Its background run stopped, so the grouping is kept.' }
       : run.status === 'created'
         ? { available: false, reason: 'Inventory the source first.' }
-        : authoring
+        : run.clusteringHeldAt
           ? {
               available: false,
-              reason: 'A template is being authored or approved, so the grouping is kept.',
+              reason: 'A background run has taken the templates on, so the grouping is kept.',
             }
-          : { available: true };
+          : authoring
+            ? {
+                available: false,
+                reason: 'A template is being authored or approved, so the grouping is kept.',
+              }
+            : { available: true };
 
-  // The primary: inventory first, then fetching while pages wait, then clustering what was read.
+  // The primary: inventory first, then fetching while pages wait, then clustering what was
+  // read. A page fetched once the grouping is held joins no template, so it isn't next.
   const next: StepId | null = failed
     ? null
     : run.status === 'created'
       ? 'inventory'
-      : pending > 0
+      : pending > 0 && !run.clusteringHeldAt
         ? 'fetch'
         : run.status === 'inventoried' && pages.fetched > 0 && cluster.available
           ? 'cluster'

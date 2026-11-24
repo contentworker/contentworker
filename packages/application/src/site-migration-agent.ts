@@ -215,7 +215,9 @@ export async function templateAgentTurn(
     state.runId,
     state.templateId,
   );
-  if (template && isPersons(template)) {
+  // Clustered again before its run's driver held the clustering: nothing left to author.
+  if (!template) return stop(state, 'Stopped: the template is gone');
+  if (isPersons(template)) {
     return stop(state, 'Stopped: a person approved the template');
   }
   let answer: Awaited<ReturnType<typeof generateWithBudget>>;
