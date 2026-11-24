@@ -73,6 +73,8 @@ function Drawn({ value, label, pageUrl }: { value: unknown; label: string; pageU
       immediatelyRender: false,
       editorProps: {
         attributes: {
+          // Read, never typed in: the editor's own role is a textbox, here an unnamed one.
+          role: 'document',
           class: 'rich-text-editor py-1 text-sm',
         },
       },
