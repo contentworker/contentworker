@@ -3,6 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
 import {
   api,
+  assetAction,
   createChanged,
   createDraft,
   EDITOR_READY,
@@ -947,11 +948,9 @@ test('deleting an asset an entry uses names that entry and links to it', async (
     .getByRole('button', { name: assetTitle, exact: true })
     .click();
   const library = page.getByRole('region', { name: 'Asset library' });
-  await library.getByRole('button', { name: `More actions for “${assetTitle}”` }).click();
-  await page.getByRole('menuitem', { name: 'Archive' }).click();
+  await assetAction(page, library, assetTitle, 'Archive');
   await library.getByRole('combobox', { name: 'Status' }).selectOption('archived');
-  await library.getByRole('button', { name: `More actions for “${assetTitle}”` }).click();
-  await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  await assetAction(page, library, assetTitle, 'Delete…');
   // A modal, portalled out of the library: it can't be undone and its files go too.
   const ask = page.getByRole('alertdialog', { name: new RegExp(`Delete “${assetTitle}”`) });
   await expect(ask.getByRole('button', { name: 'Cancel' })).toBeFocused();

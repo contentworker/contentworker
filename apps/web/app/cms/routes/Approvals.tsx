@@ -100,7 +100,7 @@ export function Approvals() {
           Needs review: an agent proposed changes to the entry, and nothing is applied until someone
           approves them. Moderation holds aren’t listed here: a held entry was unpublished, and its
           run is in{' '}
-          <Link to="/settings/ai" className="text-link underline-offset-2 hover:underline">
+          <Link to="/settings/ai" className="text-link underline underline-offset-2">
             Settings → AI
           </Link>
           .
