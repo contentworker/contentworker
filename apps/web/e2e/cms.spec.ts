@@ -899,7 +899,8 @@ test('the asset library: a folder, uploads into it, a move, a bulk archive, a re
 
   // One restored, from the archived filter: it comes back as a draft.
   await library.getByRole('combobox', { name: 'Status' }).selectOption('archived');
-  await library.getByRole('button', { name: `Restore “${seeded[0]}”` }).click();
+  await library.getByRole('button', { name: `More actions for “${seeded[0]}”` }).click();
+  await page.getByRole('menuitem', { name: 'Restore' }).click();
   await expect(page.getByText(`Restored “${seeded[0]}” as a draft`)).toBeVisible();
   await library.getByRole('combobox', { name: 'Status' }).selectOption('draft');
   await expect(library.getByRole('button', { name: `Open “${seeded[0]}”` })).toBeVisible();
@@ -946,9 +947,11 @@ test('deleting an asset an entry uses names that entry and links to it', async (
     .getByRole('button', { name: assetTitle, exact: true })
     .click();
   const library = page.getByRole('region', { name: 'Asset library' });
-  await library.getByRole('button', { name: `Archive “${assetTitle}”` }).click();
+  await library.getByRole('button', { name: `More actions for “${assetTitle}”` }).click();
+  await page.getByRole('menuitem', { name: 'Archive' }).click();
   await library.getByRole('combobox', { name: 'Status' }).selectOption('archived');
-  await library.getByRole('button', { name: `Delete “${assetTitle}”` }).click();
+  await library.getByRole('button', { name: `More actions for “${assetTitle}”` }).click();
+  await page.getByRole('menuitem', { name: 'Delete…' }).click();
   // A modal, portalled out of the library: it can't be undone and its files go too.
   const ask = page.getByRole('alertdialog', { name: new RegExp(`Delete “${assetTitle}”`) });
   await expect(ask.getByRole('button', { name: 'Cancel' })).toBeFocused();
