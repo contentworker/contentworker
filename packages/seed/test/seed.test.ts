@@ -3,6 +3,8 @@ import {
   assetObjectKey,
   createAsset,
   deleteTag,
+  getPreviewEntry,
+  listAgentReviews,
   listAgentRuns,
   listAssets,
   listAuditLog,
@@ -74,6 +76,30 @@ describe('seedDev', { timeout: 60_000 }, () => {
     expect((await listTags(ctx, scope)).map((t) => t.name)).toContain('demo-seed-v3');
     // All three scheduled actions: release publish, entry publish, entry unpublish.
     expect((await listScheduledActions(ctx, scope)).length).toBe(3);
+  });
+
+  it('proposes real rewrites of each entry, with the reason only in the notes', async () => {
+    const ctx = makeContext();
+    await seedDev(ctx, config, { blob: new FakeBlobStore() });
+
+    const reviews = await listAgentReviews(ctx, scope, { status: 'pending' });
+    expect(reviews.length).toBe(8);
+    expect(new Set(reviews.map((r) => Object.keys(r.proposed)[0]))).toEqual(
+      new Set(['summary', 'body']),
+    );
+    for (const review of reviews) {
+      const entry = await getPreviewEntry(ctx, scope, review.entryId);
+      expect(review.notes.length).toBeGreaterThan(0);
+      for (const [field, byLocale] of Object.entries(review.proposed)) {
+        const proposed = byLocale['en-US'];
+        const current = (entry.fields[field] as Record<string, unknown>)['en-US'];
+        expect(typeof proposed).toBe('string');
+        // A value Approvals would diff as "no change", or one that is really a label, fails here.
+        expect(proposed).not.toBe(current);
+        expect(proposed).not.toMatch(/agent proposal|seeded review/i);
+        for (const note of review.notes) expect(proposed).not.toContain(note);
+      }
+    }
   });
 
   it('seeds content types that show the nav in every state', async () => {
