@@ -1,7 +1,7 @@
 import type { MigrationRun } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
@@ -200,6 +200,42 @@ function open(path = '/migrations/run-1') {
     </QueryClientProvider>,
   );
 }
+
+/** The page where a navigation waits, as it does in the app; `settle` lets what is waiting land. */
+function openWaiting(path: string) {
+  let release = () => {};
+  let opened = false;
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/migrations/:runId',
+        element: <MigrationRunPage />,
+        loader: async () => {
+          if (opened) await new Promise<void>((resolve) => (release = resolve));
+          opened = true;
+          return null;
+        },
+        shouldRevalidate: () => true,
+        HydrateFallback: () => null,
+      },
+    ],
+    { initialEntries: [path] },
+  );
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+  return { router, settle: () => act(async () => release()) };
+}
+
+/** The value a filter shows. */
+const picked = (label: string) =>
+  (screen.getByLabelText(label) as unknown as { value: string }).value;
 
 const steps = () => within(screen.getByRole('list', { name: 'Steps' }));
 const button = (name: string) => steps().getByRole('button', { name });
@@ -433,6 +469,35 @@ describe('a migration run', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     await waitFor(() => expect(screen.queryByText('No pages match these filters.')).toBeNull());
     expect(document.activeElement).toBe(screen.getByLabelText('Stage'));
+  });
+
+  it('keeps a cleared template cleared when the stage is picked before the address catches up', async () => {
+    seed('inventoried', 4, 4);
+    await client.clusterMigrationRun();
+    client.listMigrationPages.mockClear();
+    const { router, settle } = openWaiting('/migrations/run-1?template=t1');
+    const template = await screen.findByLabelText('Template');
+    expect(picked('Template')).toBe('t1');
+
+    fireEvent.change(template, { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Stage'), { target: { value: 'discovered' } });
+    // Both show as picked at once, and neither undoes the other once the address has them.
+    expect(picked('Template')).toBe('');
+    expect(picked('Stage')).toBe('discovered');
+    await settle();
+    await waitFor(() => expect(router.state.location.search).toBe('?stage=discovered'));
+    expect(client.listMigrationPages).toHaveBeenLastCalledWith('run-1', {
+      stage: 'discovered',
+      limit: 50,
+    });
+
+    // The address still has the last word: going elsewhere isn't held to what was picked.
+    await act(async () => {
+      void router.navigate('/migrations/run-1?template=t1');
+    });
+    await settle();
+    await waitFor(() => expect(picked('Template')).toBe('t1'));
+    expect(picked('Stage')).toBe('');
   });
 
   it('shows the steps without offering them to a role without migration:run', async () => {

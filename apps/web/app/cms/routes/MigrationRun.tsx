@@ -53,12 +53,20 @@ export function MigrationRunPage() {
     ...(following ? { refetchInterval: 15_000 } : {}),
   });
   const [search, setSearch] = useSearchParams();
+  const { key: locationKey } = useLocation();
+  // A navigation is a moment behind what was picked: until it lands, the filter is what was asked
+  // for, so a second choice builds on the first instead of on the address it is replacing.
+  const [asked, setAsked] = useState<{ at: string; filter: PageFilter } | null>(null);
   const stage = search.get('stage');
-  const filter: PageFilter = {
-    ...(isStage(stage) ? { stage } : {}),
-    ...(search.get('template') ? { template: search.get('template') ?? undefined } : {}),
-  };
-  const setFilter = (next: PageFilter) =>
+  const filter: PageFilter =
+    asked?.at === locationKey
+      ? asked.filter
+      : {
+          ...(isStage(stage) ? { stage } : {}),
+          ...(search.get('template') ? { template: search.get('template') ?? undefined } : {}),
+        };
+  const setFilter = (next: PageFilter) => {
+    setAsked({ at: locationKey, filter: next });
     setSearch(
       (prev) => {
         const out = new URLSearchParams(prev);
@@ -71,6 +79,7 @@ export function MigrationRunPage() {
       },
       { replace: true, preventScrollReset: true },
     );
+  };
   const templatesHeading = useRef<HTMLHeadingElement>(null);
   const pagesHeading = useRef<HTMLHeadingElement>(null);
 
