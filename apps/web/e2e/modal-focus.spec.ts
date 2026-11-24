@@ -243,7 +243,7 @@ async function twoAssets(page: Page, request: APIRequestContext, tag: string) {
     .getByRole('button', { name: folder, exact: true })
     .click();
   await page.getByRole('combobox', { name: 'Status' }).selectOption('archived');
-  await expect(page.getByRole('button', { name: `Delete “${names[1]}”` })).toBeVisible();
+  await expect(page.getByRole('button', { name: `More actions for “${names[1]}”` })).toBeVisible();
   return names;
 }
 
@@ -286,7 +286,8 @@ test('a double press on the confirm sends one delete', async ({ page, request })
   page.on('request', (r) => {
     if (r.method() === 'DELETE' && r.url().includes('/assets/')) deletes.push(r.url());
   });
-  await page.getByRole('button', { name: `Delete “${gone}”` }).click();
+  await page.getByRole('button', { name: `More actions for “${gone}”` }).click();
+  await page.getByRole('menuitem', { name: 'Delete…' }).click();
   const ask = page.getByRole('alertdialog');
   await settle(page);
   await ask.getByRole('button', { name: 'Delete asset' }).dblclick();

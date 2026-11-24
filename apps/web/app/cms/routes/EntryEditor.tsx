@@ -32,7 +32,7 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, Ellipsis, Link2 } from 'lucide-react';
+import { ChevronLeft, Ellipsis, Link2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useBlocker, useNavigate, useParams, useSearchParams } from 'react-router';
 import { AiAssistPanel, type AssistAction, assistActions } from '~/cms/components/AiAssistPanel';
@@ -42,11 +42,13 @@ import { EntryPreview } from '~/cms/components/EntryPreview';
 import { type ExtensionContext, ExtensionFrame } from '~/cms/components/ExtensionFrame';
 import { PaneCard } from '~/cms/components/pane/PaneCard';
 import { PaneDivider } from '~/cms/components/pane/PaneDivider';
+import { PaneRail } from '~/cms/components/pane/PaneRail';
 import { SitePane } from '~/cms/components/pane/SitePane';
 import {
   type PaneView,
   paneViews,
   usePaneLayout,
+  usePanePeek,
   usePaneView,
 } from '~/cms/components/pane/use-pane-layout';
 import { ReferencedBy } from '~/cms/components/ReferencedBy';
@@ -75,6 +77,7 @@ import { configRefusal, rulesOver } from '../lib/block-rules';
 import { useBlockThumbnails } from '../lib/block-thumbnails';
 import { canvasAvailable } from '../lib/canvas/model';
 import { useClient } from '../lib/client-context';
+import { useMedia, WIDE } from '../lib/device';
 import {
   changedFields,
   draftId,
@@ -661,7 +664,13 @@ export function EntryEditor() {
         : null,
     [selectedType, entryId, conn.space, conn.environment, draft],
   );
-  const pane = usePaneLayout();
+  // Beside the assistant's column the row is narrower than the screen: too narrow to split, the
+  // pane folds to a rail rather than stacking under the form, so the entry's history stays a press
+  // away while Coworker proposes changes to it.
+  const wide = useMedia(WIDE);
+  const assistantColumn = useAssistantIfAny()?.open === true && wide;
+  const pane = usePaneLayout({ assistantColumn });
+  const rail = pane.mode === 'rail';
   const [chosenView, setPaneView] = usePaneView();
   // Activity is the audit log for this entry, so it takes what the log takes (space:admin): anyone
   // else, or anyone while that is still being read, sees Details in its place. Site frames the
@@ -672,6 +681,13 @@ export function EntryEditor() {
     isAdmin,
   });
   const paneView: PaneView = views.includes(chosenView) ? chosenView : 'details';
+  // In the rail, the pane opens over the form on demand, closed again on another entry.
+  const peek = usePanePeek({
+    rail,
+    entry: entryId ?? 'new',
+    view: isEdit ? paneView : 'preview',
+    onView: isEdit ? setPaneView : undefined,
+  });
 
   // A click in the Site pane's page focuses that field (or block) in the form.
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
@@ -1044,11 +1060,16 @@ export function EntryEditor() {
         </p>
       )}
 
-      <div ref={pane.ref} className={cn('flex', pane.split ? 'items-start' : 'flex-col gap-4')}>
+      <div
+        ref={pane.ref}
+        className={cn('flex', pane.mode === 'stack' ? 'flex-col gap-4' : 'items-start')}
+      >
         <div
-          className={cn('min-w-0 flex-1', pane.split && 'pr-5')}
+          className={cn('min-w-0 flex-1', pane.split && 'pr-5', rail && 'pr-3')}
           aria-busy={swapping || undefined}
           ref={formBox}
+          // Back to the form: the pane it covers steps aside.
+          onPointerDown={peek.open ? () => peek.close(false) : undefined}
         >
           {initial === null || swapping || !accessKnown ? (
             <div className="max-w-2xl space-y-3">
@@ -1125,19 +1146,58 @@ export function EntryEditor() {
             controls="entry-pane"
           />
         ) : null}
+        {/* The rail stands last on the row (its hairline the row's height, its views held under
+            the action bar), but comes before the pane in the tab order, as the views it opens. */}
+        {rail ? (
+          <div ref={peek.railRef} className="order-last shrink-0 self-stretch border-l pl-2">
+            <div className="sticky top-[calc(var(--shell-h)+var(--editor-bar-h,0px)+1rem)]">
+              <PaneRail
+                views={isEdit ? views : ['preview']}
+                view={isEdit ? paneView : 'preview'}
+                open={peek.open}
+                onPick={peek.pick}
+                onKeyDown={peek.onKeyDown}
+                labels={PANE_LABELS}
+                controls="entry-pane"
+              />
+            </div>
+          </div>
+        ) : null}
         <aside
           id="entry-pane"
           aria-label="Side pane"
+          // Folded to the rail, the pane stays mounted (an open version, a half-read activity
+          // list) and is only hidden, so opening it again finds it as it was left.
+          hidden={rail && !peek.open}
+          onKeyDown={rail ? peek.onKeyDown : undefined}
           style={pane.split ? { width: `${(pane.share * 100).toFixed(2)}%` } : undefined}
           className={cn(
             'w-full min-w-0 shrink-0 space-y-4',
             // Beside the form it holds still while the form scrolls, and scrolls on its own.
             pane.split &&
               'sticky top-[calc(var(--shell-h)+var(--editor-bar-h,0px)+1rem)] max-h-[calc(100dvh-var(--shell-h)-var(--editor-bar-h,0px)-2rem)] overflow-y-auto pl-5',
+            // From the rail it opens over the form's right edge, taking no room from it (the
+            // negative margin gives its width back), and travels in from the rail's side.
+            rail &&
+              'sticky top-[calc(var(--shell-h)+var(--editor-bar-h,0px)+1rem)] z-10 mr-2 -ml-(--peek-w) max-h-[calc(100dvh-var(--shell-h)-var(--editor-bar-h,0px)-2rem)] w-(--peek-w) overflow-y-auto rounded-2xl border bg-background p-3 shadow-overlay [--peek-w:min(24rem,calc(100cqw-6rem))] animate-in fade-in-0 slide-in-from-right-2 duration-(--motion-travel) ease-arrive motion-reduce:animate-none',
           )}
         >
-          {/* A new entry has no panels yet: its pane is the preview alone. */}
-          {isEdit ? (
+          {rail ? (
+            // The rail names the views, so the open pane says which one it is and how to close.
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="section-title">{PANE_LABELS[isEdit ? paneView : 'preview']}</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Close side pane"
+                onClick={() => peek.close(true)}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </div>
+          ) : isEdit ? (
+            /* A new entry has no panels yet: its pane is the preview alone. */
             <Segmented
               aria-label="Side pane"
               value={paneView}
@@ -1173,7 +1233,7 @@ export function EntryEditor() {
               defaultLocale={defaultLocale}
               allowed={siteAllowed}
               selected={siteSelected}
-              split={pane.split}
+              split={pane.mode !== 'stack'}
               onPick={onSitePick}
               proposal={proposal?.ops ?? null}
               saving={proposal?.state === 'saving'}

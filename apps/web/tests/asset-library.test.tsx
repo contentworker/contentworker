@@ -126,6 +126,20 @@ const renderLibrary = () =>
 
 const lastQuery = () => client.listAssets.mock.calls.at(-1)?.[0];
 
+/** Opens an asset's "More actions" menu (Radix opens on pointer-down) and returns its item names. */
+const openActions = async (name: string) => {
+  fireEvent.pointerDown(await screen.findByRole('button', { name: `More actions for “${name}”` }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  return (await screen.findAllByRole('menuitem')).map((i) => i.textContent);
+};
+/** Picks `item` from an asset's "More actions" menu. */
+const chooseAction = async (name: string, item: string) => {
+  await openActions(name);
+  fireEvent.click(screen.getByRole('menuitem', { name: item }));
+};
+
 describe('asset unpublish', () => {
   it('offers an Undo that republishes the asset', async () => {
     assets = [
@@ -136,7 +150,7 @@ describe('asset unpublish', () => {
       }),
     ];
     renderLibrary();
-    fireEvent.click(await screen.findByRole('button', { name: 'Unpublish “Hero image”' }));
+    await chooseAction('Hero image', 'Unpublish');
     await waitFor(() => expect(client.unpublishAsset).toHaveBeenCalledWith('a1'));
     expect(await screen.findByText('Unpublished “Hero image”')).toBeTruthy();
     expect(client.publishAsset).not.toHaveBeenCalled();
@@ -180,9 +194,9 @@ describe('AssetLibrary', () => {
     // A native <button>: focusable, Enter/Space-activatable, announced as a button.
     expect(open.tagName).toBe('BUTTON');
     expect(open.getAttribute('type')).toBe('button');
-    // Publish is a sibling control, not nested inside the open button.
+    // The actions menu is a sibling control, not nested inside the open button.
     expect(within(open).queryByRole('button')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Publish “photo.jpg”' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'More actions for “photo.jpg”' })).toBeTruthy();
     open.focus();
     expect(document.activeElement).toBe(open);
     fireEvent.click(open);
@@ -398,10 +412,39 @@ describe('acting on several assets', () => {
 });
 
 describe('archiving and deleting', () => {
+  it('keeps only the status and the checkbox on a card at rest; the verbs are in its menu', async () => {
+    assets = [asset()];
+    renderLibrary();
+    await screen.findByRole('button', { name: 'Open “photo.jpg”' });
+    for (const verb of ['Publish', 'Unpublish', 'Archive', 'Delete']) {
+      expect(screen.queryByRole('button', { name: `${verb} “photo.jpg”` })).toBeNull();
+    }
+    expect(screen.getByRole('checkbox', { name: 'Select “photo.jpg”' })).toBeTruthy();
+    const more = screen.getByRole('button', { name: 'More actions for “photo.jpg”' });
+    expect(more.getAttribute('aria-haspopup')).toBe('menu');
+    expect(await openActions('photo.jpg')).toEqual(['Publish', 'Archive']);
+  });
+
+  it('offers Unpublish, not Publish, on a published asset', async () => {
+    assets = [asset({ status: 'published' })];
+    renderLibrary();
+    expect(await openActions('photo.jpg')).toEqual(['Unpublish', 'Archive']);
+  });
+
+  it('opens the menu from the keyboard', async () => {
+    assets = [asset()];
+    renderLibrary();
+    const more = await screen.findByRole('button', { name: 'More actions for “photo.jpg”' });
+    more.focus();
+    fireEvent.keyDown(more, { key: 'Enter' });
+    expect(await screen.findByRole('menu')).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Publish' })).toBeTruthy();
+  });
+
   it('archives with an Undo that restores', async () => {
     assets = [asset()];
     renderLibrary();
-    fireEvent.click(await screen.findByRole('button', { name: 'Archive “photo.jpg”' }));
+    await chooseAction('photo.jpg', 'Archive');
     await waitFor(() => expect(client.archiveAsset).toHaveBeenCalledWith('a1'));
     fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(client.restoreAsset).toHaveBeenCalledWith('a1'));
@@ -410,25 +453,39 @@ describe('archiving and deleting', () => {
   it('offers Restore on an archived asset', async () => {
     assets = [asset({ status: 'archived' })];
     renderLibrary();
-    fireEvent.click(await screen.findByRole('button', { name: 'Restore “photo.jpg”' }));
+    await chooseAction('photo.jpg', 'Restore');
     await waitFor(() => expect(client.restoreAsset).toHaveBeenCalledWith('a1'));
   });
 
   it('offers Delete only once an asset is archived', async () => {
     assets = [asset()];
     renderLibrary();
-    await screen.findByRole('button', { name: 'Archive “photo.jpg”' });
-    expect(screen.queryByRole('button', { name: 'Delete “photo.jpg”' })).toBeNull();
+    expect(await openActions('photo.jpg')).not.toContain('Delete…');
   });
 
   it('asks first, then deletes', async () => {
     assets = [asset({ status: 'archived' })];
     renderLibrary();
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete “photo.jpg”' }));
+    await chooseAction('photo.jpg', 'Delete…');
     const confirm = await screen.findByRole('alertdialog', { name: /Delete “photo.jpg”\?/ });
     fireEvent.click(within(confirm).getByRole('button', { name: 'Delete asset' }));
     await waitFor(() => expect(client.deleteAsset).toHaveBeenCalledWith('a1'));
     expect(await screen.findByText('Deleted “photo.jpg”')).toBeTruthy();
+  });
+
+  it('goes back to the menu button when the delete is called off', async () => {
+    assets = [asset({ status: 'archived' })];
+    renderLibrary();
+    await chooseAction('photo.jpg', 'Delete…');
+    const confirm = await screen.findByRole('alertdialog', { name: /Delete “photo.jpg”\?/ });
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(client.deleteAsset).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'More actions for “photo.jpg”' }),
+      ),
+    );
   });
 
   it('shows the entries that use an asset when the delete is refused', async () => {
@@ -453,7 +510,7 @@ describe('archiving and deleting', () => {
       }),
     );
     renderLibrary();
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete “photo.jpg”' }));
+    await chooseAction('photo.jpg', 'Delete…');
     fireEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete asset' }),
     );
@@ -485,7 +542,7 @@ describe('an asset in heavy use', () => {
       }),
     );
     renderLibrary();
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete “photo.jpg”' }));
+    await chooseAction('photo.jpg', 'Delete…');
     fireEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete asset' }),
     );

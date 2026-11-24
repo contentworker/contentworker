@@ -1,3 +1,4 @@
+import type { ContentTypeDraft } from '../content-type/content-type';
 import { type FieldIssue, ValidationError } from '../errors';
 import { compileWildcard, matchWildcard, type Wildcard } from './wildcard';
 
@@ -147,6 +148,12 @@ export interface MigrationPage {
   readonly fingerprint: readonly string[] | null;
   /** The import script's structured output for it; null until transformed. */
   readonly output: MigrationArtifact | null;
+  /**
+   * SHA-256 of the script version its last transform ran (whether it produced `output` or
+   * failed); null until transformed. A page whose template's script has changed since is
+   * transformed again.
+   */
+  readonly outputScript: string | null;
   readonly score: MigrationScore | null;
   /** The entry it was loaded as. */
   readonly entryId: string | null;
@@ -161,7 +168,11 @@ export interface MigrationPage {
   readonly updatedAt: string;
 }
 
-export type MigrationTemplateStatus = 'pending' | 'authoring' | 'approved';
+/**
+ * `approving`: an approval holds the template while it writes the content type; authoring writes
+ * are refused until it finishes or lets go.
+ */
+export type MigrationTemplateStatus = 'pending' | 'authoring' | 'approving' | 'approved';
 
 /** Pages that share a structure, and so one content type and one import script. */
 export interface MigrationTemplate {
@@ -178,9 +189,44 @@ export interface MigrationTemplate {
   readonly contentTypeId: string | null;
   /** Its import script, once written. */
   readonly script: MigrationArtifact | null;
+  /**
+   * The content type its pages are proposed to become ({@link checkTemplateModel}): recorded
+   * while the template is authored, and created only when it is approved.
+   */
+  readonly proposal: ContentTypeDraft | null;
+  /** How its script did the last time it was tried on the sample pages. */
+  readonly lastTry: MigrationTrySummary | null;
+  /** Who approved it: its pages are loaded as them. Null until approved. */
+  readonly approvedBy: MigrationActor | null;
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/**
+ * Who a migration's background steps act as, by reference, resolved again before each step that
+ * writes content: an API key, a team member, or the deployment's own authority. Never a credential.
+ */
+export type MigrationActor =
+  | { readonly kind: 'key'; readonly keyId: string }
+  | { readonly kind: 'member'; readonly memberId: string }
+  | { readonly kind: 'deployment' };
+
+/** A try of a template's script on its sample pages, as the template keeps it. */
+export interface MigrationTrySummary {
+  readonly at: string;
+  /** SHA-256 of the script that was tried. */
+  readonly scriptSha256: string;
+  /** Sample pages tried. */
+  readonly pages: number;
+  /** Pages whose run returned an output of the right shape. */
+  readonly ok: number;
+  /** Pages scored at or above the run's threshold. */
+  readonly passed: number;
+  /** Mean overall score over the pages that ran (0 when none did). */
+  readonly meanScore: number;
+  /** The first few failures and issues, one line each. */
+  readonly problems: readonly string[];
 }
 
 /** How well a page's structured output kept its source ({@link scoreImportOutput}). */

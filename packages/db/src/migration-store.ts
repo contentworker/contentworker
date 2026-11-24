@@ -56,6 +56,9 @@ const toTemplate = (r: TemplateRow): MigrationTemplate => ({
   fingerprint: r.fingerprint,
   contentTypeId: r.contentTypeId ?? null,
   script: r.script ?? null,
+  proposal: r.proposal ?? null,
+  lastTry: r.lastTry ?? null,
+  approvedBy: r.approvedBy ?? null,
   version: r.version,
   createdAt: r.createdAt.toISOString(),
   updatedAt: r.updatedAt.toISOString(),
@@ -76,6 +79,7 @@ const toPage = (r: PageRow): MigrationPage => ({
   html: r.html ?? null,
   fingerprint: r.fingerprint ?? null,
   output: r.output ?? null,
+  outputScript: r.outputScript ?? null,
   score: r.score ?? null,
   entryId: r.entryId ?? null,
   unresolvedLinks: r.unresolvedLinks,
@@ -96,6 +100,7 @@ const pageValues = (p: MigrationPage) => ({
   html: p.html,
   fingerprint: p.fingerprint ? [...p.fingerprint] : null,
   output: p.output,
+  outputScript: p.outputScript,
   score: p.score,
   entryId: p.entryId,
   unresolvedLinks: p.unresolvedLinks,
@@ -104,7 +109,8 @@ const pageValues = (p: MigrationPage) => ({
 });
 
 /**
- * Site migration records on D1 (0048_site_migrations, 0049_site_migration_load). A run is rewritten whole at its version's
+ * Site migration records on D1 (0048_site_migrations, 0049_site_migration_load,
+ * 0050_site_migration_authoring). A run is rewritten whole at its version's
  * compare-and-set; pages are added past the 100-parameter cap in chunks that skip a URL the run
  * already has; a clustering replaces a run's templates and its pages' assignments in one batch; a
  * load moves its pages at a compare-and-set on each page's `updatedAt`.
@@ -377,6 +383,35 @@ export function makeMigrationStore(x: Exec): MigrationStore {
         .where(and(ofRun(templates, scope, runId), eq(templates.id, id)));
       return row ? toTemplate(row) : null;
     },
+    async saveTemplate(scope, runId, t) {
+      await x.write(
+        db
+          .update(templates)
+          .set({
+            label: t.label,
+            status: t.status,
+            pageCount: t.pageCount,
+            samplePageIds: [...t.samplePageIds],
+            fingerprint: [...t.fingerprint],
+            contentTypeId: t.contentTypeId,
+            script: t.script,
+            proposal: t.proposal,
+            lastTry: t.lastTry,
+            approvedBy: t.approvedBy,
+            version: t.version,
+            updatedAt: new Date(t.updatedAt),
+          })
+          .where(and(ofRun(templates, scope, runId), eq(templates.id, t.id))),
+      );
+    },
+    async saveTemplateTry(scope, runId, templateId, lastTry) {
+      await x.write(
+        db
+          .update(templates)
+          .set({ lastTry })
+          .where(and(ofRun(templates, scope, runId), eq(templates.id, templateId))),
+      );
+    },
     async replaceTemplates(scope, runId, clusters, at) {
       const when = new Date(at);
       const statements: Query[] = [
@@ -404,6 +439,9 @@ export function makeMigrationStore(x: Exec): MigrationStore {
         fingerprint: [...t.fingerprint],
         contentTypeId: t.contentTypeId,
         script: t.script,
+        proposal: t.proposal,
+        lastTry: t.lastTry,
+        approvedBy: t.approvedBy,
         version: t.version,
         createdAt: new Date(t.createdAt),
         updatedAt: new Date(t.updatedAt),

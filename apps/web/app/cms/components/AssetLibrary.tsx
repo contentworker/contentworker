@@ -8,11 +8,18 @@ import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Card } from '@contentworker/ui/card';
 import { Checkbox } from '@contentworker/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@contentworker/ui/dropdown-menu';
 import { cn } from '@contentworker/ui/lib/utils';
 import { Skeleton, SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { Archive, ArchiveRestore, ImageIcon, Trash2, Upload } from 'lucide-react';
+import { ImageIcon, MoreHorizontalIcon, Upload } from 'lucide-react';
 import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AssetDetailSheet } from '~/cms/components/AssetDetailSheet';
 import { AssetPreview } from '~/cms/components/AssetPreview';
@@ -797,74 +804,59 @@ export function AssetLibrary(props: { locale: string }) {
   // --- rendering ----------------------------------------------------------
   const pick = () => fileRef.current?.click();
 
-  /** The actions on one asset, the same in the grid and the list. */
-  const actions = (a: Asset, name: string) => (
-    <div className="flex items-center gap-0.5">
-      {a.status === 'archived' ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          aria-label={`Restore “${name}”`}
-          onClick={() => restore(a)}
-        >
-          <ArchiveRestore aria-hidden="true" />
-          Restore
-        </Button>
-      ) : a.status === 'published' ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          aria-label={`Unpublish “${name}”`}
-          onClick={() => unpublish(a)}
-        >
-          Unpublish
-        </Button>
-      ) : (
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          aria-label={`Publish “${name}”`}
-          onClick={() => publish(a)}
-        >
-          Publish
-        </Button>
-      )}
-      {a.status === 'archived' ? (
-        <ConfirmDialog
-          message={`Delete “${name}”?`}
-          note="Its files go too. This can’t be undone."
-          confirmLabel="Delete asset"
-          onConfirm={() => remove(a)}
-          onCloseAutoFocus={showInUse}
-        >
-          {(ask) => (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Delete “${name}”`}
-              onClick={ask}
-            >
-              <Trash2 aria-hidden="true" />
-            </Button>
+  /**
+   * The actions on one asset, the same in the grid and the list: a "More actions" menu, as an
+   * entry row has, so a card at rest shows its file, name and status, not a row of verbs. Archive
+   * is undone from its toast; Delete, for good, asks first, and closing the ask goes back to the
+   * menu's button.
+   */
+  const actions = (a: Asset, name: string) => {
+    const menu = (askDelete?: () => void) => (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`More actions for “${name}”`}
+          >
+            <MoreHorizontalIcon aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-auto min-w-40">
+          {a.status === 'archived' ? (
+            <DropdownMenuItem onSelect={() => restore(a)}>Restore</DropdownMenuItem>
+          ) : a.status === 'published' ? (
+            <DropdownMenuItem onSelect={() => unpublish(a)}>Unpublish</DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem onSelect={() => publish(a)}>Publish</DropdownMenuItem>
           )}
-        </ConfirmDialog>
-      ) : (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Archive “${name}”`}
-          onClick={() => archive(a)}
-        >
-          <Archive aria-hidden="true" />
-        </Button>
-      )}
-    </div>
-  );
+          <DropdownMenuSeparator />
+          {askDelete ? (
+            <DropdownMenuItem variant="destructive" onSelect={askDelete}>
+              Delete…
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem variant="destructive" onSelect={() => archive(a)}>
+              Archive
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+    if (a.status !== 'archived') return menu();
+    return (
+      <ConfirmDialog
+        message={`Delete “${name}”?`}
+        note="Its files go too. This can’t be undone."
+        confirmLabel="Delete asset"
+        onConfirm={() => remove(a)}
+        onCloseAutoFocus={showInUse}
+      >
+        {menu}
+      </ConfirmDialog>
+    );
+  };
 
   const badges = (a: Asset) => {
     const video = a.file.video;
@@ -1387,12 +1379,10 @@ function AssetRowSkeleton({
   );
 }
 
-/** The ghost actions (Publish or Unpublish, Archive or Delete) as they sit at rest: a label, two icons. */
+/** The "More actions" button as it sits at rest: one icon. */
 function AssetActionsSkeleton({ className }: { className?: string }) {
   return (
-    <span className={cn('flex h-6 w-[8.25rem] items-center gap-2.5 px-2.5 text-xs', className)}>
-      <SkeletonText width="3.5rem" className="w-auto" />
-      <Skeleton className="size-3 rounded-[3px]" />
+    <span className={cn('flex size-6 items-center justify-center', className)}>
       <Skeleton className="size-3 rounded-[3px]" />
     </span>
   );

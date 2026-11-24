@@ -69,6 +69,7 @@ import type {
   IdGenerator,
   ImportScriptSandbox,
   MediaPathSigner,
+  MigrationRunner,
   PasswordHasher,
   Queue as QueuePort,
   RemoteFetcher,
@@ -99,6 +100,7 @@ import { createShardedSearchIndex, DEFAULT_SEARCH_SHARDS } from './do/search-sha
 import { type EdgeEnv, withJurisdiction } from './env';
 import { newId } from './ids';
 import { makeMetrics } from './metrics';
+import { CloudflareMigrationRunner } from './site-migration';
 import { CloudflareWorkflowEngine, CloudflareWorkflowsAgentRuntime } from './workflows';
 
 const clock = { now: () => new Date() };
@@ -132,6 +134,8 @@ export interface EdgeWired {
   readonly assetZipStarter?: AssetZipStarter;
   /** Starts async plugin operation jobs (the engine's APP_OPERATION_WF); absent elsewhere. */
   readonly appOperationJobStarter?: AppOperationJobStarter;
+  /** Starts and signals site migration runs (MIGRATION_WF, the engine's); absent elsewhere. */
+  readonly migrationRunner?: MigrationRunner;
   readonly ai: AIProvider;
   /** Decision model (Clef on Workers AI): typed questions in, probabilities out. */
   readonly decisions: DecisionModel;
@@ -358,6 +362,9 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
       : {}),
     ...(env.APP_OPERATION_WF
       ? { appOperationJobStarter: new CloudflareAppOperationJobStarter(env.APP_OPERATION_WF) }
+      : {}),
+    ...(env.MIGRATION_WF
+      ? { migrationRunner: new CloudflareMigrationRunner(env.MIGRATION_WF) }
       : {}),
     ai,
     decisions,

@@ -90,6 +90,18 @@ export interface EdgeEnv {
    */
   readonly APP_OPERATION_WF?: Workflow;
   /**
+   * Site migration runs (`MigrationWorkflow`, one instance per run), started and signalled through
+   * `CloudflareMigrationRunner` (`wired.migrationRunner`). Absent → no runner is wired.
+   */
+  readonly MIGRATION_WF?: Workflow;
+  /**
+   * Site migration template agents (`MigrationTemplateAgent`, one object per template), started by
+   * the engine's `MigrationWorkflow`. Engine only.
+   */
+  readonly MIGRATION_AGENT?: DurableObjectNamespace<
+    import('./site-migration').MigrationTemplateAgentBase
+  >;
+  /**
    * R2 bucket holding asset bytes (native binding — no access keys). When
    * bound it is THE BlobStore: uploads and downloads go through this Worker's
    * signed `/media/*` route (see @contentworker/adapters/blob-r2).
@@ -349,6 +361,7 @@ const DO_BINDINGS = [
   'SEARCH',
   'ASSISTANT_AGENT',
   'HOT_SET',
+  'MIGRATION_AGENT',
 ] as const;
 const pinned = new WeakSet<object>();
 

@@ -44,6 +44,7 @@ import { useMemo, useState } from 'react';
 import { AiActions } from '~/cms/components/AiActions';
 import { AiProjects } from '~/cms/components/AiProjects';
 import { AiSettings } from '~/cms/components/AiSettings';
+import { AiUsage } from '~/cms/components/AiUsage';
 import { AppExtensions } from '~/cms/components/AppExtensions';
 import { AuditLog } from '~/cms/components/AuditLog';
 import { BranchMerge } from '~/cms/components/BranchMerge';
@@ -95,7 +96,12 @@ const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode
   'connected-apps': (client) => <ConnectedApps client={client} />,
   webhooks: (client) => <Webhooks client={client} />,
   functions: (client) => <Functions client={client} />,
-  ai: (client) => <AiSettings client={client} />,
+  ai: (client) => (
+    <div className="space-y-6">
+      <AiSettings client={client} />
+      <AiUsage />
+    </div>
+  ),
   'ai-actions': (client) => <AiActions client={client} />,
   'ai-projects': (client) => <AiProjects client={client} />,
   extensions: (client) => <AppExtensions client={client} />,
@@ -211,7 +217,7 @@ function Environments(props: { client: ManagementClient }) {
 
       <Section
         title="Aliases"
-        description="A repointable pointer to an environment. Use it as the environment in any API call; repoint it for an atomic blue/green cutover."
+        description="A name, like production, that stands for one environment. Sites and apps that read content through it switch to another environment the moment you point the alias there, with nothing to redeploy."
         flush
       >
         <form onSubmit={save} className="flex flex-wrap items-end gap-2 px-5 py-4">

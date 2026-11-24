@@ -496,7 +496,12 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 ## Screens
 
 - **Overview** (`cms/components/Dashboard.tsx`): what needs attention as cards (not yet published,
-  coming up, agent proposals, live activity), then search, AI usage and recent agent runs.
+  coming up, waiting on a decision, live activity), then search. Coming up puts a pending action
+  past its time (two minutes' grace for the minute sweep) under Overdue, a `bad` "Overdue" stamp
+  where the time would be, as Approvals stamps a step past its deadline. Waiting on a decision
+  lists Approvals' own two lists and shows the shell's count, so the card, the inbox and the badge
+  give one number; the agent-run ledger is history and never counts. AI usage and recent agent
+  runs sit under the capabilities in Settings → AI.
 - **Content:** the content types as a catalog (`PageHeader` with New content type): each type's
   icon as its tile (its own, else the one its name suggests, else its initials), its name linked to its entries (a singleton's to its one entry, `/entry`, as the
   sidebar's link is), its API id in mono and its field count under it ("One entry only" beside them
@@ -600,7 +605,16 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   scroller takes keyboard focus. A first publish asks the same way, saying the whole entry goes live, with Keep as draft as the safe choice. Beside the form sits the **side pane** (after felix's):
   where the row the two share is wide enough for both (a 420px form and a 336px pane; collapsing
   the sidebar buys the room back) it stands behind a hairline divider, sticky, scrolling on its own;
-  narrower, it stacks under the form. The divider is an ARIA splitter (drag, arrows, Shift for a
+  narrower, it stacks under the form, except beside Coworker's column: there it folds to a **rail**
+  on the form's right edge behind a hairline (`pane/PaneRail.tsx`), one icon button per view, named
+  in words and a tooltip, one tab stop with the arrows between them, held under the action bar, so
+  the entry's history never drops below the form while Coworker proposes changes to it (the action
+  bar keeps its state stamp in view as ever). A view pressed opens the pane over the form's right
+  edge (24rem, `shadow-overlay`, the view's name and a ghost Close at its top) and marks its
+  button as the current item; that button again, Close, Escape or a press in the form closes it, and
+  focus goes back to the button. It travels in from the rail on `--motion-travel` and `ease-arrive`
+  (at once with reduced motion), stays as it was left while closed, and opens closed on another
+  entry. The divider is an ARIA splitter (drag, arrows, Shift for a
   bigger step, Home and End, Enter or a double click to reset), and its share is kept per browser.
   A segmented switch shows **Details** (the panels) or **Preview**: the draft as a document, live
   as you type, in the form's locale with delivery's fallbacks (its title and values carry that

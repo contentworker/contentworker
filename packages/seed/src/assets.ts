@@ -1,4 +1,5 @@
 import {
+  allAssets,
   assetObjectKey,
   createAsset,
   listAssets,
@@ -86,6 +87,41 @@ function placeholderFor(file: DemoFile, i: number): string | Uint8Array | undefi
   }
   if (file.contentType === 'application/pdf') return placeholderPdf(file.title);
   return undefined;
+}
+
+/** A file name without its extension: the seed once named its images `.jpg`, now `.png`. */
+const stem = (fileName: string) => fileName.replace(/\.[^.]+$/, '');
+
+/**
+ * Gives seeded assets that have no file one: a space seeded before the seed wrote bytes (or whose
+ * local bucket was wiped since) keeps asset rows whose every read answers 404, so the library
+ * shows file icons where its images should be. Only the seed's own assets, matched by name, and
+ * only where nothing is stored: an upload of the person's own is never written over. An image
+ * seeded as `.jpg` gets the PNG placeholder under its own key; the bytes are a real image and
+ * browsers draw it by its contents. Returns how many files it wrote.
+ */
+export async function restoreSeedFiles(
+  run: SeedRun,
+  blob: BlobStore,
+  files: readonly DemoFile[] = FILES,
+): Promise<number> {
+  const byStem = new Map(files.map((f, i) => [stem(f.fileName), { file: f, i }]));
+  let restored = 0;
+  for (const asset of await allAssets(run.ctx, run.scope)) {
+    // A replaced file lives under its own versioned key: that one is the person's, not the seed's.
+    if ((asset.version ?? 1) > 1) continue;
+    const seeded = byStem.get(stem(asset.file.fileName));
+    if (!seeded) continue;
+    const bytes = placeholderFor(seeded.file, seeded.i);
+    if (bytes === undefined) continue;
+    const key = assetObjectKey(run.scope, asset.id, asset.file.fileName);
+    const stored = blob.head ? await blob.head(key) : await blob.get(key);
+    if (stored) continue;
+    await blob.put(key, bytes, seeded.file.contentType);
+    restored++;
+  }
+  if (restored > 0) logger.info({ restored }, 'seed: restored missing asset files');
+  return restored;
 }
 
 /**

@@ -3,7 +3,7 @@ import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
 import { answerStrings, conformingAnswer } from './ai-json';
-import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import { stripEmoji, UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { requireAiCapability } from './ai-settings';
 import { getAsset, setAssetMetadata } from './assets';
 import type { AppContext } from './context';
@@ -99,9 +99,9 @@ export async function generateAltText(
   // A provider without JSON mode answers in text; one that answered in JSON must have the shape,
   // or there is no alt text in it (its text is that JSON, not a sentence).
   const answer = conformingAnswer<{ altText: string }>(result, ALT_TEXT_SCHEMA);
-  const altText = (
-    answer ? answer.altText : result.object === undefined ? (result.text ?? '') : ''
-  ).trim();
+  const altText = stripEmoji(
+    answer ? answer.altText : result.object === undefined ? (result.text ?? '') : '',
+  );
   if (!altText) {
     throw new NoAltTextError();
   }
@@ -215,14 +215,12 @@ export async function autoTagAsset(
   // New names the model proposed that genuinely aren't in the vocabulary.
   // Each name once, as first spelled (a model repeats itself): `apply` creates one tag per name.
   const seen = new Set<string>();
-  const newTags = answer.newTags
-    .map((n) => n.trim())
-    .filter((n) => {
-      const key = n.toLowerCase();
-      if (!n || byName.has(key) || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  const newTags = answer.newTags.map(stripEmoji).filter((n) => {
+    const key = n.toLowerCase();
+    if (!n || byName.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   let applied = false;
   if (input.apply) {
