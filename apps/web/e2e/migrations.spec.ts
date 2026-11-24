@@ -73,6 +73,18 @@ async function stubRun(page: Page) {
   const json = (route: Route, body: unknown, status = 200) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 
+  // The list is read from the real API, where this run never moved past created (its steps are
+  // stubbed below): swap in the stubbed run so the list shows the state the steps left it in.
+  await page.route(/\/migrations\/runs(\?.*)?$/, async (route) => {
+    if (route.request().method() !== 'GET' || !run) return route.fallback();
+    const body = (await (await route.fetch()).json()) as { items: Record<string, unknown>[] };
+    const stubbed = run;
+    return json(route, {
+      ...body,
+      items: body.items.map((r) => (r.id === stubbed.id ? { ...r, ...stubbed } : r)),
+    });
+  });
+
   await page.route(
     /\/migrations\/runs\/[^/?]+(\/(inventory|fetch|cluster|pages))?(\?.*)?$/,
     async (route) => {
