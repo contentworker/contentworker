@@ -552,6 +552,12 @@ export function ActionCard({
     // A turn asked to fill one slot holds its block patch to that entry and slot.
     return fillTurn ? { ...p, fill: fillTurn } : p;
   }, [asking, direct, offFill, target, part, fillTurn]);
+  /** Content the model wrote, to confirm or not: worn in `ai`, as its ghosts are. */
+  const written =
+    proposal?.kind === 'save' ||
+    proposal?.kind === 'create' ||
+    proposal?.kind === 'tags' ||
+    proposal?.kind === 'blocks';
   const proposalPlace = useMemo(() => {
     if (!proposal) return undefined;
     const p = placeOf(part, conn, direct, turn);
@@ -698,7 +704,13 @@ export function ActionCard({
           className="cw-confirm my-1 scroll-my-4"
         >
           {/* No `overflow-hidden`: it would clip the buttons' touch areas (`hit-area`). */}
-          <Card size="sm" className="gap-3 overflow-visible pb-0 ring-wait/40">
+          {/* Content a model wrote (fields, a new entry, tags, blocks) is a proposal and wears `ai`,
+              as its ghosts on the page do; an act on what exists (publish, a release) waits on
+              the person, `wait`. */}
+          <Card
+            size="sm"
+            className={cn('gap-3 overflow-visible pb-0', written ? 'ring-ai/40' : 'ring-wait/40')}
+          >
             <CardHeader className="gap-1">
               <CardTitle className="flex min-w-0 items-baseline">
                 <h3 id={titleId} className="min-w-0 font-semibold text-sm leading-snug">
@@ -740,7 +752,11 @@ export function ActionCard({
             ) : null}
             <CardFooter
               data-card-actions
-              className="flex-col items-stretch gap-2 rounded-b-2xl border-t bg-wait/10 pb-(--card-spacing) dark:bg-wait/5"
+              className={cn(
+                'flex-col items-stretch gap-2 rounded-b-2xl border-t pb-(--card-spacing)',
+                // Never a brand wash: a proposal's footer is the card's own muted step.
+                written ? 'bg-muted/50' : 'bg-wait/10 dark:bg-wait/5',
+              )}
             >
               <p className="text-muted-foreground text-xs leading-snug">
                 {proposal?.kind === 'blocks'

@@ -1593,6 +1593,9 @@ describe('a model’s block patch', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
     const changes = screen.getByRole('list', { name: 'Changes' });
     expect(within(changes).getByText('Hero “Spring launch” › Heading')).toBeTruthy();
+    // Not confirmed yet: what it adds is a model's proposal (ai), never green, which means done.
+    const stamp = within(changes).getAllByText('Added')[0]?.closest<HTMLElement>('[style]');
+    expect(stamp?.style.color).toBe('var(--ai)');
     // With the review open the summary is no longer a lead-in to a list.
     expect(screen.getByText('In the draft.')).toBeTruthy();
   });

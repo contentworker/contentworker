@@ -10,7 +10,7 @@ import type {
   ValueDiff,
 } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { ToneBadge } from '~/cms/components/status';
 import { humanize, type Tone } from '~/cms/lib/format';
 import type { VersionDiff } from '../lib/management';
@@ -24,11 +24,21 @@ const KIND_TONE: Record<DiffKind, Tone> = {
   unchanged: 'idle',
 };
 
+/**
+ * Whether the diff below is a model's proposal, not yet confirmed: its changes are `ai` ("Added",
+ * "Changed", "Removed" in words), never `ok` green, which means done (The Green Means Done Rule).
+ */
+export const ProposedDiff = createContext(false);
+
 export function KindBadge({ kind, moved }: { kind: DiffKind; moved?: boolean }) {
+  const proposed = useContext(ProposedDiff);
   if (moved && kind === 'unchanged') return <ToneBadge tone="idle" label="Moved" />;
   return (
     <span className="inline-flex items-center gap-1">
-      <ToneBadge tone={KIND_TONE[kind]} label={humanize(kind)} />
+      <ToneBadge
+        tone={proposed && kind !== 'unchanged' ? 'ai' : KIND_TONE[kind]}
+        label={humanize(kind)}
+      />
       {moved ? <ToneBadge tone="idle" label="Moved" /> : null}
     </span>
   );

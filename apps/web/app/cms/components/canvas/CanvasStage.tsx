@@ -198,7 +198,16 @@ export function CanvasStage(props: CanvasStageProps) {
       aria-describedby={hintId}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: the stage takes the canvas's own keys (↓ / ? Delete ⌘↑ ⌘↓), which its description names; it is the keyboard's way onto the page.
       tabIndex={0}
-      className="relative size-full min-h-0 overflow-hidden bg-muted outline-none after:pointer-events-none after:absolute after:inset-0 after:z-10 after:content-[''] focus-visible:after:shadow-[inset_0_0_0_2px_var(--overlay-ink),inset_0_0_0_4px_var(--overlay-halo)]"
+      // Focus handed back by a pointer (a click in the page, the grip) is marked quiet: its edge
+      // would sit round the page beside the selected block's, two ink frames for one choice. The
+      // first key pressed here, or leaving, drops the mark, and the edge is the keyboard's again.
+      onKeyDown={(e) => {
+        delete e.currentTarget.dataset.quiet;
+      }}
+      onBlur={(e) => {
+        delete e.currentTarget.dataset.quiet;
+      }}
+      className="group/stage relative size-full min-h-0 overflow-hidden bg-muted outline-none after:pointer-events-none after:absolute after:inset-0 after:z-10 after:content-[''] focus-visible:not-data-quiet:after:shadow-[inset_0_0_0_2px_var(--overlay-ink),inset_0_0_0_4px_var(--overlay-halo)]"
     >
       {/* The next tab stop after the stage: the page itself stays reachable by key (to read it,
           follow its links), but the canvas's keys come first. A click in it hands focus back. */}
@@ -254,6 +263,7 @@ export function CanvasStage(props: CanvasStageProps) {
               e.preventDefault();
               e.currentTarget.setPointerCapture?.(e.pointerId);
               // Out of the framed page, whose keys the admin never hears, so Esc can put it back.
+              if (stage.current) stage.current.dataset.quiet = '';
               stage.current?.focus({ preventScroll: true });
               pressed.current = pointAt(e);
             }}
@@ -439,8 +449,12 @@ function SeamMark({
         <span
           data-seam-line
           className={cn(
-            'absolute bg-overlay-halo transition-opacity duration-(--motion-instant) group-hover:opacity-100',
-            drop ? 'opacity-90' : 'opacity-80',
+            'absolute bg-overlay-halo transition-opacity duration-(--motion-instant) group-hover:opacity-100!',
+            // Barely there at rest, so the customer's page leads; shown while the pointer is over
+            // the stage (always on a touch screen, which has no hover), full under the pointer.
+            drop
+              ? 'opacity-90'
+              : 'opacity-15 group-hover/stage:opacity-60 pointer-coarse:opacity-60',
             across
               ? 'inset-x-0 top-1/2 h-[3px] -translate-y-1/2'
               : 'inset-y-0 left-1/2 w-[3px] -translate-x-1/2',

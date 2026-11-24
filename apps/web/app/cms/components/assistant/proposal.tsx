@@ -29,6 +29,7 @@ import {
   type ReviewField,
   reviewFields,
 } from '../entries/EntryReview';
+import { ProposedDiff } from '../RevisionDiff';
 import { type BlockRefusal, BlockRefused, readBlockPatch } from './block-proposal';
 import type { Part } from './parts';
 
@@ -368,47 +369,49 @@ export function ProposalDetail({
     const n = changedCount(review.fields);
     if (n === 0) return note('The draft already holds these values; saving changes nothing.');
     return (
-      <Collapsible open={open} onOpenChange={setOpen} className="space-y-1">
-        {review.steps?.length ? (
-          <ol aria-label="Steps" className="list-decimal space-y-0.5 ps-5 text-ui">
-            {review.steps.map((s, i) => (
-              // Steps needn't be unique; their order is the call's.
-              <li key={`${i}:${s}`} className="break-words">
-                {s}
-              </li>
-            ))}
-          </ol>
-        ) : null}
-        {note(
-          // The colon introduces the list below it; open, the list steps aside, and so does it.
-          // A block patch's steps above say what it does, one each: a count of what they touch
-          // (the slot's order and the block, for one add) would read as more than was asked.
-          (blocks
-            ? review.steps?.length
-              ? 'In the draft:'
-              : `${n} ${n === 1 ? 'change' : 'changes'} in the draft:`
-            : fieldsChange(n, create)
-          ).replace(/:$/, open ? '.' : ':'),
-        )}
-        {/* Open, the review below names each change itself: the list would say it twice. */}
-        {open ? null : <ChangedFields fields={review.fields} />}
-        <Button
-          variant="link"
-          size="xs"
-          className="px-0"
-          aria-expanded={open}
-          aria-controls={id}
-          onClick={() => setOpen((o) => !o)}
-        >
-          {open ? 'Hide changes' : 'Review changes'}
-        </Button>
-        <CollapsibleContent id={id}>
-          <FieldReview
-            fields={create ? review.fields.filter((f) => f.kind !== 'unchanged') : review.fields}
-            labels={create ? { after: 'Value' } : { before: 'Now', after: 'After saving' }}
-          />
-        </CollapsibleContent>
-      </Collapsible>
+      <ProposedDiff.Provider value={true}>
+        <Collapsible open={open} onOpenChange={setOpen} className="space-y-1">
+          {review.steps?.length ? (
+            <ol aria-label="Steps" className="list-decimal space-y-0.5 ps-5 text-ui">
+              {review.steps.map((s, i) => (
+                // Steps needn't be unique; their order is the call's.
+                <li key={`${i}:${s}`} className="break-words">
+                  {s}
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          {note(
+            // The colon introduces the list below it; open, the list steps aside, and so does it.
+            // A block patch's steps above say what it does, one each: a count of what they touch
+            // (the slot's order and the block, for one add) would read as more than was asked.
+            (blocks
+              ? review.steps?.length
+                ? 'In the draft:'
+                : `${n} ${n === 1 ? 'change' : 'changes'} in the draft:`
+              : fieldsChange(n, create)
+            ).replace(/:$/, open ? '.' : ':'),
+          )}
+          {/* Open, the review below names each change itself: the list would say it twice. */}
+          {open ? null : <ChangedFields fields={review.fields} />}
+          <Button
+            variant="link"
+            size="xs"
+            className="px-0"
+            aria-expanded={open}
+            aria-controls={id}
+            onClick={() => setOpen((o) => !o)}
+          >
+            {open ? 'Hide changes' : 'Review changes'}
+          </Button>
+          <CollapsibleContent id={id}>
+            <FieldReview
+              fields={create ? review.fields.filter((f) => f.kind !== 'unchanged') : review.fields}
+              labels={create ? { after: 'Value' } : { before: 'Now', after: 'After saving' }}
+            />
+          </CollapsibleContent>
+        </Collapsible>
+      </ProposedDiff.Provider>
     );
   }
   return null;
