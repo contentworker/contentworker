@@ -31,8 +31,10 @@ import {
   type MigrationTryResult,
 } from '~/cms/lib/management';
 import {
+  driverOf,
   lockedReason,
   type MigrationRights,
+  mayHear,
   migrationRights,
   migrationTemplateKey,
   retryingConflicts,
@@ -404,6 +406,7 @@ function Review({
           editing={editing !== null}
           canEdit={rights?.run === true}
           runFailed={view?.run.status === 'failed'}
+          canTell={view ? mayHear(driverOf(view)) : viewQuery.isError || undefined}
           reload={refetch}
           onApproved={(a) => {
             show(a.template);

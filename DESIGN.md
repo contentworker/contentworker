@@ -1179,7 +1179,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   approval, confirmed there with a short list of what it leaves alone; Transform and Load then say
   how many pages are to transform, and how many were loaded from an earlier version. A step a role can't take is absent, and what it takes is
   said once a section. A loop's failure keeps what its batches did; a publish that failed asks
-  again rather than resending.
+  again rather than resending. **Run in the background** says its State, Started and Go-ahead as facts
+  read with the run (what isn't recorded or can't be read is said as not known), and offers Start and
+  the go-ahead only while they apply, never disabled: a run takes one go-ahead, and only whoever gave
+  one not known to have arrived is offered Send the go-ahead again.
 
 ## Screens that change shape
 

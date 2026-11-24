@@ -41,6 +41,8 @@ const run = (over: Partial<MigrationRun> = {}): MigrationRun => ({
   error: null,
   releaseId: null,
   clusteringHeldAt: null,
+  driver: null,
+  goAhead: null,
   version: 1,
   createdAt: AT,
   createdBy: 'ed@example.com',
@@ -182,6 +184,48 @@ describe('site migrations on D1', () => {
       clusteringHeldAt: LATER,
       version: 3,
     });
+  });
+
+  it('keeps its driver and go-ahead, through a write by code that doesn’t name them (0053)', async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    const given: MigrationRun = {
+      ...r,
+      version: 2,
+      driver: { startedBy: { kind: 'member', memberId: 'm1' }, startedAt: AT },
+      goAhead: {
+        approvedBy: { kind: 'key', keyId: 'k1' },
+        at: LATER,
+        target: { viaRelease: true, releaseTitle: 'Launch' },
+        deliveredAt: null,
+      },
+    };
+    await store.migrations.saveRun(scope, given, 1);
+    expect(await store.migrations.getRun(scope, r.id)).toEqual(given);
+    // Of two go-aheads at one version, one is written.
+    const rival = { ...given, version: 3, goAhead: { ...given.goAhead, at: AT } as never };
+    const results = await Promise.allSettled([
+      store.migrations.saveRun(scope, { ...given, version: 3 }, 2),
+      store.migrations.saveRun(scope, rival, 2),
+    ]);
+    expect(results.filter((x) => x.status === 'fulfilled')).toHaveLength(1);
+    const now = await store.migrations.getRun(scope, r.id);
+    // As the code deployed before 0053 rewrites a run: by its own columns.
+    await testDb
+      .prepare(
+        `UPDATE migration_runs SET name = ?, status = ?, error = ?, release_id = ?, version = ?
+        WHERE space_id = ? AND environment_id = ? AND id = ? AND version = ?`,
+      )
+      .bind(r.name, 'stopped', 'why', null, 4, scope.spaceId, scope.environmentId, r.id, 3)
+      .run();
+    expect(await store.migrations.getRun(scope, r.id)).toMatchObject({
+      status: 'stopped',
+      driver: given.driver,
+      goAhead: now?.goAhead,
+    });
+    expect((await store.migrations.listRuns(scope, { limit: 5 }))[0]?.driver).toEqual(given.driver);
+    expect(await store.migrations.getRun({ ...scope, environmentId: 'staging' }, r.id)).toBeNull();
   });
 
   it('lists runs newest first, and keeps each scope to itself', async () => {

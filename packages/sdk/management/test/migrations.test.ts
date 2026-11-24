@@ -77,6 +77,40 @@ describe('@contentworker/sdk-management migrations', () => {
     ]);
   });
 
+  it('reads a run’s driver, and answers whether a go-ahead reached it', async () => {
+    const driver = {
+      state: 'waiting',
+      startedBy: { kind: 'deployment' },
+      startedAt: '2026-11-20T00:00:00.000Z',
+      startedByYou: false,
+      goAhead: { status: 'none' },
+    };
+    const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? Response.json(
+            { accepted: true, signalled: false, reason: 'unreachable' },
+            { status: 202 },
+          )
+        : Response.json({ run: {}, pages: {}, templates: [], driver }),
+    ) as unknown as typeof fetch;
+    const m = createManagementClient({ ...base, fetch: fetchImpl }).migrations;
+    expect((await m.get('r1')).driver?.state).toBe('waiting');
+    const given = await m.approvePublish('r1');
+    expect(given.signalled).toBe(false);
+    expect(given.reason).toBe('unreachable');
+  });
+
+  it('surfaces a second go-ahead as a 409 with its reason', async () => {
+    const error = { code: 'conflict', message: 'x', details: { reason: 'go_ahead_taken' } };
+    const fetchImpl = vi.fn(async () =>
+      Response.json({ error }, { status: 409 }),
+    ) as unknown as typeof fetch;
+    const m = createManagementClient({ ...base, fetch: fetchImpl }).migrations;
+    const err = await m.approvePublish('r1', { viaRelease: true }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 409, code: 'conflict' });
+    expect(JSON.stringify((err as ManagementError).body ?? err)).toMatch(/go_ahead_taken/);
+  });
+
   it('surfaces a stale review as a 409', async () => {
     const fetchImpl = vi.fn(async () =>
       Response.json(

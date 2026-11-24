@@ -34,6 +34,7 @@ export function TemplateApproval({
   editing,
   canEdit,
   runFailed,
+  canTell,
   reload,
   onApproved,
   onReopened,
@@ -52,6 +53,8 @@ export function TemplateApproval({
   /** The person may change the model and script (`migration:run`). */
   canEdit: boolean;
   runFailed: boolean;
+  /** The run has a background run that may still hear, as far as is known; undefined until read. */
+  canTell: boolean | undefined;
   reload: () => Promise<unknown>;
   onApproved: (a: MigrationApproval) => void;
   onReopened: (t: MigrationTemplateView) => void;
@@ -228,7 +231,9 @@ export function TemplateApproval({
           </InlineConfirm>
         ) : canApprove ? (
           <div className="flex flex-wrap gap-2 touch:gap-5">
-            {answer === null || answer.reason === 'unreachable' ? (
+            {answer === null && canTell === undefined ? (
+              <SkeletonPill aria-hidden="true" />
+            ) : (answer === null ? canTell : answer.reason === 'unreachable') ? (
               <Button
                 type="button"
                 size="sm"

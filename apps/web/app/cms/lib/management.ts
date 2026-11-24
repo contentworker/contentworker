@@ -39,6 +39,7 @@ import type {
   ContentType,
   ContentTypeDraft,
   ContentTypeGrant,
+  MigrationRun as DomainMigrationRun,
   EffectiveBlockRules,
   EmbedData,
   EntryFields,
@@ -54,10 +55,11 @@ import type {
   Menu,
   MenuItemInput,
   MenuLink,
+  MigrationActor,
   MigrationArtifact,
+  MigrationDriverStatus,
   MigrationPage,
   MigrationPageStage,
-  MigrationRun,
   MigrationScore,
   MigrationSourceInput,
   MigrationTemplate,
@@ -1373,6 +1375,9 @@ export interface ImportResult {
 // As the Management API sends them: a stored file by its hash and size, never its bytes or where
 // it lives, and no structure fingerprints (clustering's working data).
 
+/** A run as the API answers it: its driver's record comes as a run read's `driver`. */
+export type MigrationRun = Omit<DomainMigrationRun, 'driver' | 'goAhead'>;
+
 /** A stored file a migration record names (a page's HTML, a script's output), by hash and size. */
 export type MigrationFile = Omit<MigrationArtifact, 'key'>;
 
@@ -1499,9 +1504,32 @@ export interface MigrationPageCounts {
   readonly byStage: Readonly<Partial<Record<MigrationPageStage, number>>>;
 }
 
-/** A run, its page counts and its templates (largest first): `GET …/migrations/runs/:id`. */
+/** A run's background driver, and the go-ahead to publish given to it. */
+export interface MigrationDriver {
+  readonly state: MigrationDriverStatus;
+  /** Null when never started, or started before this was recorded. */
+  readonly startedBy: MigrationActor | null;
+  readonly startedAt: string | null;
+  readonly startedByYou: boolean;
+  readonly goAhead:
+    | { readonly status: 'none' | 'unknown' }
+    | (MigrationPublishTarget & {
+        readonly status: 'given';
+        readonly approvedBy: MigrationActor;
+        readonly approvedAt: string;
+        readonly byYou: boolean;
+        /** It certainly reached the driver; false when that isn't known. */
+        readonly delivered: boolean;
+      });
+}
+
+/**
+ * A run, its driver, its page counts and its templates (largest first): `GET …/migrations/runs/:id`.
+ * Read the driver with `driverOf`: an api a release behind doesn't answer it.
+ */
 export interface MigrationRunView {
   readonly run: MigrationRun;
+  readonly driver?: MigrationDriver;
   readonly pages: MigrationPageCounts;
   readonly templates: readonly MigrationTemplateView[];
 }
@@ -3022,11 +3050,11 @@ export function createManagementClient(
     startMigrationRun(run: string): Promise<{ started: boolean }> {
       return req('POST', `${runPath(run)}/start`);
     },
-    /** Gives the run's driver the go-ahead to publish (content:publish). */
+    /** Gives the run's driver the go-ahead to publish (content:publish): a run takes one. */
     approveMigrationPublish(
       run: string,
       target: MigrationPublishTarget = {},
-    ): Promise<{ accepted: true }> {
+    ): Promise<{ accepted: true; signalled?: boolean }> {
       return req('POST', `${runPath(run)}/publish-approval`, target);
     },
 

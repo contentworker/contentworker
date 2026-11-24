@@ -1,9 +1,8 @@
-import type { MigrationRun } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, type MigrationRunView } from '~/cms/lib/management';
+import { ApiError, type MigrationRun, type MigrationRunView } from '~/cms/lib/management';
 
 const run = (id: string, name: string, over: Partial<MigrationRun> = {}): MigrationRun => ({
   id,

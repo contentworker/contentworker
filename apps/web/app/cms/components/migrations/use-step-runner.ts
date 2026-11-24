@@ -74,8 +74,8 @@ export function useStepRunner(after: () => Promise<unknown>) {
       readonly loop?: boolean;
       /** Its failure in words, where the screen knows better than the API's message. */
       readonly explain?: (err: unknown) => string | undefined;
-      /** The step's last word is where focus goes, not its button. */
-      readonly focusStatus?: boolean;
+      /** The step's last word is where focus goes, not its button; `done`, only when it did it. */
+      readonly focusStatus?: boolean | 'done';
       /** What Try again does, when it isn't the same act at once (a publish asks again). */
       readonly again?: () => void;
     },
@@ -108,7 +108,9 @@ export function useStepRunner(after: () => Promise<unknown>) {
       });
     }
     setRunning(null);
-    setFocusTo(opts.focusStatus ? 'status' : id);
+    const toStatus =
+      opts.focusStatus === 'done' ? end.error === undefined : opts.focusStatus === true;
+    setFocusTo(toStatus ? 'status' : id);
   };
 
   return {

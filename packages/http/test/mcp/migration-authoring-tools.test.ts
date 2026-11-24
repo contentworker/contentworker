@@ -3,6 +3,7 @@ import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runt
 import { type AppContext, createEnvironment, createSpace } from '@contentworker/application';
 import {
   MigrationDriverFinishedError,
+  type MigrationDriverStatus,
   NotFoundError,
   type Principal,
   SCOPES,
@@ -120,6 +121,13 @@ class RecordingRunner implements MigrationRunner {
     this.refuse(runId);
     if (!this.running.has(runId)) throw new NotFoundError('Migration driver', runId);
     this.calls.push({ kind: 'publishApproved', payload: event });
+  }
+  /** Asking where a driver is fails. */
+  unreachable = false;
+  async status(_scope: unknown, runId: string): Promise<MigrationDriverStatus> {
+    if (this.unreachable) throw new Error('internal error: Workflows is unavailable');
+    if (this.finished.has(runId)) return 'finished';
+    return this.running.has(runId) ? 'waiting' : 'none';
   }
 }
 
@@ -314,19 +322,40 @@ describe('site migration authoring tools', () => {
     expect((await call('migration_start', { run: ref.run })).body).toEqual({ started: false });
     expect((await asPublisher('migration_publish', { run: ref.run })).body).toEqual({
       accepted: true,
+      signalled: true,
+    });
+    // One a run: the same again is answered again, another's is a conflict.
+    expect((await asPublisher('migration_publish', { run: ref.run })).isError).toBeFalsy();
+    const taken = await (await connect(deps, admin))('migration_publish', { run: ref.run });
+    expect(taken.isError).toBe(true);
+    expect(taken.text).toMatch(/go_ahead_taken/);
+    expect(
+      ((await call('migration_status', { run: ref.run })).body as { driver: unknown }).driver,
+    ).toMatchObject({
+      state: 'waiting',
+      startedBy: { kind: 'key', keyId: 'key-runner' },
+      startedByYou: true,
+      goAhead: {
+        status: 'given',
+        approvedBy: { kind: 'key', keyId: 'key-publisher' },
+        delivered: true,
+      },
     });
     expect(driver.calls.map((c) => c.payload)).toEqual([
       {
         scope: { spaceId: SPACE, environmentId: 'main' },
         runId: ref.run,
         startedBy: { kind: 'key', keyId: 'key-runner' },
+        recorded: true,
       },
       {
         scope: { spaceId: SPACE, environmentId: 'main' },
         runId: ref.run,
         startedBy: { kind: 'key', keyId: 'key-runner' },
+        recorded: true,
       },
-      { approvedBy: { kind: 'key', keyId: 'key-publisher' } },
+      { approvedBy: { kind: 'key', keyId: 'key-publisher' }, recorded: true },
+      { approvedBy: { kind: 'key', keyId: 'key-publisher' }, recorded: true },
     ]);
   });
 
@@ -453,6 +482,7 @@ describe('site migration authoring tools', () => {
     expect(res.isError).toBe(false);
     expect(driver.calls.at(-1)?.payload).toEqual({
       approvedBy: { kind: 'key', keyId: 'key-publisher' },
+      recorded: true,
     });
   });
 

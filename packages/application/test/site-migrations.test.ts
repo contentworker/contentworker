@@ -99,6 +99,8 @@ describe('site migration runs', () => {
       error: null,
       releaseId: null,
       clusteringHeldAt: null,
+      driver: null,
+      goAhead: null,
       version: 1,
       createdAt: '2026-11-20T00:00:00.000Z',
       createdBy: 'ed@example.com',

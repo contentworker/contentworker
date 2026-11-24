@@ -20,6 +20,7 @@ import {
 import {
   InvalidStateError,
   MigrationDriverFinishedError,
+  type MigrationDriverStatus,
   NotFoundError,
   type Scope,
 } from '@contentworker/domain';
@@ -90,6 +91,20 @@ export class CloudflareMigrationRunner implements MigrationRunner {
     await instance.sendEvent({ type: MIGRATION_PUBLISH_EVENT, payload: event });
   }
 
+  async status(_scope: Scope, runId: string): Promise<MigrationDriverStatus> {
+    let instance: WorkflowInstance;
+    try {
+      instance = await this.driver(runId);
+    } catch (err) {
+      if (err instanceof NotFoundError) return 'none';
+      throw err;
+    }
+    const { status } = await instance.status();
+    if (FINISHED.has(status)) return 'finished';
+    // A status this list doesn't know (`unknown`, or a newer one) is said as unknown.
+    return INSTANCE_STATUS[status] ?? 'unknown';
+  }
+
   /**
    * The run's instance. `get` throws for an id with no instance (a run driven by hand, never
    * started, or one past its retention), with no code, only `instance.not_found` in its message:
@@ -121,6 +136,15 @@ export class CloudflareMigrationRunner implements MigrationRunner {
 
 /** Instance statuses that run no further: completed, failed or terminated. */
 const FINISHED: ReadonlySet<string> = new Set(['complete', 'errored', 'terminated']);
+
+/** The statuses of an instance that can still go on, as the run's driver reads. */
+const INSTANCE_STATUS: Readonly<Record<string, MigrationDriverStatus>> = {
+  queued: 'running',
+  running: 'running',
+  waiting: 'waiting',
+  paused: 'paused',
+  waitingForPause: 'paused',
+};
 
 /** What one driver invocation needs, opened per invocation and closed after it. */
 export interface MigrationHostDeps extends SiteMigrationRunHost {

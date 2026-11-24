@@ -4,18 +4,21 @@ import {
   ForbiddenError,
   InvalidStateError,
   MigrationDriverFinishedError,
+  type MigrationDriverStatus,
+  MigrationGoAheadTakenError,
   NotFoundError,
   type Principal,
   SCOPES,
   scopesForKind,
   ValidationError,
 } from '@contentworker/domain';
-import type {
-  MigrationDriverState,
-  MigrationPublishApproved,
-  MigrationRunner,
-  MigrationRunParams,
-  MigrationTemplateApproved,
+import {
+  type MigrationDriverState,
+  type MigrationPublishApproved,
+  type MigrationRunner,
+  type MigrationRunParams,
+  type MigrationTemplateApproved,
+  TransactionConflictError,
 } from '@contentworker/ports';
 import {
   FakeBlobStore,
@@ -32,6 +35,7 @@ import {
   createMigrationRun,
   fetchSourcePages,
   inventorySite,
+  migrationDriver,
   proposeTemplateModel,
   publishMigration,
   setImportScript,
@@ -141,6 +145,17 @@ class RecordingRunner implements MigrationRunner {
     if (!this.started.has(runId)) throw new NotFoundError('Migration driver', runId);
     this.calls.push({ kind: 'publishApproved', payload: event });
   }
+  /** What Workflows answers when asked; by default, what was started and finished here. */
+  answer: MigrationDriverStatus | 'broken' | 'silent' | undefined;
+  asked = 0;
+  async status(_s: typeof scope, runId: string): Promise<MigrationDriverStatus> {
+    this.asked += 1;
+    if (this.answer === 'broken') throw new Error('internal error: Workflows is unavailable');
+    if (this.answer === 'silent') return new Promise(() => {});
+    if (this.answer) return this.answer;
+    if (this.finished.has(runId)) return 'finished';
+    return this.started.has(runId) ? 'waiting' : 'none';
+  }
 }
 
 async function harness() {
@@ -180,6 +195,7 @@ describe('starting a run’s driver', () => {
       scope,
       runId: run.id,
       startedBy: { kind: 'key', keyId: 'key-1' },
+      recorded: true,
     });
   });
 
@@ -323,21 +339,27 @@ describe('the go-ahead to publish', () => {
   it('names the caller as the approver, and needs content:write through a release', async () => {
     const { ctx, run, runner } = await harness();
     await startMigration(ctx, runner, admin, scope, run.id);
-    const publisher = key([SCOPES.contentPublish]);
-    await approveMigrationPublish(ctx, runner, publisher, scope, { runId: run.id });
     await expect(
-      approveMigrationPublish(ctx, runner, publisher, scope, { runId: run.id, viaRelease: true }),
+      approveMigrationPublish(ctx, runner, key([SCOPES.contentPublish]), scope, {
+        runId: run.id,
+        viaRelease: true,
+      }),
     ).rejects.toThrow(ForbiddenError);
     await approveMigrationPublish(
       ctx,
       runner,
       key([SCOPES.contentPublish, SCOPES.contentWrite]),
       scope,
-      { runId: run.id, viaRelease: true, releaseTitle: 'Launch' },
+      { runId: run.id, viaRelease: true, releaseTitle: ' Launch ' },
     );
-    expect(runner.calls.filter((c) => c.kind === 'publishApproved').map((c) => c.payload)).toEqual([
-      { approvedBy: { kind: 'key', keyId: 'key-1' } },
-      { approvedBy: { kind: 'key', keyId: 'key-1' }, viaRelease: true, releaseTitle: 'Launch' },
+    // The event says it all still, for an engine from before go-aheads were recorded.
+    expect(sent(runner)).toEqual([
+      {
+        approvedBy: { kind: 'key', keyId: 'key-1' },
+        viaRelease: true,
+        releaseTitle: 'Launch',
+        recorded: true,
+      },
     ]);
   });
 
@@ -364,5 +386,292 @@ describe('the go-ahead to publish', () => {
       approveMigrationPublish(ctx, runner, admin, scope, { runId: run.id }),
     ).rejects.toThrow(NotFoundError);
     expect(runner.calls).toEqual([]);
+  });
+});
+
+const sent = (runner: RecordingRunner) =>
+  runner.calls.filter((c) => c.kind === 'publishApproved').map((c) => c.payload);
+
+describe('one go-ahead per run', () => {
+  const started = async () => {
+    const h = await harness();
+    await startMigration(h.ctx, h.runner, admin, scope, h.run.id);
+    const give = (principal: Principal, input: Record<string, unknown> = {}) =>
+      approveMigrationPublish(h.ctx, h.runner, principal, scope, { runId: h.run.id, ...input });
+    const held = async () => (await h.store.migrations.getRun(scope, h.run.id))?.goAhead;
+    return { ...h, give, held };
+  };
+  const publisher = key([SCOPES.contentPublish, SCOPES.contentWrite]);
+
+  it('is recorded with who, when and for what, before the driver hears of it', async () => {
+    const { store, run, runner, give, held } = await started();
+    let atSend: unknown;
+    const send = runner.publishApproved.bind(runner);
+    runner.publishApproved = async (...args) => {
+      atSend = await held();
+      return send(...args);
+    };
+    expect(await give(publisher)).toEqual({ signalled: true });
+    const goAhead = {
+      approvedBy: { kind: 'key', keyId: 'key-1' },
+      at: '2026-11-20T00:00:00.000Z',
+      target: {},
+    };
+    expect(atSend).toEqual({ ...goAhead, deliveredAt: null });
+    expect(await held()).toEqual({ ...goAhead, deliveredAt: '2026-11-20T00:00:00.000Z' });
+    // Nothing else of the run moved.
+    expect(await store.migrations.getRun(scope, run.id)).toMatchObject({
+      status: run.status,
+      driver: { startedBy: { kind: 'deployment' } },
+    });
+  });
+
+  it('answers the same one from the same caller again, telling only a driver that goes on', async () => {
+    const { store, run, runner, give } = await started();
+    await give(publisher);
+    const version = (await store.migrations.getRun(scope, run.id))?.version;
+    expect(await give(publisher)).toEqual({ signalled: true });
+    expect(sent(runner)).toHaveLength(2);
+    // Even once its driver has published and finished, or can't be asked.
+    runner.finished.add(run.id);
+    expect(await give(publisher)).toEqual({ signalled: true });
+    runner.answer = 'broken';
+    expect(await give(publisher)).toEqual({ signalled: true });
+    expect(sent(runner)).toHaveLength(2);
+    expect((await store.migrations.getRun(scope, run.id))?.version).toBe(version);
+  });
+
+  it('refuses another’s, or one for another target, with a conflict that says neither', async () => {
+    const { runner, give, held } = await started();
+    await give(publisher, { viaRelease: true });
+    const before = await held();
+    for (const [who, input] of [
+      [publisher, {}],
+      [publisher, { viaRelease: true, releaseTitle: 'Launch' }],
+      [admin, { viaRelease: true }],
+      [admin, {}],
+    ] as const) {
+      const err = await give(who, input).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(MigrationGoAheadTakenError);
+      expect(err).toBeInstanceOf(ConflictError);
+      expect(err).toMatchObject({ code: 'conflict', details: { reason: 'go_ahead_taken' } });
+      expect(JSON.stringify([(err as Error).message, (err as ConflictError).details])).not.toMatch(
+        /key-1|release/,
+      );
+    }
+    expect(await held()).toEqual(before);
+    expect(sent(runner)).toHaveLength(1);
+  });
+
+  it('is sent again when it was recorded but didn’t reach the driver', async () => {
+    const { runner, give, held } = await started();
+    runner.signal = 'broken';
+    expect(await give(publisher)).toEqual({ signalled: false, reason: 'unreachable' });
+    expect(await held()).toMatchObject({ deliveredAt: null });
+    // Recorded all the same: nobody else's takes its place meanwhile.
+    runner.signal = 'ok';
+    await expect(give(admin)).rejects.toThrow(MigrationGoAheadTakenError);
+    expect(await give(publisher)).toEqual({ signalled: true });
+    expect(sent(runner)).toHaveLength(1);
+    expect((await held())?.deliveredAt).toBeTruthy();
+  });
+
+  it('is sent again though the release it names has shipped meanwhile', async () => {
+    const { store, runner, give } = await started();
+    const release = {
+      id: 'rel-1',
+      title: 'Launch',
+      status: 'open' as const,
+      createdAt: '2026-11-20T00:00:00.000Z',
+    };
+    await store.releases.create(scope, release);
+    runner.signal = 'broken';
+    await give(publisher, { viaRelease: true, releaseId: 'rel-1' });
+    runner.signal = 'ok';
+    const get = store.releases.get.bind(store.releases);
+    store.releases.get = async (...args) => {
+      const r = await get(...args);
+      return r && { ...r, status: 'released' as never };
+    };
+    expect(await give(publisher, { viaRelease: true, releaseId: 'rel-1' })).toEqual({
+      signalled: true,
+    });
+  });
+
+  it('is won by exactly one of two given at once', async () => {
+    const { runner, give, held } = await started();
+    const other: Principal = { ...publisher, keyId: 'key-2' };
+    const results = await Promise.allSettled([
+      give(publisher),
+      give(other),
+      give(publisher, { viaRelease: true }),
+    ]);
+    const lost = results.filter((r) => r.status === 'rejected');
+    expect(lost).toHaveLength(2);
+    for (const r of lost) expect(r.reason).toBeInstanceOf(MigrationGoAheadTakenError);
+    const won = (await held())?.approvedBy;
+    expect(sent(runner)).toEqual([expect.objectContaining({ approvedBy: won })]);
+  });
+
+  it('reads the run again when another step wrote it first, and stops if it ended', async () => {
+    const { store, run, runner, give } = await started();
+    const save = store.migrations.saveRun.bind(store.migrations);
+    let lose = 1;
+    store.migrations.saveRun = async (s, r, v) => {
+      if (r.goAhead && lose-- > 0) {
+        const now = (await store.migrations.getRun(s, run.id)) as typeof run;
+        await save(s, { ...now, status: 'stopped', version: now.version + 1 }, now.version);
+        throw new TransactionConflictError();
+      }
+      return save(s, r, v);
+    };
+    await expect(give(publisher)).rejects.toThrow(/has stopped/);
+    expect(sent(runner)).toEqual([]);
+  });
+
+  it('records nothing while Workflows can’t be asked, or for a run with no driver', async () => {
+    const { runner, give, held } = await started();
+    runner.answer = 'broken';
+    await expect(give(publisher)).rejects.toThrow(/unavailable/);
+    runner.answer = 'none';
+    await expect(give(publisher)).rejects.toThrow(NotFoundError);
+    runner.answer = 'finished';
+    await expect(give(publisher)).rejects.toThrow(MigrationDriverFinishedError);
+    expect(await held()).toBeNull();
+    expect(sent(runner)).toEqual([]);
+  });
+
+  it('is never called delivered to a driver started before go-aheads were recorded', async () => {
+    const { run, runner, give, held, store } = await started();
+    const now = (await store.migrations.getRun(scope, run.id)) as typeof run;
+    await store.migrations.saveRun(
+      scope,
+      { ...now, driver: null, version: now.version + 1 },
+      now.version,
+    );
+    // It may have taken one already, and then drops this: sending it again stays possible.
+    expect(await give(publisher)).toEqual({ signalled: true });
+    expect(await held()).toMatchObject({ deliveredAt: null });
+    expect(await give(publisher)).toEqual({ signalled: true });
+    expect(sent(runner)).toHaveLength(2);
+    // Forgotten by Workflows, it isn't one that was never started.
+    runner.answer = 'none';
+    const after = (await store.migrations.getRun(scope, run.id)) as typeof run;
+    expect(await migrationDriver(runner, admin, scope, after)).toMatchObject({ state: 'finished' });
+  });
+
+  it('keeps the run from being started again once Workflows has forgotten its driver', async () => {
+    const { ctx, run, runner, give } = await started();
+    await give(publisher);
+    expect(await startMigration(ctx, runner, admin, scope, run.id)).toEqual({ started: false });
+    runner.answer = 'none';
+    await expect(startMigration(ctx, runner, admin, scope, run.id)).rejects.toThrow(
+      MigrationDriverFinishedError,
+    );
+    expect(runner.calls.filter((c) => c.kind === 'start')).toHaveLength(1);
+  });
+});
+
+describe('reading a run’s driver', () => {
+  const read = async (h: Awaited<ReturnType<typeof harness>>, who: Principal = admin) => {
+    const run = await h.store.migrations.getRun(scope, h.run.id);
+    return migrationDriver(h.runner, who, scope, run as NonNullable<typeof run>);
+  };
+
+  it('says it has none, then who started it and when, and the go-ahead given', async () => {
+    const h = await harness();
+    expect(await read(h)).toEqual({
+      state: 'none',
+      startedBy: null,
+      startedAt: null,
+      startedByYou: false,
+      goAhead: { status: 'none' },
+    });
+    const starter = key([SCOPES.migrationRun]);
+    await startMigration(h.ctx, h.runner, starter, scope, h.run.id);
+    expect(await read(h, starter)).toEqual({
+      state: 'waiting',
+      startedBy: { kind: 'key', keyId: 'key-1' },
+      startedAt: '2026-11-20T00:00:00.000Z',
+      startedByYou: true,
+      goAhead: { status: 'none' },
+    });
+    await approveMigrationPublish(h.ctx, h.runner, admin, scope, {
+      runId: h.run.id,
+      viaRelease: true,
+    });
+    expect(await read(h, starter)).toMatchObject({
+      goAhead: {
+        status: 'given',
+        approvedBy: { kind: 'deployment' },
+        approvedAt: '2026-11-20T00:00:00.000Z',
+        viaRelease: true,
+        byYou: false,
+        delivered: true,
+      },
+    });
+    expect((await read(h)).goAhead).toMatchObject({ byYou: true });
+  });
+
+  it('says unknown, never no, for what wasn’t recorded or can’t be asked', async () => {
+    const h = await harness();
+    // Started by an api from before this was recorded.
+    h.runner.started.add(h.run.id);
+    expect(await read(h)).toMatchObject({
+      state: 'waiting',
+      startedBy: null,
+      goAhead: { status: 'unknown' },
+    });
+    h.runner.answer = 'broken';
+    expect(await read(h)).toMatchObject({ state: 'unknown', goAhead: { status: 'unknown' } });
+    h.runner.answer = undefined;
+    await startMigration(h.ctx, h.runner, admin, scope, h.run.id);
+    // Running already: whoever calls start now didn't start it.
+    expect(await read(h)).toMatchObject({ startedBy: null });
+  });
+
+  it('never holds a read up for Workflows', async () => {
+    const h = await harness();
+    h.runner.answer = 'silent';
+    const at = Date.now();
+    expect(await read(h)).toMatchObject({ state: 'unknown' });
+    expect(Date.now() - at).toBeLessThan(4_000);
+  });
+
+  it('takes a driver Workflows forgot for finished, and doesn’t ask about a run that ended', async () => {
+    const h = await harness();
+    await startMigration(h.ctx, h.runner, admin, scope, h.run.id);
+    h.runner.answer = 'none';
+    expect(await read(h)).toMatchObject({ state: 'finished' });
+    const now = (await h.store.migrations.getRun(scope, h.run.id)) as typeof h.run;
+    await h.store.migrations.saveRun(
+      scope,
+      { ...now, status: 'stopped', version: now.version + 1 },
+      now.version,
+    );
+    h.runner.asked = 0;
+    expect(await read(h)).toMatchObject({ state: 'finished' });
+    expect(h.runner.asked).toBe(0);
+    expect(await migrationDriver(undefined, admin, scope, h.run)).toMatchObject({ state: 'none' });
+  });
+
+  it('records the start even when the run was written meanwhile', async () => {
+    const h = await harness();
+    const save = h.store.migrations.saveRun.bind(h.store.migrations);
+    let lose = 2;
+    h.store.migrations.saveRun = async (s, r, v) => {
+      if (lose-- > 0) throw new TransactionConflictError();
+      return save(s, r, v);
+    };
+    await startMigration(h.ctx, h.runner, admin, scope, h.run.id);
+    expect(await read(h)).toMatchObject({ startedBy: { kind: 'deployment' } });
+    // And a start whose record never lands has started all the same: the driver records itself.
+    const other = await harness();
+    other.store.migrations.saveRun = async () => {
+      throw new Error('D1 is unavailable');
+    };
+    expect(await startMigration(other.ctx, other.runner, admin, scope, other.run.id)).toEqual({
+      started: true,
+    });
   });
 });

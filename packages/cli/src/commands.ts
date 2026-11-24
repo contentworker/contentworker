@@ -8,6 +8,8 @@ import {
   type ImportInput,
   type ManagementClient,
   ManagementError,
+  type MigrationActor,
+  type MigrationDriver,
   type MigrationFetchResult,
   type MigrationPageStage,
   type MigrationPublishTarget,
@@ -893,6 +895,52 @@ function fraction(ctx: CommandContext, key: string): number | undefined {
   return n;
 }
 
+const DRIVER_STATES: Record<MigrationDriver['state'], string> = {
+  none: 'not started',
+  running: 'running',
+  waiting: 'waiting (for an approval, the go-ahead or the site)',
+  paused: 'paused',
+  finished: 'finished',
+  unknown: 'unknown (it couldn’t be asked now)',
+};
+
+function describeActor(actor: MigrationActor, you: boolean): string {
+  if (you && actor.kind !== 'deployment') return 'you';
+  switch (actor.kind) {
+    case 'key':
+      return `API key ${actor.keyId}`;
+    case 'member':
+      return `team member ${actor.memberId}`;
+    default:
+      return 'the deployment';
+  }
+}
+
+function describeDriver(d: MigrationDriver): string {
+  const by =
+    d.startedBy && d.startedAt
+      ? `, started by ${describeActor(d.startedBy, d.startedByYou)} at ${d.startedAt}`
+      : '';
+  return `${DRIVER_STATES[d.state]}${by}`;
+}
+
+function describeGoAhead(g: MigrationDriver['goAhead']): string | undefined {
+  if (g.status !== 'given') {
+    return g.status === 'none'
+      ? undefined
+      : 'unknown (one may have been given before they were recorded)';
+  }
+  const how = g.viaRelease
+    ? `to add its entries to ${g.releaseId ? `release ${g.releaseId}` : 'a release'}`
+    : 'to publish';
+  return (
+    `given by ${describeActor(g.approvedBy, g.byYou)} at ${g.approvedAt}, ${how}` +
+    (g.delivered
+      ? ''
+      : `; not known to have reached it${g.byYou ? ' (send it again: migrate publish)' : ''}`)
+  );
+}
+
 function renderRunView(view: MigrationRunView): string {
   const { run, pages } = view;
   const stages = Object.entries(pages.byStage)
@@ -904,6 +952,8 @@ function renderRunView(view: MigrationRunView): string {
       name: run.name,
       source: `${run.source.kind} ${run.source.url}`,
       status: run.status,
+      background: view.driver ? describeDriver(view.driver) : undefined,
+      'go-ahead': view.driver ? describeGoAhead(view.driver.goAhead) : undefined,
       pages: `${pages.total} (${pages.fetched} fetched, ${pages.failed} failed)`,
       stages: stages || undefined,
       skipped: run.inventory
@@ -1322,9 +1372,16 @@ const migratePublish: Command = {
     };
     const cma = await ctx.client();
     if (!bool(ctx, 'now')) {
-      await cma.migrations.approvePublish(run, target);
+      const result = await cma.migrations.approvePublish(run, target);
+      if (result.signalled === false) {
+        return {
+          json: { run, ...result },
+          human: `Recorded the go-ahead on run ${run}, but its background run couldn’t be reached. Send it again: the same command.`,
+          exitCode: EXIT.failure,
+        };
+      }
       return {
-        json: { run, accepted: true },
+        json: { run, ...result },
         human: `Sent run ${run} the go-ahead: it ${viaRelease ? 'adds its entries to a release' : 'publishes'} once its pages are loaded.`,
       };
     }

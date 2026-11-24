@@ -1,5 +1,7 @@
 import {
   holdsScope,
+  type MigrationActor,
+  type MigrationDriverStatus,
   type MigrationPageStage,
   type MigrationRunStatus,
   type MigrationSourceKind,
@@ -11,11 +13,13 @@ import {
   ApiError,
   apiIssues,
   type MigrationApproval,
+  type MigrationDriver,
   type MigrationFetchResult,
   type MigrationPageCounts,
   type MigrationPageFailure,
   type MigrationRunView,
   type MigrationTemplateView,
+  type TeamSummary,
 } from './management';
 
 /*
@@ -438,11 +442,101 @@ export const worthRetrying = (err: unknown) =>
   err.status === 429 ||
   isRetryableConflict(err);
 
+// --- the background run ---------------------------------------------------------
+
+/** What is known when an api a release behind answers no `driver`: nothing. */
+const UNREAD_DRIVER: MigrationDriver = {
+  state: 'unknown',
+  startedBy: null,
+  startedAt: null,
+  startedByYou: false,
+  goAhead: { status: 'unknown' },
+};
+export const driverOf = ({ run, driver }: MigrationRunView): MigrationDriver =>
+  driver ??
+  // Only its driver ends a run, as it ends.
+  (run.status === 'failed' || run.status === 'stopped'
+    ? { ...UNREAD_DRIVER, state: 'finished' }
+    : UNREAD_DRIVER);
+
+/** What its background run means for publishing from here, in a sentence; nothing when it doesn't. */
+export function backgroundPublishNote(d: MigrationDriver): string {
+  if (!mayHear(d)) return '';
+  const { goAhead } = d;
+  if (goAhead.status === 'given')
+    return `Its background run was given the go-ahead${goAhead.delivered ? '' : ' (not known to have arrived)'}, to ${
+      goAhead.viaRelease ? 'add what it loads to a release' : 'publish what it loads'
+    }.`;
+  return d.state === 'unknown'
+    ? 'If this run is in the background, give it the go-ahead below instead.'
+    : 'This run is in the background: give it the go-ahead below instead.';
+}
+
+export const DRIVER_STATE: Readonly<
+  Record<MigrationDriverStatus, { tone: Tone; label: string; says?: string }>
+> = {
+  none: { tone: 'idle', label: 'Not started' },
+  running: { tone: 'run', label: 'Running' },
+  waiting: {
+    tone: 'wait',
+    label: 'Waiting',
+    says: 'For a template’s approval, the go-ahead to publish, or the source site.',
+  },
+  paused: {
+    tone: 'wait',
+    label: 'Paused',
+    says: 'An operator paused it. It goes on once resumed.',
+  },
+  finished: {
+    tone: 'idle',
+    label: 'Finished',
+    says: 'It can’t be started or told anything again. Take the run on step by step here.',
+  },
+  unknown: { tone: 'idle', label: 'Unknown', says: 'Whether it is running couldn’t be read now.' },
+};
+
+/** It may still take what it is told: going on, or not known to have ended. */
+export const mayHear = (d: MigrationDriver) =>
+  d.state === 'running' || d.state === 'waiting' || d.state === 'paused' || d.state === 'unknown';
+
+/** How often a page follows a run's driver: closely while it writes, seldom while it waits. */
+export const followEvery = (view: MigrationRunView | undefined): number | false => {
+  const d = view?.driver;
+  if (!d || !mayHear(d)) return false;
+  return d.state === 'running' ? 15_000 : 60_000;
+};
+
+/** Who did something to a run, in a sentence: a name only where the team may be read. */
+export function migrationActorName(
+  actor: MigrationActor,
+  you: boolean,
+  team: Pick<TeamSummary, 'people' | 'keys'> | undefined,
+): string {
+  switch (actor.kind) {
+    case 'member': {
+      if (you) return 'you';
+      const person = team?.people.find((p) => p.id === actor.memberId);
+      return person ? person.name?.trim() || person.email : 'a teammate';
+    }
+    case 'key': {
+      const name = team?.keys.find((k) => k.id === actor.keyId)?.name;
+      return name ? `the API key “${name}”` : 'an API key or token';
+    }
+    default:
+      // Every deployment administrator and token acts as one, so even "you" can't be told.
+      return 'someone with deployment-wide access';
+  }
+}
+
 /** Why the run's driver didn't take a start or a go-ahead, in plain words, when that is the answer. */
 export function driverRefusal(err: unknown): string | undefined {
   if (!(err instanceof ApiError)) return;
   if (err.status === 501)
     return 'Running migrations in the background isn’t set up on this install.';
+  const details = (err.body as { error?: { details?: { reason?: unknown } } } | undefined)?.error
+    ?.details;
+  if (err.status === 409 && details?.reason === 'go_ahead_taken')
+    return 'A go-ahead was already given for this run, and it stands: another can’t replace it.';
   if (err.status === 404 && err.code === 'not_found')
     return 'Nothing is running this in the background. Start it, or publish its entries step by step.';
   if (err.status !== 400 || err.code !== 'invalid_state') return;

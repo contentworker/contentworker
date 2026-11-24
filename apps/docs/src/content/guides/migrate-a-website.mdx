@@ -199,11 +199,25 @@ Step by step, each call a bounded batch:
 `start` hands the run to the engine, acting for you: it inventories, fetches and clusters, starts
 an authoring agent for each of the largest templates, then for each template a person approves
 transforms, loads and redirects its pages, relinks, and waits for the go-ahead to publish
-(`publish-approval`), which names its approver from the caller's credentials. Starting again is
+(`publish-approval`), which names its approver from the caller's credentials and is recorded on
+the run. Starting again is
 safe: it answers `started: false`. Approving a template tells the engine (`signalled: true`);
 otherwise `reason` says why: `no-driver` (the run is taken step by step), `driver-finished`, or
 `unreachable`, when approving again tells it. A go-ahead for a run that was never started answers
-`404`. A template reopened while the run
+`404`.
+
+A run takes one go-ahead, and it stands. Giving the same one again as the same caller is safe, after a
+lost answer say; anyone else's, or one for another target, is refused (`409`, `details.reason`
+`go_ahead_taken`). With `signalled: false` it was recorded but the engine couldn't be reached: send
+the same one again. One that never arrives is still taken when the 14-day wait ends.
+
+Reading the run says where its background run is: `driver.state` is `none`, `running`, `waiting`,
+`paused`, `finished`, or `unknown` while the engine can't be asked. `driver.startedBy` and `startedAt`
+say who started it, and `driver.goAhead` whether one was `given`, by whom, when, for what, and whether
+it certainly arrived (`delivered`). Runs started before this was recorded read `unknown` there. The
+admin shows the same on the run's page, under **Run in the background**.
+
+A template reopened while the run
 is driven is waited for again, and doesn't hold up the others. The go-ahead publishes every entry
 loaded by then, a reopened template's too; its pages not loaded yet aren't published, and are taken
 on step by step once it is approved again. If no template is approved in time, or the go-ahead never comes, the engine stops waiting
@@ -326,7 +340,7 @@ loaded entries here instead, batch by batch.
 | `403`  | `forbidden`         | The token lacks the scope; the message names it.                                                                           |
 | `400`  | `invalid_state`     | The step is out of order: clustering before an inventory, once a template is authored or once a background run has taken the templates on, a script change once a template is approved, a transform or load before approval, or a start or go-ahead for a run that failed, stopped or whose engine run has finished. |
 | `404`  | `not_found`         | No such run or template in this environment, or no background driver to send a go-ahead to.                                |
-| `409`  | `conflict`          | Another step wrote the run first (`retryable: true`; send the call again), or the template changed since its `reviewDigest` was read (review it again), or it was reopened while its pages were transformed or loaded. |
+| `409`  | `conflict`          | Another step wrote the run first (`retryable: true`; send the call again), or a go-ahead to publish was already given (`go_ahead_taken`; it stands), or the template changed since its `reviewDigest` was read (review it again), or it was reopened while its pages were transformed or loaded. |
 | `422`  | `validation_failed` | A source field is malformed, or the URL is on a private address. The issue names the field, such as `source.include[0]`. |
 | `501`  | `not_configured`    | This deployment can't read source sites, run import scripts, or run migrations in the background.                         |
 | `503`  | `site_unavailable`  | The site's `robots.txt` can't be read (`retryable: true`). Nothing was written; try again later.                            |

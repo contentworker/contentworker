@@ -22,7 +22,8 @@ export function StepButton({
   primary?: boolean;
   busy: boolean;
   doing?: boolean;
-  describedBy: string;
+  /** Its reason's id; left out where the step is only offered while it can be taken. */
+  describedBy?: string;
   label: string;
   doingLabel?: string;
   onClick: () => void;

@@ -11,7 +11,9 @@ import type {
 } from '~/cms/lib/management';
 import {
   addFailures,
+  backgroundPublishNote,
   batchUntilDone,
+  driverOf,
   type Failures,
   type MigrationRights,
   NO_FAILURES,
@@ -52,6 +54,7 @@ export function RunFinish({
   const invalidate = useInvalidate();
   const id = useId();
   const { run, pages } = view;
+  const background = backgroundPublishNote(driverOf(view));
   const runner = useStepRunner(refresh);
   const [relink, setRelink] = useState<Failures>(NO_FAILURES);
   const [redirects, setRedirects] = useState<MigrationRedirectsResult | null>(null);
@@ -300,8 +303,7 @@ export function RunFinish({
             <span className="flex flex-wrap gap-x-2">
               <span className="w-full">
                 Publishes the loaded entries, {PUBLISH_BATCH} a request, or adds them to a release.
-                Entries a release ships read as published here after the next publish. If this run
-                is in the background, give it the go-ahead below instead.
+                Entries a release ships read as published here after the next publish. {background}
               </span>
               {releaseId ? (
                 <span className="w-full">

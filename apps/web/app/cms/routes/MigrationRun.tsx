@@ -24,7 +24,14 @@ import {
   isForbidden,
   type MigrationRunView,
 } from '~/cms/lib/management';
-import { isStage, KIND_LABEL, migrationRights, RUN_STATUS, STAGES } from '~/cms/lib/migrations';
+import {
+  followEvery,
+  isStage,
+  KIND_LABEL,
+  migrationRights,
+  RUN_STATUS,
+  STAGES,
+} from '~/cms/lib/migrations';
 import { useInvalidate, useScopedQuery } from '~/cms/lib/queries';
 import { useSpaceScopes } from '~/cms/lib/space-access';
 import { MIGRATIONS_KEY, migrationRunKey } from './Migrations';
@@ -45,12 +52,11 @@ export function MigrationRunPage() {
   // Undefined until the role is known: the steps draw their actions as skeletons meanwhile.
   const rights = migrationRights(scopes);
   const canRun = rights?.run;
-  // Started (or told to publish) from here: its driver writes the run meanwhile, so follow it.
-  const [following, setFollowing] = useState(false);
   const view = useScopedQuery(migrationRunKey(runId), () => client.getMigrationRun(runId), {
     silent: true,
     staleTime: 0,
-    ...(following ? { refetchInterval: 15_000 } : {}),
+    // Its driver writes the run meanwhile, whoever started it, so follow it.
+    refetchInterval: followEvery,
   });
   const [search, setSearch] = useSearchParams();
   const { key: locationKey } = useLocation();
@@ -98,11 +104,6 @@ export function MigrationRunPage() {
   );
   const onUpdated = (next: MigrationRunView) =>
     queryClient.setQueryData([conn.space, conn.environment, ...migrationRunKey(runId)], next);
-
-  const ended = view.data?.run.status === 'stopped' || view.data?.run.status === 'failed';
-  useEffect(() => {
-    if (ended) setFollowing(false);
-  }, [ended]);
 
   // A link to #pages lands once the section is there.
   const here = view.data !== undefined;
@@ -250,7 +251,7 @@ export function MigrationRunPage() {
           view={view.data}
           rights={rights}
           refresh={refresh}
-          onStarted={() => setFollowing(true)}
+          scopes={scopes}
         />
       </Section>
       <Section

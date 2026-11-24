@@ -31,6 +31,8 @@ import type {
   MenuItem,
   MigrationActor,
   MigrationArtifact,
+  MigrationDriverRecord,
+  MigrationGoAhead,
   MigrationInventory,
   MigrationPageStage,
   MigrationRunStatus,
@@ -1579,6 +1581,10 @@ export const migrationRuns = sqliteTable(
     releaseId: text('release_id'),
     /** 0052_migration_clustering_hold. */
     clusteringHeldAt: integer('clustering_held_at', { mode: 'timestamp_ms' }),
+    /** 0053_site_migration_driver. */
+    driver: text('driver', { mode: 'json' }).$type<MigrationDriverRecord>(),
+    /** 0053_site_migration_driver. */
+    goAhead: text('go_ahead', { mode: 'json' }).$type<MigrationGoAhead>(),
     version: integer('version').notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     createdBy: text('created_by'),

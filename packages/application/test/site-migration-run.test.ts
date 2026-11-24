@@ -4,7 +4,11 @@ import {
   type Principal,
   scopesForKind,
 } from '@contentworker/domain';
-import { type MigrationRunParams, TransactionConflictError } from '@contentworker/ports';
+import {
+  type MigrationRunner,
+  type MigrationRunParams,
+  TransactionConflictError,
+} from '@contentworker/ports';
 import {
   FakeBlobStore,
   FakeRemoteFetcher,
@@ -17,6 +21,7 @@ import { InProcessImportScriptSandbox } from '@contentworker/test-kit/import-scr
 import { describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  approveMigrationPublish,
   approveTemplate,
   clusterPages,
   createMigrationRun,
@@ -28,6 +33,7 @@ import {
   MIGRATION_PUBLISH_EVENT,
   migrationTemplateApprovedEvent,
   proposeTemplateModel,
+  recordDriver,
   reopenTemplate,
   runSiteMigration,
   type SiteMigrationRunHost,
@@ -121,7 +127,12 @@ async function harness(site: Record<string, string> = SITE) {
     load: { blob, fetcher: new FakeRemoteFetcher() },
   };
   const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: O } });
-  const params: MigrationRunParams = { scope, runId: run.id, startedBy: { kind: 'deployment' } };
+  const params: MigrationRunParams = {
+    scope,
+    runId: run.id,
+    startedBy: { kind: 'deployment' },
+    recorded: true,
+  };
   const steps = new FakeWorkflowSteps(clock);
   return { ctx, clock, host, params, steps, started, source, run };
 }
@@ -424,7 +435,7 @@ describe('clustering a run its driver has taken on', () => {
     const save = h.ctx.store.migrations.saveRun.bind(h.ctx.store.migrations);
     let raced = false;
     h.ctx.store.migrations.saveRun = async (...args) => {
-      if (!raced) {
+      if (!raced && args[1].clusteringHeldAt) {
         raced = true;
         await recluster(h);
       }
@@ -443,7 +454,7 @@ describe('clustering a run its driver has taken on', () => {
     const save = h.ctx.store.migrations.saveRun.bind(h.ctx.store.migrations);
     let losses = 4;
     h.ctx.store.migrations.saveRun = async (...args) => {
-      if (losses > 0) {
+      if (losses > 0 && args[1].clusteringHeldAt) {
         losses -= 1;
         throw new TransactionConflictError();
       }
@@ -519,6 +530,299 @@ describe('clustering a run its driver has taken on', () => {
       model: MODEL,
     });
     await expect(recluster(h)).rejects.toThrow('already being authored');
+  });
+});
+
+describe('the go-ahead a driver acts on', () => {
+  type H = Awaited<ReturnType<typeof harness>>;
+  const pass = (h: H) => h.steps.run(() => runSiteMigration(h.steps, h.host, h.params));
+  const runOf = async (h: H) => {
+    const run = await h.ctx.store.migrations.getRun(scope, h.params.runId);
+    if (!run) throw new Error('no run');
+    return run;
+  };
+  /** Its one template loaded, the driver waiting for the go-ahead. */
+  const loaded = async () => {
+    const h = await harness();
+    await pass(h);
+    const [t] = await h.ctx.store.migrations.listTemplates(scope, h.params.runId);
+    const ref = { runId: h.params.runId, templateId: t?.id as string };
+    await authorAndApprove(h.ctx, h.host, ref);
+    h.steps.sendEvent(migrationTemplateApprovedEvent(ref.templateId), {});
+    await pass(h);
+    return h;
+  };
+  const runner = (h: H, deliver = true): MigrationRunner => ({
+    start: async () => 'running',
+    templateApproved: async () => undefined,
+    status: async () => 'waiting',
+    publishApproved: async (_s, _r, event) => {
+      if (!deliver) throw new Error('unreachable');
+      h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, event);
+    },
+  });
+  const give = (h: H, over: Record<string, unknown> = {}, deliver = true) =>
+    approveMigrationPublish(h.ctx, runner(h, deliver), editor, scope, {
+      runId: h.params.runId,
+      ...over,
+    });
+  const save = async (h: H, over: Partial<Awaited<ReturnType<typeof runOf>>>) => {
+    const run = await runOf(h);
+    await h.ctx.store.migrations.saveRun(
+      scope,
+      { ...run, ...over, version: run.version + 1 },
+      run.version,
+    );
+  };
+
+  it('given while the driver lists the site, or takes its templates, fails neither', async () => {
+    for (const at of ['inventoried', 'clustered']) {
+      const h = await harness();
+      if (at === 'clustered') {
+        await inventorySite(h.ctx, h.host.site, scope, h.run.id);
+        while ((await fetchSourcePages(h.ctx, h.host.site, scope, h.run.id)).more) {}
+        await clusterPages(h.ctx, scope, h.run.id);
+      }
+      const saveRun = h.ctx.store.migrations.saveRun.bind(h.ctx.store.migrations);
+      let losses = 4;
+      h.ctx.store.migrations.saveRun = async (s, r, v) => {
+        if (
+          r.status === at &&
+          (r.clusteringHeldAt || at === 'inventoried') &&
+          !r.goAhead &&
+          losses > 0
+        ) {
+          losses -= 1;
+          // Each write of the run by someone else moves its version on.
+          const now = await runOf(h);
+          await saveRun(s, { ...now, version: now.version + 1 }, now.version);
+          if (losses === 0) await give(h);
+        }
+        return saveRun(s, r, v);
+      };
+      expect((await pass(h)).status).toBe('waiting');
+      expect(losses).toBe(0);
+      expect(await runOf(h)).toMatchObject({
+        status: 'clustered',
+        clusteringHeldAt: expect.any(String),
+        driver: { startedBy: { kind: 'deployment' } },
+        goAhead: { approvedBy: { kind: 'deployment' } },
+      });
+    }
+  });
+
+  it('is kept by a clustering it crosses, which is sent again and not called held', async () => {
+    const h = await harness();
+    await inventorySite(h.ctx, h.host.site, scope, h.run.id);
+    while ((await fetchSourcePages(h.ctx, h.host.site, scope, h.run.id)).more) {}
+    const saveRun = h.ctx.store.migrations.saveRun.bind(h.ctx.store.migrations);
+    let crossed = false;
+    h.ctx.store.migrations.saveRun = async (s, r, v) => {
+      if (!crossed && r.status === 'clustered') {
+        crossed = true;
+        await recordDriver(h.ctx, scope, h.run.id, { kind: 'deployment' });
+      }
+      return saveRun(s, r, v);
+    };
+    const withTx = h.ctx.store.withTransaction.bind(h.ctx.store);
+    h.ctx.store.withTransaction = (async (fn: never) => {
+      if (!crossed) {
+        crossed = true;
+        await recordDriver(h.ctx, scope, h.run.id, { kind: 'deployment' });
+      }
+      return withTx(fn);
+    }) as never;
+    await expect(clusterPages(h.ctx, scope, h.run.id)).rejects.toThrow(TransactionConflictError);
+    await clusterPages(h.ctx, scope, h.run.id);
+    expect(await runOf(h)).toMatchObject({
+      status: 'clustered',
+      clusteringHeldAt: null,
+      driver: { startedBy: { kind: 'deployment' } },
+    });
+  });
+
+  it('records who started it in its first step', async () => {
+    const h = await harness();
+    await pass(h);
+    expect((await runOf(h)).driver).toEqual({
+      startedBy: { kind: 'deployment' },
+      startedAt: '2026-11-20T00:00:00.000Z',
+    });
+    const { version } = await runOf(h);
+    await pass(h);
+    expect((await runOf(h)).version).toBe(version);
+  });
+
+  it('records no start of an instance an earlier api started, so its go-ahead stays unknown', async () => {
+    const h = await harness();
+    const { recorded: _, ...params } = h.params;
+    await h.steps.run(() => runSiteMigration(h.steps, h.host, params));
+    expect((await runOf(h)).driver).toBeNull();
+  });
+
+  it.each(['told', 'late'])('publishes nothing as someone who lost access (%s)', async (how) => {
+    const h = await loaded();
+    await save(h, {
+      goAhead: {
+        approvedBy: { kind: 'key', keyId: 'revoked' },
+        at: '2026-11-20T00:00:00.000Z',
+        target: {},
+        deliveredAt: null,
+      },
+    });
+    if (how === 'late') h.clock.advance(15 * 24 * 60 * 60_000);
+    else {
+      h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, {
+        approvedBy: { kind: 'deployment' },
+        recorded: true,
+      });
+    }
+    expect(await pass(h)).toMatchObject({ status: 'complete', value: { status: 'failed' } });
+    expect(await stages(h.ctx, h.params.runId)).toEqual({ loaded: 3 });
+  });
+
+  it('is the run’s, whatever the event says', async () => {
+    const h = await loaded();
+    await give(h, { viaRelease: true, releaseTitle: 'Launch' }, false);
+    expect((await runOf(h)).goAhead?.deliveredAt).toBeNull();
+    h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, {
+      approvedBy: { kind: 'key', keyId: 'someone-else' },
+      recorded: true,
+    });
+    expect(await pass(h)).toMatchObject({ status: 'complete', value: { status: 'published' } });
+    const run = await runOf(h);
+    expect(run.releaseId).toBeTruthy();
+    expect(await stages(h.ctx, run.id)).toEqual({ loaded: 3 });
+    // Acted on, it certainly arrived.
+    expect(run.goAhead).toMatchObject({
+      approvedBy: { kind: 'deployment' },
+      deliveredAt: expect.any(String),
+    });
+  });
+
+  it('is taken once, however often its event comes', async () => {
+    const h = await loaded();
+    await give(h);
+    for (let i = 0; i < 3; i++) {
+      h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, {
+        approvedBy: { kind: 'deployment' },
+        viaRelease: true,
+        recorded: true,
+      });
+    }
+    expect(await pass(h)).toMatchObject({ status: 'complete', value: { status: 'published' } });
+    expect((await runOf(h)).releaseId).toBeNull();
+    expect(await stages(h.ctx, h.params.runId)).toEqual({ published: 3 });
+  });
+
+  it('publishes nothing on a wake-up for a go-ahead the run doesn’t hold', async () => {
+    const h = await loaded();
+    h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, {
+      approvedBy: { kind: 'deployment' },
+      recorded: true,
+    });
+    expect(await pass(h)).toMatchObject({ status: 'complete', value: { status: 'loaded' } });
+    expect(await runOf(h)).toMatchObject({
+      status: 'stopped',
+      error: expect.stringMatching(/record/),
+    });
+    expect(await stages(h.ctx, h.params.runId)).toEqual({ loaded: 3 });
+  });
+
+  it('takes one that was recorded but never delivered when the wait runs out', async () => {
+    const h = await loaded();
+    await give(h, {}, false);
+    h.clock.advance(15 * 24 * 60 * 60_000);
+    expect(await pass(h)).toMatchObject({ status: 'complete', value: { status: 'published' } });
+    expect(await runOf(h)).toMatchObject({
+      status: 'clustered',
+      goAhead: { deliveredAt: expect.any(String) },
+    });
+    expect(await stages(h.ctx, h.params.runId)).toEqual({ published: 3 });
+    const executed = h.steps.executed.length;
+    await pass(h);
+    expect(h.steps.executed.length).toBe(executed);
+  });
+
+  it('stops over no go-ahead given as the wait ran out', async () => {
+    const h = await loaded();
+    const saveRun = h.ctx.store.migrations.saveRun.bind(h.ctx.store.migrations);
+    let given = false;
+    h.ctx.store.migrations.saveRun = async (s, r, v) => {
+      if (r.status === 'stopped' && !given) {
+        given = true;
+        await give(h, {}, false);
+      }
+      return saveRun(s, r, v);
+    };
+    h.clock.advance(15 * 24 * 60 * 60_000);
+    expect(await pass(h)).toMatchObject({ status: 'complete', value: { status: 'published' } });
+    expect((await runOf(h)).status).toBe('clustered');
+  });
+
+  it('takes one sent before they were recorded as it was sent, and records it', async () => {
+    const h = await loaded();
+    h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, {
+      approvedBy: { kind: 'deployment' },
+      viaRelease: true,
+    });
+    // Given since, to a run whose go-ahead wasn't on record: the one sent first stands.
+    await save(h, {
+      goAhead: {
+        approvedBy: { kind: 'key', keyId: 'later' },
+        at: '2026-11-20T01:00:00.000Z',
+        target: {},
+        deliveredAt: null,
+      },
+    });
+    expect(await pass(h)).toMatchObject({ status: 'complete', value: { status: 'published' } });
+    const run = await runOf(h);
+    expect(run.releaseId).toBeTruthy();
+    expect(run.goAhead).toEqual({
+      approvedBy: { kind: 'deployment' },
+      at: '2026-11-20T00:00:00.000Z',
+      target: { viaRelease: true },
+      deliveredAt: '2026-11-20T00:00:00.000Z',
+    });
+  });
+
+  it('goes on under the one an earlier driver began publishing with', async () => {
+    const h = await loaded();
+    // As that driver recorded them: the event's payload, and the rounds it counted.
+    h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, { approvedBy: { kind: 'deployment' } });
+    h.steps.journal.set('go-ahead rounds', { ok: true, value: [1] });
+    await save(h, {
+      goAhead: {
+        approvedBy: { kind: 'key', keyId: 'later' },
+        at: '2026-11-20T01:00:00.000Z',
+        target: { viaRelease: true },
+        deliveredAt: null,
+      },
+    });
+    expect(await pass(h)).toMatchObject({ status: 'complete', value: { status: 'published' } });
+    expect(await stages(h.ctx, h.params.runId)).toEqual({ published: 3 });
+    expect((await runOf(h)).goAhead).toMatchObject({
+      approvedBy: { kind: 'deployment' },
+      target: {},
+    });
+  });
+
+  it('publishes though its record keeps losing its race', async () => {
+    const h = await loaded();
+    h.steps.sendEvent(MIGRATION_PUBLISH_EVENT, { approvedBy: { kind: 'deployment' } });
+    const { TransactionConflictError } = await import('@contentworker/ports');
+    h.ctx.store.migrations.saveRun = async () => {
+      throw new TransactionConflictError();
+    };
+    expect(await pass(h)).toMatchObject({ status: 'complete', value: { status: 'published' } });
+  });
+
+  it('keeps a stop an earlier driver recorded', async () => {
+    const h = await loaded();
+    h.steps.journal.set('publish approval', { ok: false, error: 'timed out' });
+    h.steps.journal.set('record stop', { ok: true, value: true });
+    expect(await pass(h)).toMatchObject({ status: 'complete', value: { status: 'loaded' } });
+    expect(await stages(h.ctx, h.params.runId)).toEqual({ loaded: 3 });
   });
 });
 

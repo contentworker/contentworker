@@ -1,8 +1,4 @@
-import {
-  MIGRATION_MAX_PAGES,
-  type MigrationRun,
-  type MigrationSourceKind,
-} from '@contentworker/domain';
+import { MIGRATION_MAX_PAGES, type MigrationSourceKind } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { DialogError } from '@contentworker/ui/dialog';
 import {
@@ -26,7 +22,7 @@ import {
 } from '~/cms/components/discard-guard';
 import { FormSheet } from '~/cms/components/form-sheet';
 import { useClient } from '~/cms/lib/client-context';
-import { refusedSave } from '~/cms/lib/management';
+import { type MigrationRun, refusedSave } from '~/cms/lib/management';
 import { globsFrom, type SourceField, sourceIssues } from '~/cms/lib/migrations';
 
 const DEFAULT_MAX_PAGES = '500';
