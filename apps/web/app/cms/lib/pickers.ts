@@ -1,5 +1,6 @@
 import type { Asset } from '@contentworker/domain';
 import { useCallback, useMemo, useRef } from 'react';
+import { previewUrl } from '../components/AssetPreview';
 import type { Pickers, PickOption } from '../components/EntryForm';
 import { useClient } from './client-context';
 import type { PreviewEntry } from './management';
@@ -71,11 +72,15 @@ export function useEntryPickers(): {
         label: `${title ?? e.id} (${e.contentType})`,
       };
     };
-    const assetOption = (a: Asset): PickOption => ({
-      id: a.id,
-      label: String(a.title?.[conn.locale] ?? a.file.fileName),
-      mimeType: a.file.contentType,
-    });
+    const assetOption = (a: Asset): PickOption => {
+      const thumbnailUrl = previewUrl(a);
+      return {
+        id: a.id,
+        label: String(a.title?.[conn.locale] ?? a.file.fileName),
+        mimeType: a.file.contentType,
+        ...(thumbnailUrl ? { thumbnailUrl } : {}),
+      };
+    };
     return {
       entries: (allEntriesQuery.data ?? []).map(entryOption),
       assets: (assetsQuery.data ?? []).map(assetOption),

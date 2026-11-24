@@ -67,7 +67,11 @@ export function Approvals() {
   // first decision opens on the first screen.
   const stepsSettledEmpty = !tasks.isPending && taskItems.length === 0;
   const steps = (
-    <Section title="Workflow steps" flush>
+    <Section
+      title="Workflow steps"
+      description="Pending: the workflow is paused here until someone approves or rejects the step. A wait for an event moves on only when the event arrives."
+      flush
+    >
       {tasks.isPending ? (
         <RowsSkeleton label="Loading workflow steps" />
       ) : taskItems.length ? (
@@ -89,7 +93,21 @@ export function Approvals() {
     </Section>
   );
   const proposals = (
-    <Section title="Agent proposals" flush>
+    <Section
+      title="Agent proposals"
+      description={
+        <>
+          Needs review: an agent proposed changes to the entry, and nothing is applied until someone
+          approves them. Moderation holds aren’t listed here: a held entry was unpublished, and its
+          run is in{' '}
+          <Link to="/settings/ai" className="text-link underline underline-offset-2">
+            Settings → AI
+          </Link>
+          .
+        </>
+      }
+      flush
+    >
       {reviews.isPending ? (
         <RowsSkeleton label="Loading agent proposals" diff />
       ) : reviewItems.length ? (

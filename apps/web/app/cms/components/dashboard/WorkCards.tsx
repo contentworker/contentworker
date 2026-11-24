@@ -1,11 +1,10 @@
-import type { Release, ScheduledAction } from '@contentworker/domain';
+import type { AgentReview, Release, ScheduledAction, WorkflowTask } from '@contentworker/domain';
 import { Card, CardContent, CardHeader, CardTitle } from '@contentworker/ui/card';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import { StatusBadge } from '~/cms/components/status';
-import { humanize } from '../../lib/format';
-import type { AgentRun } from '../../lib/management';
+import { StatusBadge, ToneBadge } from '~/cms/components/status';
+import { humanize, toMs } from '../../lib/format';
 import { type EntryRef, entryPath, shortDateTime } from './entry-titles';
 
 /** How many rows a work card shows before pointing elsewhere for the rest. */
@@ -136,51 +135,99 @@ export function UnpublishedWorkCard(props: {
   );
 }
 
-/** Pending scheduled actions (soonest first) and releases still open. */
+/**
+ * How long a pending action may sit past its time before it reads as overdue. The engine's sweep
+ * runs every minute, so an action at this minute is still on its way, not missed.
+ */
+export const OVERDUE_GRACE_MS = 2 * 60_000;
+
+/**
+ * Pending actions split by whether their time has passed: `overdue` (past it, so the sweep
+ * hasn't run them) and `upcoming` (still ahead), each soonest first.
+ */
+export function splitSchedule(actions: readonly ScheduledAction[], now: number) {
+  const overdue: ScheduledAction[] = [];
+  const upcoming: ScheduledAction[] = [];
+  for (const a of [...actions].sort((x, y) => x.scheduledFor.localeCompare(y.scheduledFor))) {
+    (Date.parse(a.scheduledFor) < now - OVERDUE_GRACE_MS ? overdue : upcoming).push(a);
+  }
+  return { overdue, upcoming };
+}
+
+/** Pending scheduled actions (past their time first, then soonest) and releases still open. */
 export function UpcomingCard(props: {
   scheduled: Loadable<readonly ScheduledAction[]>;
   releases: Loadable<readonly Release[]>;
   /** Resolves a scheduled entry to a linkable title, when known. */
   entryById: (id: string) => EntryRef | undefined;
+  /** The time the split is made at (ms). */
+  now: number;
 }) {
+  const { scheduled } = props;
+  const split = scheduled.data ? splitSchedule(scheduled.data, props.now) : undefined;
   const releaseTitle = (id: string) =>
     props.releases.data?.find((r) => r.id === id)?.title ?? 'Release no longer open';
+  const row = (a: ScheduledAction, overdue: boolean) => {
+    const entry = a.entityType === 'Entry' ? props.entryById(a.entityId) : undefined;
+    const verb = a.action === 'publish' ? 'Publish' : 'Unpublish';
+    const when = (
+      <time dateTime={a.scheduledFor} className="text-muted-foreground text-xs tabular-nums">
+        {shortDateTime(a.scheduledFor)}
+      </time>
+    );
+    return (
+      <Row
+        key={a.id}
+        to={entry ? entryPath(entry) : a.entityType === 'Release' ? '/releases' : undefined}
+        title={
+          a.entityType === 'Release'
+            ? releaseTitle(a.entityId)
+            : (entry?.title ?? 'Entry no longer available')
+        }
+        meta={
+          <>
+            {verb} {a.entityType === 'Release' ? 'release' : (entry?.typeName ?? 'entry')}
+            {/* The time sits in the meta line here, so the trailing slot can carry the state. */}
+            {overdue ? <> · was due {when}</> : null}
+          </>
+        }
+        trailing={overdue ? <ToneBadge tone="bad" label="Overdue" /> : when}
+      />
+    );
+  };
   return (
     <WorkCard
       title="Coming up"
       description="Scheduled publishes and releases that haven’t shipped."
     >
-      <div className="space-y-2">
+      {split && split.overdue.length > 0 ? (
+        <div className="space-y-2">
+          <h3 className="font-medium text-muted-foreground text-xs">Overdue</h3>
+          <p className="text-muted-foreground text-xs">
+            Past their time and not run yet. Publish them by hand, or ask your administrator to
+            check the scheduler.
+          </p>
+          <Rows
+            slice={{ ...scheduled, data: split.overdue }}
+            limit={5}
+            empty=""
+            error="Couldn’t load scheduled actions."
+            render={(a) => row(a, true)}
+          />
+        </div>
+      ) : null}
+      <div
+        className={
+          split && split.overdue.length > 0 ? 'space-y-2 border-border border-t pt-3' : 'space-y-2'
+        }
+      >
         <h3 className="font-medium text-muted-foreground text-xs">Scheduled</h3>
         <Rows
-          slice={props.scheduled}
+          slice={{ ...scheduled, data: split?.upcoming }}
           limit={5}
           empty="Nothing scheduled."
           error="Couldn’t load scheduled actions."
-          render={(a) => {
-            const entry = a.entityType === 'Entry' ? props.entryById(a.entityId) : undefined;
-            const verb = a.action === 'publish' ? 'Publish' : 'Unpublish';
-            return (
-              <Row
-                key={a.id}
-                to={entry ? entryPath(entry) : a.entityType === 'Release' ? '/releases' : undefined}
-                title={
-                  a.entityType === 'Release'
-                    ? releaseTitle(a.entityId)
-                    : (entry?.title ?? 'Entry no longer available')
-                }
-                meta={`${verb} ${a.entityType === 'Release' ? 'release' : (entry?.typeName ?? 'entry')}`}
-                trailing={
-                  <time
-                    dateTime={a.scheduledFor}
-                    className="text-muted-foreground text-xs tabular-nums"
-                  >
-                    {shortDateTime(a.scheduledFor)}
-                  </time>
-                }
-              />
-            );
-          }}
+          render={(a) => row(a, false)}
         />
       </div>
       <div className="space-y-2 border-border border-t pt-3">
@@ -204,50 +251,96 @@ export function UpcomingCard(props: {
   );
 }
 
-/** Agent runs that stopped for a human: proposals to review, content moderation held. */
-export function AgentReviewCard(props: {
-  runs: Loadable<readonly AgentRun[]>;
+/**
+ * What waits on a person, from the same lists Approvals shows: workflow steps paused for a
+ * decision, and agent proposals. The count is the shell's own (`approvals/count`), so the card,
+ * the inbox and the nav badge give one number.
+ */
+export function DecisionsCard(props: {
+  tasks: Loadable<readonly WorkflowTask[]>;
+  reviews: Loadable<readonly AgentReview[]>;
+  /** The server's uncapped count; undefined until it answers, or for a role without the scope. */
+  total: number | undefined;
   entryById: (id: string) => EntryRef | undefined;
+  now: number;
 }) {
-  const n = props.runs.data?.length;
+  const { tasks, reviews } = props;
+  const listed = tasks.data && reviews.data ? tasks.data.length + reviews.data.length : undefined;
+  const total = props.total ?? listed;
   return (
     <WorkCard
-      title="Agent proposals awaiting review"
-      count={n}
-      description="Agent output is never applied silently. These runs stopped for a decision."
+      title="Waiting on a decision"
+      count={total}
+      description="Workflow steps and agent proposals that need someone to approve or reject them, oldest first."
       footer={
-        n ? (
+        total ? (
           <Link to="/approvals" className="text-link text-sm underline-offset-2 hover:underline">
             Review in Approvals
           </Link>
         ) : null
       }
     >
-      <Rows
-        slice={props.runs}
-        empty="No agent proposals waiting."
-        error="Couldn’t load agent runs."
-        render={(r) => {
-          const entry = r.entryId ? props.entryById(r.entryId) : undefined;
-          const meta = [humanize(r.workflow), r.decisions[0], shortDateTime(r.createdAt)]
-            .filter(Boolean)
-            .join(' · ');
-          return (
-            <Row
-              key={r.id}
-              to={entry ? entryPath(entry) : undefined}
-              // A space-level run (no entry) is named by its decision instead. An entry the lookup
-              // couldn't find was deleted or is hidden: say so rather than show its id.
-              title={
-                entry?.title ??
-                (r.entryId ? 'Entry no longer available' : (r.decisions[0] ?? humanize(r.workflow)))
-              }
-              meta={entry ? `${entry.typeName} · ${meta}` : meta}
-              trailing={<StatusBadge status={r.status} />}
-            />
-          );
-        }}
-      />
+      <div className="space-y-2">
+        <h3 className="font-medium text-muted-foreground text-xs">Workflow steps</h3>
+        <Rows
+          slice={{
+            ...tasks,
+            data:
+              tasks.data &&
+              [...tasks.data].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt)),
+          }}
+          limit={5}
+          empty="No workflow step is waiting."
+          error="Couldn’t load workflow steps."
+          render={(t) => {
+            const entry = props.entryById(t.entryId);
+            const deadline = toMs(t.deadline);
+            return (
+              <Row
+                key={t.id}
+                to={entryPath(entry ?? { contentType: t.contentTypeApiId, id: t.entryId })}
+                title={t.title}
+                meta={`${entry?.title ?? 'Entry no longer available'} · requested ${shortDateTime(t.requestedAt)}`}
+                trailing={
+                  deadline !== null && deadline < props.now ? (
+                    <ToneBadge tone="bad" label="Overdue" />
+                  ) : (
+                    <StatusBadge status="pending" />
+                  )
+                }
+              />
+            );
+          }}
+        />
+      </div>
+      <div className="space-y-2 border-border border-t pt-3">
+        <h3 className="font-medium text-muted-foreground text-xs">Agent proposals</h3>
+        <Rows
+          slice={{
+            ...reviews,
+            data:
+              reviews.data &&
+              [...reviews.data].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+          }}
+          limit={5}
+          empty="No agent proposal is waiting."
+          error="Couldn’t load agent proposals."
+          render={(r) => {
+            const entry = props.entryById(r.entryId);
+            const meta = `${humanize(r.workflow)} agent · ${shortDateTime(r.createdAt)}`;
+            return (
+              <Row
+                key={r.id}
+                to={entry ? entryPath(entry) : undefined}
+                // An entry the lookup couldn't find was deleted or is hidden: say so, never its id.
+                title={entry?.title ?? 'Entry no longer available'}
+                meta={entry ? `${entry.typeName} · ${meta}` : meta}
+                trailing={<StatusBadge status="needs_review" />}
+              />
+            );
+          }}
+        />
+      </div>
     </WorkCard>
   );
 }

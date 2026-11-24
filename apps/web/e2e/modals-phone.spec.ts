@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import {
   api,
+  assetAction,
   createDraft,
   EDITOR_READY,
   MGMT,
@@ -202,7 +203,7 @@ test('a destructive alert stays centred on a phone', async ({ page, request }) =
   await openCms(page, '/assets');
   await page.getByRole('combobox', { name: 'Folder' }).selectOption({ label: name });
   await page.getByRole('combobox', { name: 'Status' }).selectOption('archived');
-  await page.getByRole('button', { name: `Delete “${name}”` }).click();
+  await assetAction(page, page, name, 'Delete…');
   const alert = page.getByRole('alertdialog');
   await expect(alert).toBeVisible();
   await settle(page);

@@ -738,7 +738,11 @@ describe('rights in the library', () => {
       }),
     );
     renderLibrary();
-    fireEvent.click(await screen.findByRole('button', { name: 'Publish “gone.jpg”' }));
+    fireEvent.pointerDown(
+      await screen.findByRole('button', { name: 'More actions for “gone.jpg”' }),
+      { button: 0, ctrlKey: false },
+    );
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish' }));
     expect(
       await screen.findByText(
         'Asset "a1" can\'t be delivered: its rights expired at 2026-01-01T00:00:00.000Z',

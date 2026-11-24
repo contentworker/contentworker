@@ -43,43 +43,53 @@ const offList = [
 ];
 const DELETED = '0190a000-0000-7000-8000-0000000000ff';
 
-const reviewRun = (id: string, entryId: string, status = 'needs_review'): AgentRun => ({
+const review = (id: string, entryId: string, createdAt = iso(-2 * DAY)) => ({
   id,
   workflow: 'enrich',
   entryId,
-  status,
+  proposed: {},
+  notes: [],
+  status: 'pending',
+  awaiting: false,
+  createdAt,
+});
+
+const reviews = [
+  review('review-1', '0190a000-0000-7000-8000-000000000002', iso(-1 * DAY)),
+  review('review-2', offList[0]!.id),
+  review('review-3', offList[1]!.id),
+  review('review-4', DELETED),
+];
+
+const tasks = [
+  {
+    id: 'task-1',
+    kind: 'approval',
+    entryId: '0190a000-0000-7000-8000-000000000001',
+    contentTypeApiId: 'article',
+    title: 'Legal sign-off',
+    status: 'pending',
+    requestedAt: iso(-3 * DAY),
+    // Its deadline has passed: overdue, said in words.
+    deadline: iso(-DAY),
+  },
+];
+
+// The agent-run ledger is history: these old runs stopped for review once, and must not be
+// counted as waiting now.
+const runs: AgentRun[] = Array.from({ length: 23 }, (_, i) => ({
+  id: `run-${i}`,
+  workflow: 'moderate',
+  entryId: '',
+  status: i % 2 ? 'held' : 'needs_review',
   decisions: [],
   inputTokens: 10,
   outputTokens: 5,
-  createdAt: iso(-2 * DAY),
-});
+  createdAt: iso(-(i + 1) * DAY),
+}));
 
-const runs: AgentRun[] = [
-  {
-    id: 'run-1',
-    workflow: 'moderate',
-    entryId: '0190a000-0000-7000-8000-000000000002',
-    status: 'needs_review',
-    decisions: ['flagged tone'],
-    inputTokens: 1200,
-    outputTokens: 300,
-    createdAt: iso(-1 * DAY),
-  },
-  {
-    id: 'run-2',
-    workflow: 'enrich',
-    entryId: '',
-    status: 'completed',
-    decisions: [],
-    inputTokens: 9000,
-    outputTokens: 600,
-    // Outside the 14-day window: must not count toward any usage card.
-    createdAt: iso(-30 * DAY),
-  },
-  reviewRun('run-3', offList[0]!.id),
-  reviewRun('run-4', offList[1]!.id, 'held'),
-  reviewRun('run-5', DELETED),
-];
+/** The server's uncapped count: what the shell's badge shows. */
+const COUNT = { workflowTasks: 1, agentReviews: 4, total: 5 };
 
 type ListArgs = [string | undefined, { filters?: { field: string; value?: unknown }[] }?];
 
@@ -91,7 +101,30 @@ const client = {
     const ids = byId.value as string[];
     return [...unpublished, ...offList].filter((e) => ids.includes(e.id));
   }),
+  listWorkflowTasks: vi.fn(async () => tasks),
+  listAgentReviews: vi.fn(async () => reviews),
+  countPendingApprovals: vi.fn(async () => COUNT),
   listScheduledActions: vi.fn(async () => [
+    {
+      // Past its time and still pending: the scheduler never picked it up.
+      id: 'sa-0',
+      action: 'publish',
+      entityType: 'Entry',
+      entityId: '0190a000-0000-7000-8000-000000000002',
+      scheduledFor: iso(-21 * DAY),
+      status: 'pending',
+      createdAt: iso(-23 * DAY),
+    },
+    {
+      // Due this minute: still on its way, not overdue.
+      id: 'sa-3',
+      action: 'unpublish',
+      entityType: 'Entry',
+      entityId: offList[0]!.id,
+      scheduledFor: iso(-30_000),
+      status: 'pending',
+      createdAt: iso(-DAY),
+    },
     {
       id: 'sa-2',
       action: 'publish',
@@ -127,12 +160,13 @@ vi.mock('~/cms/lib/client-context', () => ({
 }));
 
 vi.mock('~/cms/lib/queries', () => ({
-  useScopedQuery: <T,>(_segments: readonly unknown[], queryFn: () => Promise<T>) => {
+  useScopedQuery: <T,>(segments: readonly unknown[], queryFn: () => Promise<T>) => {
     const [data, setData] = useState<T>();
-    // biome-ignore lint/correctness/useExhaustiveDependencies: load once per mount
+    // Loads again when its key changes: the by-id lookup's ids arrive with the lists it names.
+    const key = JSON.stringify(segments);
     useEffect(() => {
       queryFn().then(setData);
-    }, []);
+    }, [key]);
     return { data, isLoading: data === undefined, isError: false };
   },
   useContentTypesQuery: () => ({ data: [article] }),
@@ -143,7 +177,7 @@ vi.mock('~/cms/lib/queries', () => ({
 const { Dashboard } = await import('~/cms/components/Dashboard');
 const { ToastProvider } = await import('~/cms/lib/toast');
 const { fetchEntriesById } = await import('~/cms/components/dashboard/entry-titles');
-const { statusTone } = await import('~/cms/lib/format');
+const { splitSchedule, OVERDUE_GRACE_MS } = await import('~/cms/components/dashboard/WorkCards');
 
 afterEach(cleanup);
 
@@ -191,39 +225,80 @@ describe('Dashboard', () => {
     });
   });
 
-  it('lists scheduled actions soonest first and only open releases', async () => {
+  it('splits past-due schedules into Overdue and keeps Coming up for the rest', async () => {
     renderDashboard();
     const upcoming = card('Coming up');
-    await within(upcoming).findByText('Older draft');
-    const titles = within(upcoming)
-      .getAllByRole('listitem')
-      .map((li) => li.querySelector('a, span')?.textContent);
-    // Scheduled (soonest first), then open releases.
-    expect(titles).toEqual(['Older draft', 'Spring campaign', 'Spring campaign']);
+    // Named only once the by-id lookup answers.
+    await within(upcoming).findByText('Spring menu');
+    const group = (name: string) =>
+      within(upcoming).getByRole('heading', { name }).parentElement as HTMLElement;
+    const titles = (el: HTMLElement) =>
+      within(el)
+        .getAllByRole('listitem')
+        .map((li) => li.querySelector('a, span')?.textContent);
+    // The missed one is still shown, not hidden, and says so in words.
+    const overdue = group('Overdue');
+    expect(titles(overdue)).toEqual(['Edited launch post']);
+    expect(within(within(overdue).getByRole('listitem')).getByText('Overdue')).toBeTruthy();
+    expect(within(overdue).getByText(/was due/)).toBeTruthy();
+    // Soonest first; one due this minute is inside the sweep's grace, not overdue.
+    expect(titles(group('Scheduled'))).toEqual(['Spring menu', 'Older draft', 'Spring campaign']);
+    expect(titles(group('Open releases'))).toEqual(['Spring campaign']);
     expect(within(upcoming).queryByText('Shipped bundle')).toBeNull();
   });
 
-  it('names and links every agent run awaiting review by its entry, never by an id', async () => {
+  it('splits a schedule at the grace boundary', () => {
+    const now = Date.parse('2026-11-23T12:00:00Z');
+    const at = (ms: number) =>
+      ({ id: String(ms), scheduledFor: new Date(now + ms).toISOString() }) as never;
+    const { overdue, upcoming } = splitSchedule(
+      [at(DAY), at(-OVERDUE_GRACE_MS - 1), at(-OVERDUE_GRACE_MS), at(-21 * DAY)],
+      now,
+    );
+    expect(overdue.map((a: { id: string }) => a.id)).toEqual([
+      String(-21 * DAY),
+      String(-OVERDUE_GRACE_MS - 1),
+    ]);
+    expect(upcoming.map((a: { id: string }) => a.id)).toEqual([
+      String(-OVERDUE_GRACE_MS),
+      String(DAY),
+    ]);
+    expect(splitSchedule([], now)).toEqual({ overdue: [], upcoming: [] });
+  });
+
+  it('counts what waits on a decision as Approvals and the nav badge do, not the run ledger', async () => {
     renderDashboard();
-    const review = card('Agent proposals awaiting review');
+    const waiting = card('Waiting on a decision');
+    await within(waiting).findByRole('link', { name: 'Spring menu' });
+    // The server's count, the one the badge shows; never the 23 old runs.
+    expect(within(waiting).getByText('5')).toBeTruthy();
+    expect(within(waiting).queryByText('23')).toBeNull();
+    expect(within(waiting).queryByText('Held')).toBeNull();
+    expect(client.countPendingApprovals).toHaveBeenCalled();
+    // Steps first, overdue in words; then proposals, oldest first.
+    expect(within(waiting).getByRole('link', { name: 'Legal sign-off' }).getAttribute('href')).toBe(
+      '/content/article/0190a000-0000-7000-8000-000000000001',
+    );
+    expect(within(waiting).getByText('Overdue')).toBeTruthy();
+    expect(within(waiting).getAllByText('Needs review').length).toBe(4);
+    expect(within(waiting).getByRole('link', { name: 'Review in Approvals' })).toBeTruthy();
+  });
+
+  it('names and links every agent proposal by its entry, never by an id', async () => {
+    renderDashboard();
+    const waiting = card('Waiting on a decision');
     // Resolved by one batched lookup, including entries the capped list doesn't hold.
-    const spring = await within(review).findByRole('link', { name: 'Spring menu' });
+    const spring = await within(waiting).findByRole('link', { name: 'Spring menu' });
     expect(spring.getAttribute('href')).toBe(`/content/article/${offList[0]!.id}`);
-    expect(within(review).getByRole('link', { name: 'Edited launch post' })).toBeTruthy();
+    expect(within(waiting).getByRole('link', { name: 'Edited launch post' })).toBeTruthy();
     // Untitled: named as such (its type beside it) and still linked.
-    expect(within(review).getByRole('link', { name: 'Untitled entry' }).getAttribute('href')).toBe(
+    expect(within(waiting).getByRole('link', { name: 'Untitled entry' }).getAttribute('href')).toBe(
       `/content/article/${offList[1]!.id}`,
     );
     // Gone: said in words, not shown as an id.
-    expect(within(review).getByText('Entry no longer available')).toBeTruthy();
-    expect(within(review).queryByText(/0190a000/)).toBeNull();
-    expect(within(review).getByText(/^Article · Moderate · flagged tone · /)).toBeTruthy();
-    // The review states read in sentence case, in the model's-work token.
-    expect(within(review).getAllByText('Needs review').length).toBe(3);
-    expect(within(review).getByText('Held')).toBeTruthy();
-    expect(statusTone('needs_review')).toBe('ai');
-    expect(statusTone('held')).toBe('ai');
-    expect(within(review).getByRole('link', { name: 'Review in Approvals' })).toBeTruthy();
+    expect(within(waiting).getByText('Entry no longer available')).toBeTruthy();
+    expect(within(waiting).queryByText(/0190a000/)).toBeNull();
+    expect(within(waiting).getAllByText(/^Article · Enrich agent · /).length).toBe(3);
     const lookups = client.listEntries.mock.calls.filter(([, q]) =>
       q?.filters?.some((f) => f.field === 'sys.id'),
     );
@@ -244,15 +319,12 @@ describe('Dashboard', () => {
     expect(listEntries).not.toHaveBeenCalled();
   });
 
-  it('keeps AI usage in one labelled 14-day window and drops the credentials card', async () => {
+  it('leaves AI token usage to Settings and drops the credentials card', async () => {
     renderDashboard();
     await screen.findAllByText('Edited launch post');
-    expect(screen.getByRole('heading', { name: 'AI usage' })).toBeTruthy();
-    // Only the in-window run (1.5K) counts — the 30-day-old 9.6K run must not.
-    expect(screen.getByText('Tokens by workflow')).toBeTruthy();
-    expect(screen.getAllByText('1.5K').length).toBeGreaterThan(0);
-    expect(screen.queryByText('9.6K')).toBeNull();
-    expect(screen.getAllByText('Last 14 days').length).toBe(3);
+    expect(screen.queryByRole('heading', { name: 'AI usage' })).toBeNull();
+    expect(screen.queryByText('Total tokens')).toBeNull();
+    expect(screen.queryByText('Tokens by workflow')).toBeNull();
     expect(screen.queryByText(/Account Access/i)).toBeNull();
     expect(screen.queryByLabelText(/Access token/i)).toBeNull();
   });

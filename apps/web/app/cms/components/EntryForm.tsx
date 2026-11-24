@@ -107,6 +107,8 @@ export interface PickOption {
   readonly contentType?: string;
   /** An asset's file type, so a field limited to some types offers only those. */
   readonly mimeType?: string;
+  /** An image asset's thumbnail (same-origin, signed), drawn beside its name in a picker. */
+  readonly thumbnailUrl?: string;
 }
 
 export interface Pickers {

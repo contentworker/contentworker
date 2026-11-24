@@ -3,6 +3,7 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { Check, ChevronsUpDown, X } from 'lucide-react';
 import { Popover } from 'radix-ui';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { AssetThumb } from './AssetPreview';
 import type { PickOption } from './EntryForm';
 
 /**
@@ -154,6 +155,13 @@ export function EntityPicker(props: {
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Anchor asChild>
         <div className="relative">
+          {/* An asset's thumbnail beside its name while the field shows the pick; typing hides it,
+              as the text is then the query. */}
+          {thumbOf(selected) && !open ? (
+            <span className="pointer-events-none absolute inset-y-0 left-1 flex items-center">
+              <AssetThumb {...thumbOf(selected)} />
+            </span>
+          ) : null}
           <input
             ref={inputRef}
             id={props.id}
@@ -167,6 +175,7 @@ export function EntityPicker(props: {
             aria-describedby={props.errorId}
             className={cn(
               'h-8 w-full min-w-0 rounded-2xl border border-transparent bg-input/50 py-1 pr-14 pl-2.5 text-sm transition-[color,box-shadow] duration-200 outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring',
+              thumbOf(selected) && !open && 'pl-9',
               props.invalid && 'border-destructive focus-visible:ring-destructive/30',
             )}
             placeholder={props.placeholder ?? 'Search…'}
@@ -234,6 +243,7 @@ export function EntityPicker(props: {
                   idx === active ? 'bg-accent text-accent-foreground' : 'text-popover-foreground',
                 )}
               >
+                {o.mimeType ? <AssetThumb {...thumbOf(o)} /> : null}
                 <OptionText option={o} />{' '}
                 {props.added?.has(o.id) ? (
                   <span className="ml-auto shrink-0 pl-2 text-muted-foreground text-xs">Added</span>
@@ -247,6 +257,15 @@ export function EntityPicker(props: {
       </Popover.Portal>
     </Popover.Root>
   );
+}
+
+/** An asset option's thumbnail props; none for an entry (it has no file type). */
+function thumbOf(option: PickOption | undefined) {
+  if (!option?.mimeType) return undefined;
+  return {
+    contentType: option.mimeType,
+    ...(option.thumbnailUrl ? { src: option.thumbnailUrl } : {}),
+  };
 }
 
 /**
