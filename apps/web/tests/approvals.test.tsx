@@ -133,6 +133,7 @@ function setup(
     beside?: React.ReactNode;
     noTasks?: boolean;
     noHolds?: boolean;
+    stale?: boolean;
   } = {},
 ) {
   let approved = false;
@@ -151,7 +152,9 @@ function setup(
     if (url.startsWith(`${BASE}/agent-reviews?`))
       return json({ items: approved ? [orphan] : [review, orphan] });
     if (url.startsWith(`${BASE}/moderation-holds?`))
-      return json({ items: opts.noHolds || decidedHold ? [] : [hold] });
+      return json({
+        items: opts.noHolds || decidedHold ? [] : [opts.stale ? { ...hold, stale: true } : hold],
+      });
     if (url.startsWith(`${BASE}/moderation-holds/`)) {
       decidedHold = true;
       return json({ hold: { ...hold, status: 'kept' }, published: false });
@@ -406,6 +409,25 @@ describe('Held by moderation', () => {
       expect(calls).toContainEqual({
         method: 'POST',
         url: `${BASE}/moderation-holds/hold-1/keep`,
+        body: {},
+      }),
+    );
+    await screen.findByText('No entry is held by moderation.');
+  });
+});
+
+describe('A stale moderation hold', () => {
+  it('says a newer version is live and offers only Close, which closes through Republish', async () => {
+    const calls = setup({ stale: true });
+    const row = await screen.findByRole('listitem', { name: 'Held: Harbour opening' });
+    expect(within(row).getByText('A newer version is live')).toBeTruthy();
+    expect(within(row).queryByRole('button', { name: 'Republish' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: 'Keep unpublished' })).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: 'Close' }));
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        method: 'POST',
+        url: `${BASE}/moderation-holds/hold-1/republish`,
         body: {},
       }),
     );

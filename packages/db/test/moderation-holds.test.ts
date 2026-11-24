@@ -11,6 +11,7 @@ import {
   publishEntry,
   republishHeldEntry,
   SYSTEM_CALLER,
+  updateEntry,
 } from '@contentworker/application';
 import { ConflictError, type ModerationHold, type Principal } from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
@@ -237,6 +238,29 @@ describe('moderation holds on D1', () => {
     ).rejects.toBeInstanceOf(TransactionConflictError);
     expect((await getEntry(ctx, scope, entryId)).entry.publishedVersion).toBe(1);
     expect(await outbox(entryId, 'entry.unpublished')).toBe(0);
+  });
+
+  it('marks an open hold stale in the list once a newer version is live, and closes it', async () => {
+    const { ctx, scope, post, outbox } = await harness();
+    const entryId = await post();
+    await holdEntryForModeration(ctx, scope, entryId, { flags: ['spam'] });
+    expect(await store.moderationHolds.list(scope, { entryId })).toEqual([
+      expect.not.objectContaining({ stale: true }),
+    ]);
+    await updateEntry(ctx, scope, entryId, { title: { 'en-US': 'Rewritten' } });
+    await publishEntry(ctx, scope, entryId);
+    const [stale] = await store.moderationHolds.list(scope, { entryId });
+    expect(stale).toMatchObject({ status: 'open', entryVersion: 1, stale: true });
+    // A get is the row as stored; only the list joins the entry.
+    expect(await store.moderationHolds.get(scope, stale?.id ?? '')).not.toHaveProperty('stale');
+    const result = await republishHeldEntry(ctx, scope, stale?.id ?? '', person('usr_editor'));
+    expect(result).toMatchObject({ published: false, hold: { status: 'cleared' } });
+    expect(await outbox(entryId, 'entry.published')).toBe(2);
+    expect((await store.moderationHolds.list(scope, { entryId }))[0]).toMatchObject({
+      status: 'cleared',
+      decidedBy: 'usr_editor',
+    });
+    expect((await store.moderationHolds.list(scope, { entryId }))[0]).not.toHaveProperty('stale');
   });
 
   it('counts open holds per type past the lists’ caps, one scope only', async () => {

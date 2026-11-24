@@ -511,6 +511,15 @@ function HoldRow({
       await invalidate(['moderation-holds'], ['entry'], ['entries'], APPROVALS_COUNT_KEY);
     });
 
+  // A stale hold closes through Republish's own path, which publishes nothing once a newer version
+  // is live.
+  const close = () =>
+    run(async () => {
+      await client.republishModerationHold(hold.id);
+      toast.success(`Closed the hold on ${quoted}`);
+      await invalidate(['moderation-holds'], ['entry'], ['entries'], APPROVALS_COUNT_KEY);
+    });
+
   return (
     <li
       className="grid gap-3 px-5 py-4"
@@ -538,35 +547,47 @@ function HoldRow({
         <span className="text-muted-foreground">Flagged for </span>
         {moderationFlagsLabel(hold.flags)}
       </p>
-      <div className="flex flex-wrap gap-2">
-        {/* Republishing overrides the agent, so it asks first; keeping it offline doesn't. */}
-        <ConfirmButton
-          message={`Republish ${quoted}?`}
-          note="It goes back to delivery as moderation held it, over the agent’s flag. Your name is kept with the decision."
-          details={
-            <Textarea
-              aria-label={`Why republish ${quoted}`}
-              placeholder="Why (optional, kept with the decision)"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-          }
-          confirmLabel="Republish"
-          tone="default"
-          busy={busy}
-          onConfirm={() => void decide(true)}
-          onCancel={() => setNote('')}
-        >
-          {(ask) => (
-            <Button size="sm" disabled={busy || resolving} onClick={ask}>
-              <Send aria-hidden="true" /> Republish
+      {hold.stale ? (
+        <>
+          {/* A newer version went live since: nothing to put back or keep down, only to close. */}
+          <p className="text-muted-foreground text-sm">A newer version is live</p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => void close()}>
+              <Check aria-hidden="true" /> Close
             </Button>
-          )}
-        </ConfirmButton>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => void decide(false)}>
-          <EyeOff aria-hidden="true" /> Keep unpublished
-        </Button>
-      </div>
+          </div>
+        </>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {/* Republishing overrides the agent, so it asks first; keeping it offline doesn't. */}
+          <ConfirmButton
+            message={`Republish ${quoted}?`}
+            note="It goes back to delivery as moderation held it, over the agent’s flag. Your name is kept with the decision."
+            details={
+              <Textarea
+                aria-label={`Why republish ${quoted}`}
+                placeholder="Why (optional, kept with the decision)"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+            }
+            confirmLabel="Republish"
+            tone="default"
+            busy={busy}
+            onConfirm={() => void decide(true)}
+            onCancel={() => setNote('')}
+          >
+            {(ask) => (
+              <Button size="sm" disabled={busy || resolving} onClick={ask}>
+                <Send aria-hidden="true" /> Republish
+              </Button>
+            )}
+          </ConfirmButton>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void decide(false)}>
+            <EyeOff aria-hidden="true" /> Keep unpublished
+          </Button>
+        </div>
+      )}
     </li>
   );
 }

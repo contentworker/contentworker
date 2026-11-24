@@ -233,6 +233,28 @@ describe('moderation hold routes', () => {
     expect(kept.status, JSON.stringify(kept.body)).toBe(200);
   });
 
+  it('lists a stale hold, which a person closes and Keep refuses', async () => {
+    const { ctx, call, as, held, holdOf, bearer } = await makeApp();
+    const entryId = held.heldpost ?? '';
+    await call('PUT', `/entries/${entryId}`, { fields: { title: { 'en-US': 'Rewritten' } } });
+    expect((await call('POST', `/entries/${entryId}/published`)).status).toBe(200);
+    const listed = (await call('GET', `/moderation-holds?entryId=${entryId}`)).body.items as Json[];
+    expect(listed[0]).toMatchObject({ status: 'open', entryVersion: 1, stale: true });
+    const id = listed[0]?.id as string;
+    const keep = await call('POST', `/moderation-holds/${id}/keep`, {});
+    expect(keep.status).toBe(409);
+    expect(JSON.stringify(keep.body)).toMatch(/newer version \(2\) is live/);
+    expect(
+      (await call('POST', `/moderation-holds/${id}/republish`, {}, bearer('pat', 'pat-stale')))
+        .status,
+    ).toBe(403);
+    const closed = await as(editor, 'POST', `/moderation-holds/${id}/republish`);
+    expect(closed.status, JSON.stringify(closed.body)).toBe(200);
+    expect(closed.body).toMatchObject({ published: false, hold: { status: 'cleared' } });
+    expect((await getEntry(ctx, scope, entryId)).entry.publishedVersion).toBe(2);
+    expect(await holdOf(entryId)).toBe(id);
+  });
+
   it('keeps an entry unpublished, and 404s a hold that never was', async () => {
     const { ctx, call, held, holdOf } = await makeApp();
     const id = await holdOf(held.heldpage ?? '');

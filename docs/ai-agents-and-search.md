@@ -916,9 +916,13 @@ version, so a slow clean pass over an older version leaves it open.
   the admin may (`isSignedInPerson`): every token, whatever its scopes, gets 403 `person_required`
   (`PersonRequiredError`), enforced in the use-case. It is a `409` when the hold was decided, or
   when the entry's `currentVersion` is not `entryVersion` (publish the new version from the entry);
-  an entry already live at the held version only closes its hold. Publish gates apply, and a
-  refusal never names fields the decider's role can't read.
-- `keepHeldEntryUnpublished` closes it as `kept`, and is a `409` when the entry is live again.
+  an entry already live at the held version only closes its hold. A stale hold (a version newer
+  than `entryVersion` is live; the list marks it `stale: true`, from a join on the entry) is closed
+  as `cleared` with the person recorded and nothing published or unpublished (`closed by …:
+  version N is already live`); Approvals shows it as one Close. Publish gates apply, and a refusal
+  never names fields the decider's role can't read.
+- `keepHeldEntryUnpublished` closes it as `kept`, and is a `409` when the entry is live again
+  (naming the newer version when it is one): Keep never takes live content down.
 - A lost race at commit (`TransactionConflictError`: another decision) answers `409`; inside a
   unit the hold's compare-and-set is always queued, so the losing unit's publish or unpublish never
   commits. The publish and unpublish themselves are not compare-and-set against the entry's version

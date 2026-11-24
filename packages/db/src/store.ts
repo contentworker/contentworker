@@ -5546,13 +5546,25 @@ function makeModerationHoldRepo(x: Exec): ModerationHoldRepo {
       const conds: SQL[] = [scopeFilter(t, scope) as SQL];
       if (query.status) conds.push(eq(t.status, query.status));
       if (query.entryId) conds.push(eq(t.entryId, query.entryId));
+      // Joined to each hold's entry for its live version, so a stale open hold (a newer version
+      // went live) is marked in the same read.
+      const e = schema.entries;
       const rows = await db
-        .select()
+        .select({ hold: t, live: e.publishedVersion })
         .from(t)
+        .leftJoin(
+          e,
+          and(eq(e.spaceId, t.spaceId), eq(e.environmentId, t.environmentId), eq(e.id, t.entryId)),
+        )
         .where(and(...conds))
         .orderBy(desc(t.createdAt), desc(t.id))
         .limit(Math.min(Math.max(query.limit ?? 100, 1), 200));
-      return rows.map(toHold);
+      return rows.map(({ hold, live }) => {
+        const h = toHold(hold);
+        return h.status === 'open' && live !== null && live > h.entryVersion
+          ? { ...h, stale: true }
+          : h;
+      });
     },
     async countOpen(scope) {
       // Grouped on moderation_holds_by_status: uncapped, one read, no join (the hold keeps its type).

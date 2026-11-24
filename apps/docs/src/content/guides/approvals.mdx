@@ -112,6 +112,13 @@ someone decides.
 - **Keep unpublished** agrees with moderation and closes the hold; the entry stays a draft to fix
   and publish from the editor. It is refused when someone has published the entry again since.
 
+When a newer version of the entry has gone live since (published from the editor while
+moderation was off), the hold is **stale**: the list marks it `stale: true` and Approvals shows "A
+newer version is live" with a single **Close**. Closing is Republish's own path, still for a
+person signed in: it closes the hold as `cleared`, with who closed it, and publishes or
+unpublishes nothing. Keep unpublished is refused with a `409` there, since it never takes live
+content down: unpublish it from the entry if it should come down.
+
 Either decision is made once: a second one, by anyone, is a `409`. A hold also closes on its own
 (`cleared`) when a newer version of the entry is published and moderation passes it. The reason a
 decider gave is shown only to callers that may write content (`content:write`); a preview key

@@ -1690,7 +1690,10 @@ export interface ModerationHoldRepo {
    */
   create(scope: Scope, hold: ModerationHold): Promise<boolean>;
   get(scope: Scope, id: string): Promise<ModerationHold | null>;
-  /** Newest first; `status` and `entryId` narrow. At most `limit` (default 100, cap 200). */
+  /**
+   * Newest first; `status` and `entryId` narrow. At most `limit` (default 100, cap 200). An open
+   * hold whose entry is live at a newer version than `entryVersion` comes back `stale: true`.
+   */
   list(
     scope: Scope,
     query?: { status?: ModerationHold['status']; entryId?: string; limit?: number },

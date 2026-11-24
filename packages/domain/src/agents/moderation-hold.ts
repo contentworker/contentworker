@@ -26,4 +26,9 @@ export interface ModerationHold {
   readonly decidedBy?: string;
   /** Why, in the decider's words, when they gave a reason. */
   readonly note?: string;
+  /**
+   * Set on a listed open hold whose entry is live again at a newer version than the held one: what
+   * it was held for is no longer what is live, so a person only closes it (Republish's stale path).
+   */
+  readonly stale?: true;
 }

@@ -470,6 +470,63 @@ describe('republishHeldEntry', () => {
   });
 });
 
+describe('a stale hold (a newer version is live)', () => {
+  beforeEach(async () => {
+    await moderate(HELD);
+    // Moderation is off by now: someone edits and publishes version 2, and no pass clears it.
+    await updateEntry(ctx, scope, entryId, { title: { 'en-US': 'Rewritten' } });
+    await publishEntry(ctx, scope, entryId);
+  });
+
+  it('is listed as stale', async () => {
+    expect(await openHolds()).toMatchObject([{ entryVersion: 1, stale: true }]);
+  });
+
+  it('closes on Republish without publishing or unpublishing anything', async () => {
+    const [hold] = await openHolds();
+    const published = (await events('entry.published')).length;
+    const result = await republishHeldEntry(ctx, scope, hold?.id ?? '', by);
+    expect(result).toMatchObject({
+      published: false,
+      hold: { status: 'cleared', decidedBy: 'usr_editor' },
+    });
+    expect(await events('entry.published')).toHaveLength(published);
+    expect(await events('entry.unpublished')).toHaveLength(1);
+    expect((await getEntry(ctx, scope, entryId)).entry.publishedVersion).toBe(2);
+    expect(await openHolds()).toEqual([]);
+    const notes = (await listAgentRuns(ctx, scope)).flatMap((r) => r.decisions);
+    expect(notes).toContain('closed by usr_editor: version 2 is already live');
+  });
+
+  it('is still closed only by a signed-in person', async () => {
+    const [hold] = await openHolds();
+    await expect(
+      republishHeldEntry(ctx, scope, hold?.id ?? '', {
+        principal: TOKENS['a CMA key'] as Principal,
+      }),
+    ).rejects.toMatchObject({ details: { reason: 'person_required' } });
+    expect(await openHolds()).toHaveLength(1);
+  });
+
+  it('is never taken down by Keep, which says a newer version is live', async () => {
+    const [hold] = await openHolds();
+    await expect(keepHeldEntryUnpublished(ctx, scope, hold?.id ?? '', by)).rejects.toThrow(
+      /newer version \(2\) is live/,
+    );
+    expect((await getEntry(ctx, scope, entryId)).entry.publishedVersion).toBe(2);
+    expect(await openHolds()).toHaveLength(1);
+  });
+
+  it('answers a lost race at commit with a 409, closing nothing', async () => {
+    const [hold] = await openHolds();
+    vi.spyOn(store, 'withTransaction').mockRejectedValueOnce(new TransactionConflictError());
+    await expect(republishHeldEntry(ctx, scope, hold?.id ?? '', by)).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+    expect(await openHolds()).toHaveLength(1);
+  });
+});
+
 describe('keepHeldEntryUnpublished', () => {
   beforeEach(async () => {
     await moderate(HELD);

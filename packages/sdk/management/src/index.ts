@@ -219,6 +219,8 @@ export interface ModerationHold {
   readonly decidedAt?: string;
   readonly decidedBy?: string;
   readonly note?: string;
+  /** On a listed open hold: a newer version is live, so `republish` only closes it. */
+  readonly stale?: true;
 }
 
 /** What a decision on a hold answers. */

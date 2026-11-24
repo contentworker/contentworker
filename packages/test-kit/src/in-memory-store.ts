@@ -2567,7 +2567,13 @@ export class InMemoryContentStore implements ContentStore {
               ? 1
               : -1,
         )
-        .slice(0, Math.min(Math.max(query.limit ?? 100, 1), 200)),
+        .slice(0, Math.min(Math.max(query.limit ?? 100, 1), 200))
+        .map((h) => {
+          const live = this.entryData.get(`${scopeKey(scope)}::${h.entryId}`)?.publishedVersion;
+          return h.status === 'open' && live != null && live > h.entryVersion
+            ? { ...h, stale: true as const }
+            : h;
+        }),
     countOpen: async (scope) =>
       countByType(
         this.holdsIn(scope)

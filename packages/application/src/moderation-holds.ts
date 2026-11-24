@@ -238,6 +238,10 @@ async function deciding<T>(ctx: AppContext, scope: Scope, id: string, unit: () =
  * no surface can skip it, and it is why Republish has no MCP tool: every MCP caller is a token. It
  * is a deliberate exception to the rule that every capability exists on both surfaces.
  *
+ * A stale hold (a version newer than the held one is live) has nothing to put back: Republish
+ * then only closes it, as `cleared` with the person recorded, and publishes nothing; Approvals
+ * shows that as Close.
+ *
  * Refused with 409 when the entry's current version is not the held one (edited since): what
  * moderation judged is no longer what would go out, so the new version is published from the
  * entry, where moderation reads it. An entry already live at the held version just closes its
@@ -262,6 +266,17 @@ export async function republishHeldEntry(
         const found = await tx.entries.get(scope, hold.entryId);
         if (!found) throw new NotFoundError('Entry', hold.entryId);
         const { entry } = found;
+        // Stale: a newer version than the held one is live. Nothing is left to put back, so the
+        // decision only closes the hold, publishing and unpublishing nothing.
+        if (entry.publishedVersion !== null && entry.publishedVersion > hold.entryVersion) {
+          await tx.moderationHolds.decide(scope, id, {
+            status: 'cleared',
+            decidedAt,
+            decidedBy,
+            ...(input.note ? { note: input.note } : {}),
+          });
+          return { hold, entry, published: false, closed: entry.publishedVersion };
+        }
         const live = entry.publishedVersion === entry.currentVersion;
         if (entry.currentVersion !== hold.entryVersion) {
           throw new ConflictError(
@@ -281,7 +296,12 @@ export async function republishHeldEntry(
           : await publishEntryTx(ctx, tx, scope, hold.entryId, {
               expectedVersion: hold.entryVersion,
             });
-        return { hold, entry: published ?? entry, published: published !== null };
+        return {
+          hold,
+          entry: published ?? entry,
+          published: published !== null,
+          closed: undefined as number | undefined,
+        };
       }),
     ),
   );
@@ -290,7 +310,9 @@ export async function republishHeldEntry(
     entryId: result.hold.entryId,
     status: 'completed',
     decisions: [
-      `republished by ${deciderText(input.principal)} over moderation (flagged: ${flagsText(result.hold)})`,
+      result.closed !== undefined
+        ? `closed by ${deciderText(input.principal)}: version ${result.closed} is already live`
+        : `republished by ${deciderText(input.principal)} over moderation (flagged: ${flagsText(result.hold)})`,
       ...(input.note ? [`reason: ${input.note}`] : []),
     ],
     usage: { inputTokens: 0, outputTokens: 0 },
@@ -298,7 +320,7 @@ export async function republishHeldEntry(
   return {
     hold: {
       ...result.hold,
-      status: 'republished',
+      status: result.closed !== undefined ? 'cleared' : 'republished',
       decidedAt,
       decidedBy,
       ...(input.note ? { note: input.note } : {}),
@@ -326,10 +348,14 @@ export async function keepHeldEntryUnpublished(
     ctx.store.withTransaction(async (tx) => {
       const hold = assertOpen(await tx.moderationHolds.get(scope, id), id);
       const found = await tx.entries.get(scope, hold.entryId);
-      if (found && found.entry.publishedVersion !== null) {
+      // Keep never takes live content down: an entry live again is the entry's own Unpublish.
+      const live = found?.entry.publishedVersion ?? null;
+      if (live !== null) {
         throw new ConflictError(
-          'The entry was published again after moderation held it. Unpublish it from the entry to take it offline.',
-          { publishedVersion: found.entry.publishedVersion },
+          live > hold.entryVersion
+            ? `A newer version (${live}) is live. Unpublish it from the entry if it should come down; Close (Republish) closes this hold.`
+            : 'The entry was published again after moderation held it. Unpublish it from the entry to take it offline.',
+          { publishedVersion: live, heldVersion: hold.entryVersion },
         );
       }
       await tx.moderationHolds.decide(scope, id, {

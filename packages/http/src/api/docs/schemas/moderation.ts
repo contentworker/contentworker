@@ -23,7 +23,17 @@ export const moderationHold = z.object({
   createdAt: z.iso.datetime().describe('When moderation took the entry offline'),
   decidedAt: z.iso.datetime().optional(),
   decidedBy: z.string().optional(),
-  note: z.string().optional().describe('Why, in the decider’s words'),
+  note: z
+    .string()
+    .optional()
+    .describe('Why, in the decider’s words (listed only to callers with content:write)'),
+  stale: z
+    .literal(true)
+    .optional()
+    .describe(
+      'On a listed open hold: a newer version of the entry is live. Republish then only closes ' +
+        'it (as cleared), and Keep is refused.',
+    ),
 });
 
 export const moderationHoldList = z.object({ items: z.array(moderationHold) });
