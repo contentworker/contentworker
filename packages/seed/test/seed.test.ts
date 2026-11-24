@@ -1,5 +1,8 @@
 import type { AppContext } from '@contentworker/application';
 import {
+  assetObjectKey,
+  createAsset,
+  deleteTag,
   listAgentRuns,
   listAssets,
   listAuditLog,
@@ -128,6 +131,42 @@ describe('seedDev', { timeout: 60_000 }, () => {
     // PNG signature and PDF header: the bytes are the files their names say.
     expect([...(blob.bytes(png[0] as string) ?? []).slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
     expect(await blob.get(pdf[0] as string)).toMatch(/^%PDF-1\.4/);
+  });
+
+  it('restores the files of a space seeded before the seed stored any, and nothing else', async () => {
+    const ctx = makeContext();
+    const blob = new FakeBlobStore();
+    await seedDev(ctx, config, { blob });
+    const assets = (await listAssets(ctx, scope, { limit: 100 })).items;
+    const image = assets.find((a) => a.file.contentType === 'image/png');
+    const pdf = assets.find((a) => a.file.contentType === 'application/pdf');
+    if (!image || !pdf) throw new Error('seeded an image and a document');
+    const imageKey = assetObjectKey(scope, image.id, image.file.fileName);
+    const pdfKey = assetObjectKey(scope, pdf.id, pdf.file.fileName);
+    // An upload of the person's own whose bytes never landed: not the seed's to fill in.
+    const { asset: own } = await createAsset(ctx, blob, scope, {
+      fileName: 'my-photo.png',
+      contentType: 'image/png',
+      title: { 'en-US': 'Mine' },
+    });
+    const ownKey = assetObjectKey(scope, own.id, own.file.fileName);
+    // The space as an older seed left it: asset rows, an empty bucket, no files marker.
+    await blob.delete(imageKey);
+    await blob.delete(pdfKey);
+    await blob.delete(ownKey);
+    const marker = (await listTags(ctx, scope)).find((t) => t.name === 'demo-asset-files-v1');
+    if (!marker) throw new Error('the files marker is set on a fresh seed');
+    await deleteTag(ctx, scope, marker.id);
+
+    await seedDev(ctx, config, { blob });
+    expect([...(blob.bytes(imageKey) ?? []).slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(await blob.get(pdfKey)).toMatch(/^%PDF-1\.4/);
+    expect(await blob.head(ownKey)).toBeNull();
+
+    // Marked done: a file removed afterwards is not written again on the next boot.
+    await blob.delete(imageKey);
+    await seedDev(ctx, config, { blob });
+    expect(await blob.head(imageKey)).toBeNull();
   });
 
   it('scales the generated corpus linearly', async () => {
