@@ -29,6 +29,8 @@ export const RUN_STATUS: Readonly<Record<MigrationRunStatus, { tone: Tone; label
   created: { tone: 'idle', label: 'Created' },
   inventoried: { tone: 'idle', label: 'Inventoried' },
   clustered: { tone: 'idle', label: 'Clustered' },
+  // Its background run ended without publishing; it can still be taken on by hand.
+  stopped: { tone: 'wait', label: 'Stopped' },
   failed: { tone: 'bad', label: 'Failed' },
 };
 
@@ -84,9 +86,11 @@ export function runSteps(view: MigrationRunView): RunSteps {
   const authoring = templates.some((t) => t.status !== 'pending');
   const stopped: StepState = { available: false, reason: 'The run failed.' };
 
+  // A run whose background driver stopped was clustered first, and the API keeps it that way.
+  const settled = run.status === 'clustered' || run.status === 'stopped';
   const inventory: StepState = failed
     ? stopped
-    : run.status === 'clustered'
+    : settled
       ? { available: false, reason: 'The pages are grouped into templates, so the list is kept.' }
       : { available: true };
   const fetch: StepState =
@@ -97,14 +101,16 @@ export function runSteps(view: MigrationRunView): RunSteps {
         : { available: true };
   const cluster: StepState = failed
     ? stopped
-    : run.status === 'created'
-      ? { available: false, reason: 'Inventory the source first.' }
-      : authoring
-        ? {
-            available: false,
-            reason: 'A template is being authored or approved, so the grouping is kept.',
-          }
-        : { available: true };
+    : run.status === 'stopped'
+      ? { available: false, reason: 'Its background run stopped, so the grouping is kept.' }
+      : run.status === 'created'
+        ? { available: false, reason: 'Inventory the source first.' }
+        : authoring
+          ? {
+              available: false,
+              reason: 'A template is being authored or approved, so the grouping is kept.',
+            }
+          : { available: true };
 
   // The primary: inventory first, then fetching while pages wait, then clustering what was read.
   const next: StepId | null = failed

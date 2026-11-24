@@ -29,8 +29,10 @@ export const migrationRun = z.object({
     maxPages: z.int(),
   }),
   status: z
-    .enum(['created', 'inventoried', 'clustered', 'failed'])
-    .describe('The step that last finished'),
+    .enum(['created', 'inventoried', 'clustered', 'stopped', 'failed'])
+    .describe(
+      'The step that last finished; `stopped` when its background driver ended without publishing',
+    ),
   threshold: z.number().describe('Score a page needs to count as validated (0..1)'),
   inventory: z
     .object({
@@ -40,7 +42,7 @@ export const migrationRun = z.object({
       warnings: z.array(z.string()),
     })
     .nullable(),
-  error: z.string().nullable(),
+  error: z.string().nullable().describe('Why the run failed or stopped'),
   releaseId: z
     .string()
     .nullable()
@@ -60,15 +62,44 @@ const pageCounts = z.object({
   byStage: z.record(z.enum(MIGRATION_PAGE_STAGES), z.int()),
 });
 
+const actor = z
+  .union([
+    z.object({ kind: z.literal('key'), keyId: z.string() }),
+    z.object({ kind: z.literal('member'), memberId: z.string() }),
+    z.object({ kind: z.literal('deployment') }),
+  ])
+  .describe('Who, by reference: an API key, a team member, or the deployment');
+
+const trySummary = z.object({
+  at: z.iso.datetime(),
+  scriptSha256: z.string().describe('The script that was tried'),
+  pages: z.int(),
+  ok: z.int().describe('Pages whose output had the right shape for the model'),
+  passed: z.int().describe('Pages scored at or above the run’s threshold'),
+  meanScore: z.number(),
+  problems: z.array(z.string()).describe('The first few failures and issues, one line each'),
+});
+
 export const migrationTemplate = z.object({
   id: z.string(),
   runId: z.string(),
   label: z.string(),
-  status: z.enum(['pending', 'authoring', 'approved']),
+  status: z
+    .enum(['pending', 'authoring', 'approving', 'approved'])
+    .describe('`approving` while an approval writes its content type'),
   pageCount: z.int(),
   samplePageIds: z.array(z.string()).describe('Representative pages, spread over the template'),
   contentTypeId: z.string().nullable().describe('The content type its pages become, once chosen'),
   script: artifact.nullable().describe('Its import script, once written'),
+  proposal: z
+    .record(z.string(), z.unknown())
+    .nullable()
+    .describe('The content type its pages are proposed to become (a content type definition)'),
+  lastTry: trySummary.nullable().describe('How its script did the last time it was tried'),
+  approvedBy: actor.nullable().describe('Who approved it: its pages are loaded as them'),
+  reviewDigest: z
+    .string()
+    .describe('SHA-256 of the proposal and script version: what `reviewed` names to approve it'),
   version: z.int(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -130,3 +161,99 @@ export const migrationFetchResult = z.object({
     .optional()
     .describe('The site can’t be read now (robots.txt unreadable); nothing was written'),
 });
+
+export const migrationScript = z.object({
+  script: z.string().nullable().describe('The import script as text; null before one is written'),
+  sha256: z.string().nullable(),
+});
+
+const output = z
+  .object({
+    fields: z.record(z.string(), z.unknown()).describe('Field values; rich text as documents'),
+    blocks: z.array(z.object({ variant: z.string(), fields: z.record(z.string(), z.unknown()) })),
+    assets: z.array(z.object({ url: z.string(), alt: z.string().optional() })),
+    links: z.array(z.object({ href: z.string() })),
+  })
+  .describe('The script’s output, resolved: every `$html` fragment is a RichTextDocument');
+
+export const migrationTryResult = z.object({
+  summary: trySummary,
+  results: z.array(
+    z.object({
+      pageId: z.string(),
+      url: z.string(),
+      ok: z.boolean().describe('The output has the right shape for the model'),
+      output: output.optional(),
+      score: score.optional(),
+      issues: z.array(z.string()).describe('Shape and model problems'),
+      error: z.string().optional().describe('Why the script produced no output'),
+      logs: z.array(z.string()).describe('What the script logged: the page’s text, untrusted'),
+    }),
+  ),
+});
+
+export const migrationApproval = z.object({
+  template: migrationTemplate,
+  signalled: z.boolean().describe('The run’s driver was told'),
+  reason: z
+    .enum(['no-driver', 'driver-finished', 'unreachable'])
+    .optional()
+    .describe(
+      'Why it wasn’t: no driver (a run taken step by step), its driver has finished, or it ' +
+        'couldn’t be reached now (approve again to tell it)',
+    ),
+});
+
+const pageFailure = z.object({ pageId: z.string(), url: z.string(), error: z.string() });
+
+export const migrationTransformResult = z.object({
+  transformed: z.int(),
+  validated: z.int(),
+  needsFix: z.int(),
+  failed: z.array(pageFailure).describe('Pages with no usable output, now needs-fix'),
+  next: z.string().optional().describe('Pass as `after` to go on; absent at the end'),
+  more: z.boolean(),
+});
+
+export const migrationLoadResult = z.object({
+  loaded: z.int(),
+  failed: z.array(pageFailure).describe('Pages refused, now needs-fix with the reason'),
+  assetFailures: z.array(pageFailure).describe('Files not brought in; their pages loaded without'),
+  unresolvedLinks: z.int().describe('Links to pages with no entry yet, for the relink pass'),
+  deferred: z.array(pageFailure).describe('Pages that kept losing a race, left for the next call'),
+  more: z.boolean(),
+});
+
+export const migrationRelinkResult = z.object({
+  checked: z.int(),
+  relinked: z.int(),
+  unresolvedLinks: z.int(),
+  skipped: z.array(pageFailure).describe('Entries edited since they were read'),
+  next: z.string().optional().describe('Pass as `after` to go on; absent at the end'),
+});
+
+export const migrationRedirectsResult = z.object({
+  created: z.int(),
+  updated: z.int(),
+  unchanged: z.int(),
+  skipped: z.object({
+    identity: z.int().describe('The old path is the new one'),
+    noUrlPattern: z.int().describe('The type has no URL pattern'),
+    unresolved: z.int().describe('No path could be made for the entry'),
+  }),
+  chains: z.array(z.object({ id: z.string(), via: z.array(z.string()), destination: z.string() })),
+});
+
+export const migrationPublishResult = z.object({
+  published: z.int(),
+  added: z.int().describe('Entries added to the release'),
+  releaseId: z.string().optional(),
+  failed: z.array(pageFailure).describe('Pages whose entry wasn’t published: they stay loaded'),
+  next: z.string().optional().describe('Pass as `after` to go on; absent at the end'),
+});
+
+export const migrationStartResult = z.object({
+  started: z.boolean().describe('False when the run’s driver was running already'),
+});
+
+export const migrationPublishApproval = z.object({ accepted: z.literal(true) });

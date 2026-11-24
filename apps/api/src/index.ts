@@ -113,6 +113,9 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       spaceExportReader: wired.spaceExportReader,
       // A site migration's inventory and fetch steps read the source site through it.
       siteSource: wired.siteSource,
+      // Its authoring tools run import scripts, and start and signal the engine's driver.
+      ...(wired.importScriptSandbox ? { importScriptSandbox: wired.importScriptSandbox } : {}),
+      ...(wired.migrationRunner ? { migrationRunner: wired.migrationRunner } : {}),
       signalReview: env.AGENT_WF
         ? (review, decision) => sendReviewDecision(env.AGENT_WF as Workflow, review.id, decision)
         : undefined,
@@ -152,6 +155,8 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
         workflowNodes: wired.workflowNodes,
         assetSearch: wired.assetSearch,
         siteSource: wired.siteSource,
+        ...(wired.importScriptSandbox ? { importScriptSandbox: wired.importScriptSandbox } : {}),
+        ...(wired.migrationRunner ? { migrationRunner: wired.migrationRunner } : {}),
         ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
       },
     ),

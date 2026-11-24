@@ -677,7 +677,8 @@ async function writeTemplate(
 ): Promise<MigrationTemplate> {
   for (let attempt = 1; ; attempt++) {
     const run = await requireRun(ctx, scope, ref.runId);
-    if (run.status !== 'clustered') {
+    // A stopped run's driver has given up, but its templates can still be taken on by hand.
+    if (run.status !== 'clustered' && run.status !== 'stopped') {
       throw new InvalidStateError(
         `Templates are authored once a run is clustered; it is ${run.status}`,
       );

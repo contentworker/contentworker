@@ -85,6 +85,32 @@ const { templates } = await cma.migrations.cluster(run.id); // `{ threshold }` 0
 `templates`. Running a step needs `migration:run`; reading a run needs it or `content:manage`.
 Pages carry the hash and size of their stored HTML, never the HTML.
 
+Each template becomes a content type with an import script, and a person approves it:
+
+```ts
+const t = templates[0];
+await cma.migrations.proposeModel(run.id, t.id, model); // one blocks field, a urlPattern
+await cma.migrations.setScript(run.id, t.id, script); // text, at most 256 KiB
+const { summary } = await cma.migrations.tryScript(run.id, t.id); // outputs with rich text resolved
+// As someone with content:manage, approving what they read:
+const { reviewDigest } = await cma.migrations.template(run.id, t.id);
+await cma.migrations.approve(run.id, t.id, reviewDigest); // 409 if it changed since
+
+// Then the pages, ten a call (or `start(run.id)` to run it all in the background):
+let after: string | undefined;
+do {
+  ({ next: after } = await cma.migrations.transform(run.id, t.id, after ? { after } : {}));
+} while (after);
+for (let more = true; more; ) more = (await cma.migrations.load(run.id, t.id)).more;
+await cma.migrations.relink(run.id);
+await cma.migrations.redirects(run.id);
+await cma.migrations.publish(run.id, { viaRelease: true, releaseTitle: 'Site launch' });
+```
+
+`transform`, `relink` and `publish` (including `viaRelease`) page with `after: next`; `load` needs `content:write` and `assets:write`,
+`redirects` `content:manage` and `publish` `content:publish`. After `start`, `approvePublish` is the
+driver's go-ahead to publish.
+
 ## Errors
 
 A failed call throws `ManagementError` with `status`, the API's error `code`, the parsed `error`

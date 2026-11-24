@@ -1,7 +1,7 @@
 import { holdsScope, type PermissionScope, type Principal, SCOPES } from '@contentworker/domain';
 
 /**
- * Which tools `tools/list` shows a caller. This is a courtesy, not a control: 297 tool definitions
+ * Which tools `tools/list` shows a caller. This is a courtesy, not a control: 310 tool definitions
  * cost an agent real context, so a caller is spared the tools it can't use. Every handler still
  * authorizes for itself, and a tool left off the list stays callable and answers with the scope it
  * needs, so a mistake here can only show or hide a tool, never grant anything.
@@ -189,9 +189,22 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   migration_fetch_pages: [SCOPES.migrationRun],
   migration_inventory: [SCOPES.migrationRun],
   migration_list: [SCOPES.contentManage, SCOPES.migrationRun],
+  migration_load: [SCOPES.assetsWrite, SCOPES.contentWrite, SCOPES.migrationRun],
   migration_pages: [SCOPES.contentManage, SCOPES.migrationRun],
+  migration_propose_model: [SCOPES.migrationRun],
+  migration_publish: [SCOPES.contentPublish, SCOPES.contentWrite],
+  migration_publish_entries: [SCOPES.contentPublish, SCOPES.contentWrite],
+  migration_redirects: [SCOPES.contentManage],
+  migration_relink: [SCOPES.contentWrite, SCOPES.migrationRun],
+  migration_script_get: [SCOPES.contentManage, SCOPES.migrationRun],
+  migration_script_set: [SCOPES.migrationRun],
+  migration_script_try: [SCOPES.migrationRun],
+  migration_start: [SCOPES.migrationRun],
   migration_status: [SCOPES.contentManage, SCOPES.migrationRun],
+  migration_template_approve: [SCOPES.contentManage, SCOPES.migrationRun],
+  migration_template_get: [SCOPES.contentManage, SCOPES.migrationRun],
   migration_templates: [SCOPES.contentManage, SCOPES.migrationRun],
+  migration_transform: [SCOPES.migrationRun],
   model_clone_content_type: [SCOPES.contentManage],
   model_content_type_dependents: [SCOPES.previewRead],
   model_create_content_type: [SCOPES.contentManage],

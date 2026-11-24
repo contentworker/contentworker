@@ -57,6 +57,19 @@ Everything below is built and tested on v2.
   (`migration_*`), the management SDK (`migrations`), `contentworker migrate`, the `site-migration`
   agent skill and the `migration:run` scope; responses carry a page's stored HTML by hash and size
   only.
+- **Site migration: template authoring, loading and publishing.** Each template becomes a content
+  type with one blocks field, a URL pattern and a unique `sourceUrl`, filled by an import script
+  that runs in its own isolate and is tried and scored against the source pages; a person with
+  `content:manage` approves the reviewed version (a digest of the model and script), which creates
+  the type. Approved templates' pages are transformed, loaded as entries with their assets
+  (matched on `sourceUrl`, so a load repeats safely), relinked, redirected and published, or added
+  to a release. Step by step in bounded batches, or in the background (`…/start`), where the
+  engine runs every step, starts an authoring agent per template and waits for each approval and
+  the go-ahead to publish. REST, 13 more MCP tools, the SDK, `contentworker migrate` and the
+  `template-content-model`, `template-import-script` and `migration-triage` skills.
+- **Site migration: the admin screen.** **Migrations** under Build, for roles holding
+  `migration:run` or `content:manage`: the environment's runs, a form to start one, and each run's
+  steps, templates and pages, with **Fetch until done** to fetch every waiting batch.
 - **Assets.** Signed uploads to object storage, creating an asset from a public URL (REST, MCP and
   the management SDK: fetched through the SSRF guard, reused when the bytes are already in the
   environment), edge image transforms, streamed video, localized alt text and focal point, AI alt
@@ -270,10 +283,9 @@ Everything below is built and tested on v2.
   Agents may draft, test and install a generated plugin disabled, but only a signed-in person
   can enable one whose `source` is `generated`: a deliberate, documented exception to both
   surfaces, because prompt-injected code must not go live without a human.
-- [ ] **Site migration: templates, loading and the admin.** Template authoring (a content type
-  with a blocks field and an import script per template, validated against the source pages),
-  loading the pages as entries with their assets and links, publishing them, and an admin screen
-  to follow a run. Discovery and clustering have shipped; none of the rest is built.
+- [ ] **Site migration: admin authoring, approve, load and publish actions.** Proposing a model,
+  writing and trying a script, approving a template, loading, publishing and the go-ahead from the
+  admin's Migrations screen. They have shipped on the API, MCP, the SDK and the command line.
 
 ### Recovery
 

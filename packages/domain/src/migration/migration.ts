@@ -1,5 +1,5 @@
 import type { ContentTypeDraft } from '../content-type/content-type';
-import { type FieldIssue, ValidationError } from '../errors';
+import { type FieldIssue, InvalidStateError, ValidationError } from '../errors';
 import { compileWildcard, matchWildcard, type Wildcard } from './wildcard';
 
 /**
@@ -56,8 +56,27 @@ export const MIGRATION_DEFAULT_THRESHOLD = 0.8;
 /**
  * A run's progress as a whole. Pages carry their own stage; the run says which step last
  * finished, so a caller (or the Workflow driving it) knows what comes next.
+ *
+ * `stopped`: its background driver ended without publishing, because no template was approved in
+ * time or the go-ahead to publish never came. The run can't be started again, but its templates
+ * can still be authored, approved, loaded and published step by step. `failed` is final.
  */
-export type MigrationRunStatus = 'created' | 'inventoried' | 'clustered' | 'failed';
+export type MigrationRunStatus = 'created' | 'inventoried' | 'clustered' | 'stopped' | 'failed';
+
+/** Statuses a run's driver can't be started or told anything in. */
+export const MIGRATION_RUN_ENDED: ReadonlySet<MigrationRunStatus> = new Set(['stopped', 'failed']);
+
+/**
+ * The run's driver instance exists but has finished (completed, failed or was terminated), so it
+ * waits for nothing: an approval or a go-ahead sent to it would be lost.
+ */
+export class MigrationDriverFinishedError extends InvalidStateError {
+  constructor(runId: string) {
+    super(
+      `The migration run "${runId}" has a driver that has finished: take the run on step by step`,
+    );
+  }
+}
 
 /** What an inventory found, and what it left out and why. */
 export interface MigrationInventory {
@@ -89,7 +108,7 @@ export interface MigrationRun {
   /** Score a page's output needs to count as validated (0..1). */
   readonly threshold: number;
   readonly inventory: MigrationInventory | null;
-  /** Why the run failed, when it did. */
+  /** Why the run failed or stopped, when it did. */
   readonly error: string | null;
   /**
    * The release its entries were added to when publishing goes through one: an add run again

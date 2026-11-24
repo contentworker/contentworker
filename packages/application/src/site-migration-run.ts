@@ -78,7 +78,7 @@ const UNAVAILABLE_WAIT = '10 minutes';
 /** Times a site that can't be read is waited out, in all, before the run fails. */
 const UNAVAILABLE_ATTEMPTS = 12;
 /** Run statuses a failure is never recorded over. */
-const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set(['failed']);
+const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set(['failed', 'stopped']);
 /**
  * The step budget. Workflows allows an instance 10,000 steps on Workers Paid (configurable to
  * 25,000; 1,024 on Workers Free), and `step.sleep` doesn't count. Every loop here takes the
@@ -266,6 +266,8 @@ export async function runSiteMigration(
     outcomes.splice(0, outcomes.length, ...ordered);
     const relinker = outcomes.find((o) => o.status === 'loaded')?.approvedBy;
     if (!relinker) {
+      // Nothing was approved in time (or loaded): nothing to wait for a go-ahead on.
+      await recordStop(steps, ctx, scope, runId, 'No template was approved and loaded in time');
       return { status: 'clustered', templates: outcomes };
     }
     let after: string | undefined;
@@ -295,6 +297,7 @@ export async function runSiteMigration(
       });
       go = event.payload;
     } catch {
+      await recordStop(steps, ctx, scope, runId, 'The go-ahead to publish never came');
       return { status: 'loaded', templates: outcomes };
     }
     // Fails closed: a go-ahead that names nobody publishes nothing.
@@ -322,8 +325,7 @@ export async function runSiteMigration(
         ),
       );
       cursor = published.next;
-      // A release takes every entry in one call.
-      if (!cursor || go.viaRelease) break;
+      if (!cursor) break;
     }
     return { status: 'published', templates: outcomes };
   } catch (err) {
@@ -357,6 +359,42 @@ export async function runSiteMigration(
     });
     return { status: 'failed', templates: inOrder(outcomes), error: message };
   }
+}
+
+/**
+ * Records that the driver ended without publishing (`stopped`, with why), so starting the run
+ * again is refused rather than finding the finished instance. A terminal status is kept as it is.
+ */
+async function recordStop(
+  steps: WorkflowSteps,
+  ctx: AppContext,
+  scope: Scope,
+  runId: string,
+  why: string,
+): Promise<void> {
+  await steps.do('record stop', STEP, async () => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const run = await ctx.store.migrations.getRun(scope, runId);
+      if (!run || TERMINAL_RUN_STATUSES.has(run.status)) return true;
+      try {
+        await ctx.store.migrations.saveRun(
+          scope,
+          {
+            ...run,
+            status: 'stopped',
+            error: why,
+            version: run.version + 1,
+            updatedAt: ctx.clock.now().toISOString(),
+          },
+          run.version,
+        );
+        return true;
+      } catch (e) {
+        if (!(e instanceof TransactionConflictError) || attempt === 3) throw e;
+      }
+    }
+    return true;
+  });
 }
 
 /** Inventory (once), then fetch every page a batch per step, waiting out an unreadable site. */

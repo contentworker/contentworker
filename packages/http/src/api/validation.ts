@@ -590,6 +590,114 @@ export const contentTypeBody = z.object({
 });
 /** A content type's copy: its new apiId and name. */
 export const cloneContentTypeBody = z.object({ apiId: zId, name: zShort });
+
+// --- site migration authoring ----------------------------------------------
+/** Sample pages one try runs at most: each is a sandboxed script run inside the request. */
+export const MIGRATION_TRY_REQUEST_MAX = 5;
+/**
+ * Pages one API request or MCP call transforms or loads at most, and by default: each runs a
+ * script, or brings in assets, inside the request. A run's whole site goes through `…/start`.
+ */
+export const MIGRATION_TRANSFORM_REQUEST_MAX = 10;
+export const MIGRATION_LOAD_REQUEST_MAX = 10;
+/** Pages one request relinks or publishes at most: D1 work only, but still one request's. */
+export const MIGRATION_RELINK_REQUEST_MAX = 50;
+export const MIGRATION_PUBLISH_REQUEST_MAX = 50;
+/** The largest import script a request carries, in characters (the use-case caps its UTF-8 bytes). */
+const MIGRATION_SCRIPT_MAX = 256 * 1024;
+const migrationCursor = z.string().max(200).optional().describe('`next` from the call before');
+const importScript = z
+  .string()
+  .min(1)
+  .max(MIGRATION_SCRIPT_MAX)
+  .describe(
+    'The script as text: an ES module whose default export (or `transform`) takes (page, ctx) ' +
+      'and returns { fields, blocks, assets, links }. At most 256 KiB.',
+  );
+// The model as a content type is written, without the version (the approval holds that) and with
+// what only a person decides (preview, agent instructions, layout, field help) dropped by the domain.
+export const migrationProposalBody = z.object({
+  model: contentTypeBody.omit({ expectedVersion: true }),
+});
+export const migrationScriptBody = z.object({ script: importScript });
+export const migrationTryBody = z.object({
+  script: importScript.optional().describe('A script to try instead of the stored one; not stored'),
+  pageIds: z
+    .array(z.string().max(100))
+    .max(MIGRATION_TRY_REQUEST_MAX)
+    .optional()
+    .describe(`Pages of the template, at most ${MIGRATION_TRY_REQUEST_MAX}; absent, its samples`),
+});
+export const migrationApproveBody = z.object({
+  reviewed: z
+    .string()
+    .length(64)
+    .describe('The `reviewDigest` of the template as you read it; a changed template is a 409'),
+});
+export const migrationTransformBody = z.object({
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(MIGRATION_TRANSFORM_REQUEST_MAX)
+    .optional()
+    .describe(`Pages this call reads (default and most: ${MIGRATION_TRANSFORM_REQUEST_MAX})`),
+  after: migrationCursor,
+});
+export const migrationLoadBody = z.object({
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(MIGRATION_LOAD_REQUEST_MAX)
+    .optional()
+    .describe(`Pages this call loads (default and most: ${MIGRATION_LOAD_REQUEST_MAX})`),
+  includeNeedsFix: z
+    .boolean()
+    .optional()
+    .describe('Load pages scored below the threshold too, after the validated ones'),
+});
+export const migrationRelinkBody = z.object({
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(MIGRATION_RELINK_REQUEST_MAX)
+    .optional()
+    .describe(`Pages this call reads (default and most: ${MIGRATION_RELINK_REQUEST_MAX})`),
+  after: migrationCursor,
+});
+export const migrationRedirectsBody = z.object({
+  template: z.string().max(100).optional().describe('Only this template’s pages; absent, all'),
+});
+const publishTarget = {
+  viaRelease: z
+    .boolean()
+    .optional()
+    .describe('Add the entries to a release instead of publishing them (needs content:write)'),
+  releaseId: z.string().max(100).optional().describe('An open release to add to (viaRelease)'),
+  releaseTitle: z
+    .string()
+    .max(200)
+    .optional()
+    .describe('A new release’s title (viaRelease, no releaseId)'),
+};
+export const migrationPublishBody = z.object({
+  template: z.string().max(100).optional().describe('Only this template’s pages; absent, all'),
+  ...publishTarget,
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(MIGRATION_PUBLISH_REQUEST_MAX)
+    .optional()
+    .describe(
+      `Publishing: pages this call publishes (default and most: ${MIGRATION_PUBLISH_REQUEST_MAX})`,
+    ),
+  after: migrationCursor,
+});
+export const migrationPublishApprovalBody = z.object(publishTarget);
+
 export const contentTypePreviewBody = z.object({
   urlTemplate: contentTypePreview.shape.urlTemplate
     .nullable()

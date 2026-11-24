@@ -15,7 +15,12 @@ import {
   setImportScript,
   templateReviewDigest,
 } from '@contentworker/application';
-import { type ContentTypeDraft, scopesForKind } from '@contentworker/domain';
+import {
+  type ContentTypeDraft,
+  MigrationDriverFinishedError,
+  NotFoundError,
+  scopesForKind,
+} from '@contentworker/domain';
 import {
   CloudflareMigrationRunner,
   migrationInstanceId,
@@ -148,9 +153,9 @@ describe('MigrationWorkflow on Cloudflare Workflows', () => {
       env.MIGRATION_WF,
       migrationInstanceId(run.id),
     );
-    expect(await runner.start(params)).toBe(true);
+    expect(await runner.start(params)).toBe('started');
     // A second start (a retried request) finds the driver that exists.
-    expect(await runner.start(params)).toBe(false);
+    expect(await runner.start(params)).toBe('running');
     const clustered = (await instance.waitForStepResult({ name: 'cluster' })) as {
       ok: { id: string }[];
     };
@@ -184,6 +189,55 @@ describe('MigrationWorkflow on Cloudflare Workflows', () => {
     expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({
       published: 2,
     });
+  });
+});
+
+describe('CloudflareMigrationRunner', () => {
+  it('answers a run with no driver as not found, for either signal', async () => {
+    const runner = new CloudflareMigrationRunner(env.MIGRATION_WF);
+    const scope = { spaceId: 'mig-none', environmentId: 'main' };
+    await expect(
+      runner.publishApproved(scope, 'never-started', { approvedBy: { kind: 'deployment' } }),
+    ).rejects.toThrow(NotFoundError);
+    await expect(runner.templateApproved(scope, 'never-started', 't', {})).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+
+  it('reports a finished driver as finished, and refuses to signal it', async () => {
+    const { ctx, scope } = context();
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: O } });
+    const runner = new CloudflareMigrationRunner(env.MIGRATION_WF);
+    const params = { scope, runId: run.id, startedBy: { kind: 'deployment' as const } };
+    await using instance = await introspectWorkflowInstance(
+      env.MIGRATION_WF,
+      migrationInstanceId(run.id),
+    );
+    expect(await runner.start(params)).toBe('started');
+    await instance.waitForStepResult({ name: 'cluster' });
+    await (await env.MIGRATION_WF.get(migrationInstanceId(run.id))).terminate();
+    await instance.waitForStatus('terminated');
+
+    expect(await runner.start(params)).toBe('finished');
+    await expect(runner.templateApproved(scope, run.id, 't', {})).rejects.toThrow(
+      MigrationDriverFinishedError,
+    );
+    await expect(
+      runner.publishApproved(scope, run.id, { approvedBy: { kind: 'deployment' } }),
+    ).rejects.toThrow(MigrationDriverFinishedError);
+  });
+
+  it('never reads a binding that fails as a run with no driver', async () => {
+    const broken = new CloudflareMigrationRunner({
+      createBatch: env.MIGRATION_WF.createBatch.bind(env.MIGRATION_WF),
+      get: async () => {
+        throw new Error('internal error: the Workflows service is unavailable');
+      },
+    });
+    const scope = { spaceId: 'mig-none', environmentId: 'main' };
+    const sent = broken.publishApproved(scope, 'r', { approvedBy: { kind: 'deployment' } });
+    await expect(sent).rejects.toThrow(/unavailable/);
+    await expect(sent).rejects.not.toThrow(NotFoundError);
   });
 });
 

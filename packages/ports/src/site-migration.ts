@@ -140,11 +140,17 @@ export interface MigrationPublishApproved {
 /**
  * Starts and signals a migration run's durable driver (one Workflow instance per run). Each call
  * is safe to repeat: starting a run that has a driver leaves it as it is, and an approval sent
- * twice is taken once (the driver waits for each event once).
+ * twice is taken once (the driver waits for each event once). Signalling a run with no driver
+ * throws `NotFoundError`, and one whose driver has finished `MigrationDriverFinishedError`.
  */
+/**
+ * What starting a run's driver found: `started` by this call, `running` already (waiting counts),
+ * or `finished` (completed, errored or terminated, and still held by Workflows).
+ */
+export type MigrationDriverState = 'started' | 'running' | 'finished';
+
 export interface MigrationRunner {
-  /** False when the run's driver exists already. */
-  start(params: MigrationRunParams): Promise<boolean>;
+  start(params: MigrationRunParams): Promise<MigrationDriverState>;
   templateApproved(
     scope: Scope,
     runId: string,

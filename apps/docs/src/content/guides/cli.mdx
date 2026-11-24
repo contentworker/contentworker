@@ -64,6 +64,12 @@ In CI, skip the file: set `CONTENTWORKER_TOKEN` and `CONTENTWORKER_URL` (and
 | `migrate step <run>`                 | Inventory a new run, then fetch pages in batches until none wait (`--batch`, `--max-batches`); exits 1 with `site_unavailable` when the site's robots.txt can't be read | `migration:run` |
 | `migrate cluster <run>`              | Group the fetched pages into templates (`--threshold`, default 0.6)    | `migration:run`     |
 | `migrate list`, `migrate status <run>`, `migrate pages <run>` | Runs; one run with its pages by stage and templates; its pages (`--stage`, `--template`, `--limit`, `--cursor`) | `migration:run` or `content:manage` |
+| `migrate template <run> <template>`  | A template's status, model, script version, last try and `reviewDigest` | `migration:run` or `content:manage` |
+| `migrate script set <run> <template> <file>` | Store a new version of its import script (at most 256 KiB)     | `migration:run`     |
+| `migrate script try <run> <template>` | Try the script on the sample pages, or `--page` (up to 5), or a `--file` script without storing it | `migration:run` |
+| `migrate approve <run> <template>`   | Approve it, creating its content type (`--reviewed <digest>`; without it, shows the template and asks, `--yes` off a terminal) | `content:manage` |
+| `migrate start <run>`                | Run the whole migration in the background, acting for you              | `migration:run`     |
+| `migrate publish <run>`              | Give a started run the go-ahead to publish (`--via-release`, `--release`, `--release-title`); `--now` publishes the loaded entries here, batch by batch | `content:publish` |
 | `import <file>`                      | Import a CSV, JSON or WordPress export as drafts                       | `content:write`     |
 | `types [--out file] [--blocks file]` | TypeScript types for the model and its blocks, as described in [typed content](/guides/sdks/#typed-content) | `preview:read` |
 | `doctor`                             | Check sign-in, reachability, the API version and access to the space   |                     |

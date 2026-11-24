@@ -20,6 +20,9 @@ npx contentworker types --out src/generated/content-types.ts
 npx contentworker migrate create https://example.com --exclude '/blog/**'
 npx contentworker migrate step <run>
 npx contentworker migrate cluster <run>
+npx contentworker migrate script set <run> <template> import.js
+npx contentworker migrate approve <run> <template>
+npx contentworker migrate start <run>
 ```
 
 `blocks push` imports a manifest's `{ url }` (https) or `{ file }` thumbnail into the space's

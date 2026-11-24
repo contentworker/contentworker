@@ -10,7 +10,9 @@ import {
   ManagementError,
   type MigrationFetchResult,
   type MigrationPageStage,
+  type MigrationPublishTarget,
   type MigrationRunView,
+  type MigrationTemplate,
 } from '@contentworker/sdk-management';
 import { DEFAULT_BLOCKS_FILE, loadBlocks, pushInput, renderPush } from './blocks.js';
 import {
@@ -1101,6 +1103,216 @@ const migratePages: Command = {
   },
 };
 
+/** The largest import script the api keeps, in UTF-8 bytes. */
+const SCRIPT_MAX_BYTES = 256 * 1024;
+
+function renderTemplate(t: MigrationTemplate): string {
+  const tried = t.lastTry;
+  return [
+    pairs({
+      id: t.id,
+      label: t.label,
+      status: t.status,
+      pages: t.pageCount,
+      model: t.proposal ? `${t.proposal.apiId} (${t.proposal.fields.length} fields)` : undefined,
+      fields: t.proposal
+        ? t.proposal.fields.map((f) => `${f.apiId}:${f.type}`).join(', ') || undefined
+        : undefined,
+      contentType: t.contentTypeId ?? undefined,
+      script: t.script ? `${t.script.sha256.slice(0, 12)} (${t.script.bytes} bytes)` : undefined,
+      lastTry: tried
+        ? `${tried.ok}/${tried.pages} ok, ${tried.passed} passed, mean ${tried.meanScore}`
+        : undefined,
+      reviewDigest: t.reviewDigest,
+    }),
+    ...(tried?.problems ?? []).map((p) => `problem: ${p}`),
+  ].join('\n');
+}
+
+const migrateTemplate: Command = {
+  name: 'migrate template',
+  args: '<run> <template>',
+  summary: 'Show a template: its status, model, script version, last try and review digest',
+  options: {},
+  async run(ctx) {
+    const t = await (await ctx.client()).migrations.template(
+      arg(ctx, 0, '<run>'),
+      arg(ctx, 1, '<template>'),
+    );
+    return { json: t, human: renderTemplate(t) };
+  },
+};
+
+const migrateScriptSet: Command = {
+  name: 'migrate script set',
+  args: '<run> <template> <file>',
+  summary: 'Store a new version of a template’s import script from a file',
+  options: {},
+  async run(ctx) {
+    const run = arg(ctx, 0, '<run>');
+    const template = arg(ctx, 1, '<template>');
+    const script = await readFile(resolve(ctx.io.cwd, arg(ctx, 2, '<file>')), 'utf8');
+    if (new TextEncoder().encode(script).byteLength > SCRIPT_MAX_BYTES) {
+      throw usageError('The script is over 256 KiB.');
+    }
+    const t = await (await ctx.client()).migrations.setScript(run, template, script);
+    return {
+      json: t,
+      human: `Stored script ${t.script?.sha256.slice(0, 12)}. Next: contentworker migrate script try ${run} ${template}`,
+    };
+  },
+};
+
+const migrateScriptTry: Command = {
+  name: 'migrate script try',
+  args: '<run> <template>',
+  summary: 'Try a template’s import script on its sample pages, or on a file’s script',
+  options: {
+    file: { type: 'string', description: 'Try this script instead of the stored one (not stored)' },
+    page: {
+      type: 'string',
+      multiple: true,
+      description: 'A page id to try it on, repeated (at most 5)',
+    },
+  },
+  async run(ctx) {
+    const pageIds = list(ctx, 'page');
+    if (pageIds.length > 5) throw usageError('At most 5 pages a try.');
+    const file = str(ctx, 'file');
+    const script = file ? await readFile(resolve(ctx.io.cwd, file), 'utf8') : undefined;
+    const result = await (await ctx.client()).migrations.tryScript(
+      arg(ctx, 0, '<run>'),
+      arg(ctx, 1, '<template>'),
+      { ...(script !== undefined ? { script } : {}), ...(pageIds.length ? { pageIds } : {}) },
+    );
+    const { summary } = result;
+    const rows = result.results.map((r) => ({
+      url: r.url,
+      ok: r.ok ? 'yes' : 'no',
+      score: r.score ? String(r.score.overall) : '',
+      problem: r.error ?? r.issues[0] ?? r.score?.issues[0] ?? '',
+    }));
+    return {
+      json: result,
+      human: [
+        `Tried ${summary.pages}: ${summary.ok} ok, ${summary.passed} passed, mean score ${summary.meanScore}.`,
+        '',
+        table(rows, ['url', 'ok', 'score', 'problem']),
+      ].join('\n'),
+    };
+  },
+};
+
+const migrateApprove: Command = {
+  name: 'migrate approve',
+  args: '<run> <template>',
+  summary: 'Approve a template: create its content type and let its pages load (content:manage)',
+  options: {
+    reviewed: {
+      type: 'string',
+      description:
+        'The reviewDigest you read (migrate template); absent, the one read now, confirmed',
+    },
+    yes: YES,
+  },
+  async run(ctx) {
+    const run = arg(ctx, 0, '<run>');
+    const template = arg(ctx, 1, '<template>');
+    const cma = await ctx.client();
+    let reviewed = str(ctx, 'reviewed');
+    if (!reviewed) {
+      const t = await cma.migrations.template(run, template);
+      if (!ctx.json) ctx.io.stderr(renderTemplate(t));
+      await confirm(
+        ctx,
+        `Approve template ${t.label} as content type ${t.proposal?.apiId ?? '?'}?`,
+      );
+      reviewed = t.reviewDigest;
+    }
+    const result = await cma.migrations.approve(run, template, reviewed);
+    return {
+      json: result,
+      human:
+        `Approved ${result.template.label} as ${result.template.contentTypeId}.` +
+        (result.signalled
+          ? ' The run’s driver goes on with its pages.'
+          : result.reason === 'unreachable'
+            ? ' The run’s driver couldn’t be reached: run this again to tell it.'
+            : ` Next: transform and load its pages${result.reason === 'no-driver' ? `, or contentworker migrate start ${run}` : ''}.`),
+    };
+  },
+};
+
+const migrateStart: Command = {
+  name: 'migrate start',
+  args: '<run>',
+  summary: 'Run the whole migration in the background, acting for you (the way for large sites)',
+  options: {},
+  async run(ctx) {
+    const run = arg(ctx, 0, '<run>');
+    const result = await (await ctx.client()).migrations.start(run);
+    return {
+      json: { run, ...result },
+      human: result.started
+        ? `Started run ${run}. Approve its templates as they are authored; then contentworker migrate publish ${run}`
+        : `Run ${run} is running already.`,
+    };
+  },
+};
+
+const migratePublish: Command = {
+  name: 'migrate publish',
+  args: '<run>',
+  summary: 'Give a started run the go-ahead to publish, or publish its loaded entries now (--now)',
+  options: {
+    now: { type: 'boolean', description: 'Publish here, batch by batch, instead of by the driver' },
+    'via-release': { type: 'boolean', description: 'Add the entries to a release instead' },
+    release: { type: 'string', description: 'The open release to add to (with --via-release)' },
+    'release-title': { type: 'string', description: 'A new release’s title (with --via-release)' },
+  },
+  async run(ctx) {
+    const run = arg(ctx, 0, '<run>');
+    const viaRelease = bool(ctx, 'via-release');
+    const release = str(ctx, 'release');
+    const title = str(ctx, 'release-title');
+    if ((release || title) && !viaRelease) {
+      throw usageError('--release and --release-title go with --via-release.');
+    }
+    const target: MigrationPublishTarget = {
+      ...(viaRelease ? { viaRelease: true } : {}),
+      ...(release ? { releaseId: release } : {}),
+      ...(title ? { releaseTitle: title } : {}),
+    };
+    const cma = await ctx.client();
+    if (!bool(ctx, 'now')) {
+      await cma.migrations.approvePublish(run, target);
+      return {
+        json: { run, accepted: true },
+        human: `Sent run ${run} the go-ahead: it ${viaRelease ? 'adds its entries to a release' : 'publishes'} once its pages are loaded.`,
+      };
+    }
+    const totals = { published: 0, added: 0, failed: 0 };
+    let releaseId: string | undefined;
+    let after: string | undefined;
+    do {
+      const batch = await cma.migrations.publish(run, { ...target, ...(after ? { after } : {}) });
+      totals.published += batch.published;
+      totals.added += batch.added;
+      totals.failed += batch.failed.length;
+      releaseId = batch.releaseId ?? releaseId;
+      for (const f of batch.failed) if (!ctx.json) ctx.io.stderr(`failed: ${f.url}: ${f.error}`);
+      after = batch.next;
+    } while (after);
+    return {
+      json: { run, ...totals, ...(releaseId ? { releaseId } : {}) },
+      human: viaRelease
+        ? `Added ${totals.added} entries to release ${releaseId}.`
+        : `Published ${totals.published}` + (totals.failed ? `, ${totals.failed} failed.` : '.'),
+      ...(totals.failed ? { exitCode: EXIT.failure } : {}),
+    };
+  },
+};
+
 // --- types -------------------------------------------------------------------
 
 const types: Command = {
@@ -1272,6 +1484,12 @@ export const COMMANDS: readonly Command[] = [
   migrateStep,
   migrateCluster,
   migratePages,
+  migrateTemplate,
+  migrateScriptSet,
+  migrateScriptTry,
+  migrateApprove,
+  migrateStart,
+  migratePublish,
   types,
   doctor,
 ];

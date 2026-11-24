@@ -891,15 +891,15 @@ export interface PublishMigrationInput {
   readonly templateId?: string;
   /**
    * Add the entries to a release rather than publish them now: the release ships them (or is
-   * scheduled to). Every loaded page's entry goes in, in this one call.
+   * scheduled to). A batch at a time, as publishing goes.
    */
   readonly viaRelease?: boolean;
-  /** The open release to add to; absent, a new one is created. */
+  /** The open release to add to; absent, the run's own (created by the first batch). */
   readonly releaseId?: string;
   readonly releaseTitle?: string;
-  /** Publishing: pages this call publishes, at most `BULK_LIMIT`. */
+  /** Pages this call publishes or adds, at most `BULK_LIMIT`. */
   readonly batchSize?: number;
-  /** Publishing: the `next` of the call before. */
+  /** The `next` of the call before. */
   readonly after?: string;
 }
 
@@ -911,7 +911,7 @@ export interface PublishMigrationResult {
   readonly releaseId?: string;
   /** Pages whose entry couldn't be published: they stay `loaded`, with the reason. */
   readonly failed: readonly MigrationPageFailure[];
-  /** Publishing: where the next call goes on from; absent when this one reached the end. */
+  /** Where the next call goes on from; absent when this one reached the end. */
   readonly next?: string;
 }
 
@@ -923,11 +923,13 @@ export interface PublishMigrationResult {
  * shipped, a step run again) moves without a second publish. A failure stays `loaded` with the
  * reason, and a pass from the start tries it again.
  *
- * With `viaRelease`, every loaded entry is added to one release and nothing is published: the
- * pages stay `loaded` until the release ships and a publish pass finds their entries live. The
- * release is `releaseId`, or the run's own (recorded on the run, and reused by an add run again
- * while it is open). That needs `content:write` too, as making a release and adding to it do.
- * Pass `actingAs(ctx, principal)` as `ctx`.
+ * With `viaRelease`, the batch's loaded entries are added to one release and nothing is
+ * published: the pages stay `loaded` until the release ships and a publish pass finds their
+ * entries live. The release is `releaseId`, or the run's own (recorded on the run, and reused by
+ * every later batch and an add run again while it is open). That needs `content:write` too, as
+ * making a release and adding to it do. Both go on from `after` and report `next`. A release
+ * named without `viaRelease` is refused ({@link assertReleaseTarget}). Pass
+ * `actingAs(ctx, principal)` as `ctx`.
  */
 export async function publishMigration(
   ctx: AppContext,
@@ -936,6 +938,7 @@ export async function publishMigration(
   input: PublishMigrationInput,
 ): Promise<PublishMigrationResult> {
   authorize(principal, SCOPES.contentPublish, scope.spaceId);
+  assertReleaseTarget(input);
   const run = await requireRun(ctx, scope, input.runId);
   if (input.templateId) await requireTemplate(ctx, scope, run.id, input.templateId);
   return input.viaRelease
@@ -1022,10 +1025,14 @@ async function publishViaRelease(
   run: MigrationRun,
   input: PublishMigrationInput,
 ): Promise<PublishMigrationResult> {
-  const pages = await allPages(ctx, scope, run.id, {
+  const limit = clamp(input.batchSize, MIGRATION_PUBLISH_BATCH_DEFAULT, BULK_LIMIT);
+  const pages = await ctx.store.migrations.listPages(scope, run.id, {
     stage: 'loaded',
-    templateId: input.templateId,
+    limit,
+    ...(input.templateId ? { templateId: input.templateId } : {}),
+    ...(input.after ? { after: input.after } : {}),
   });
+  const next = pages.length === limit ? pages.at(-1)?.id : undefined;
   const entries = await getEntries(
     ctx,
     scope,
@@ -1065,7 +1072,23 @@ async function publishViaRelease(
       ? []
       : [{ pageId: p.id, url: p.url, error: 'The page’s entry no longer exists' }],
   );
-  return { published: 0, added: ids.length, releaseId, failed };
+  return { published: 0, added: ids.length, releaseId, failed, ...(next ? { next } : {}) };
+}
+
+/**
+ * A publish names a release (`releaseId`, `releaseTitle`) only when it goes through one: named
+ * without `viaRelease`, the entries would be published now and the release quietly ignored.
+ */
+export function assertReleaseTarget(input: {
+  readonly viaRelease?: boolean | undefined;
+  readonly releaseId?: string | undefined;
+  readonly releaseTitle?: string | undefined;
+}): void {
+  if (!input.viaRelease && (input.releaseId || input.releaseTitle)) {
+    throw new ValidationError([
+      { field: 'viaRelease', message: 'a release is named only when publishing through one' },
+    ]);
+  }
 }
 
 /**
