@@ -92,6 +92,7 @@ describe('site migration runs', () => {
       threshold: 0.8,
       inventory: null,
       error: null,
+      releaseId: null,
       version: 1,
       createdAt: '2026-11-20T00:00:00.000Z',
       createdBy: 'ed@example.com',

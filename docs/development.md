@@ -466,6 +466,14 @@ reading a reference's text, claimed on its primary key; and the nullable `projec
 tables and nullable columns: code deployed before it never names them, and an existing action or
 schedule reads as "the default project", which is none until one is set.
 
+`0049_site_migration_load.sql` adds `migration_runs.release_id` (nullable: the release a run's
+entries were added to), `migration_pages.unresolved_links` (integer, default 0, not
+null: the links in a loaded page's entry still waiting for their page's entry) and
+`migration_assets` (`space_id`, `environment_id`, `run_id`, `url` primary key; `asset_id`,
+`created_at`): the asset a run created from each URL, so a file is fetched once per run. A column
+with a default and a new table: code deployed before it never names either, and its rows read as
+no links waiting.
+
 `0048_site_migrations.sql` adds `migration_runs` (`space_id`, `environment_id`, `id` primary key;
 `name`, `source` JSON, `status`, `threshold`, `inventory` JSON, `error`, `version`, `created_*`,
 `updated_at`), `migration_templates` (`space_id`, `environment_id`, `run_id`, `id` primary key;

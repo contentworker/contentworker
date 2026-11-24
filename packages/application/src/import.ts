@@ -14,6 +14,7 @@ import {
   richTextFromHtml,
   SCOPES,
   type Scope,
+  UNIQUE_FIELD_TYPES,
   undeclaredOverrides,
   unwritableFields,
   ValidationError,
@@ -91,9 +92,44 @@ export interface ImportRunOptions {
    * an import that overwrites by default destroys edits made since the last run.
    */
   readonly conflicts?: ImportConflictPolicy;
+  /**
+   * Told the entry each record became, as it is written: for an in-process caller that keeps its
+   * own record of what became what (a site migration's pages). Not accepted over the API.
+   */
+  readonly onWritten?: (written: ImportWritten) => void;
+  /**
+   * Told each record that failed as it was written, with the error itself: for an in-process
+   * caller that treats a lost race (`ConflictError` on a unique claim, `TransactionConflictError`)
+   * differently from a refusal. The report names it either way. Not accepted over the API.
+   */
+  readonly onFailed?: (externalId: string, error: unknown) => void;
   // Nothing here publishes. Imported entries arrive as drafts, and publishing
   // them is the existing bulk job — which is resumable, cancellable and
   // reportable, none of which a flag on this call would be.
+}
+
+/** A record the run wrote, and the entry it is. */
+export interface ImportWritten {
+  readonly externalId: string;
+  readonly entryId: string;
+  readonly action: 'create' | 'update';
+}
+
+/**
+ * A source over records already read: for an in-process caller that builds them itself (a site
+ * migration's pages, from their import scripts' output) and hands over values already of the
+ * field types (documents, blocks, links), which the planner takes as they are. The payload is
+ * not read.
+ */
+export function recordsImportSource(records: readonly SourceRecord[]): ImportSource {
+  const fields = [...new Set(records.flatMap((r) => Object.keys(r.values)))];
+  return {
+    id: 'records',
+    name: 'Records',
+    async read() {
+      return { records, fields, warnings: [] };
+    },
+  };
 }
 
 /** One record's fate, decided identically by analyze and execute. */
@@ -215,14 +251,20 @@ export async function executeImport(
       if (record.action === 'update' && record.entryId) {
         await updateImportedEntry(ctx, scope, record.entryId, record.fields, blockedFields);
         updated += 1;
+        options.onWritten?.({
+          externalId: record.externalId,
+          entryId: record.entryId,
+          action: 'update',
+        });
       } else {
-        await createEntry(
+        const { entry } = await createEntry(
           ctx,
           scope,
           { contentTypeApiId: contentType.apiId, fields: record.fields },
           { copy: true, imported: true },
         );
         created += 1;
+        options.onWritten?.({ externalId: record.externalId, entryId: entry.id, action: 'create' });
       }
     } catch (err) {
       // One bad record does not abandon the other nine thousand — the report
@@ -231,6 +273,7 @@ export async function executeImport(
         externalId: record.externalId,
         message: err instanceof Error ? err.message : String(err),
       });
+      options.onFailed?.(record.externalId, err);
     }
   }
 
@@ -374,10 +417,19 @@ async function plan(
     .map((f) => f.apiId);
 
   const blockedFields = unwritableFields(principal, contentType.apiId, Object.fromEntries(defined));
-  const existing =
-    input.mapping.identityField && unknownTargetFields.length === 0
-      ? await indexExisting(ctx, scope, contentType.apiId, input.mapping.identityField, locale)
-      : new Map<string, string>();
+  const identityField = input.mapping.identityField;
+  const identityDefinition = identityField ? defined.get(identityField) : undefined;
+  const identityOf = (record: SourceRecord) =>
+    identityField ? asText(record.values[input.mapping.fields[identityField] ?? '']) : undefined;
+  let existing = new Map<string, string>();
+  if (identityField && unknownTargetFields.length === 0) {
+    existing =
+      identityDefinition?.unique && UNIQUE_FIELD_TYPES.includes(identityDefinition.type)
+        ? await claimedIdentities(ctx, scope, contentType.apiId, identityField, locale, [
+            ...new Set(read.records.flatMap((r) => identityOf(r) ?? [])),
+          ])
+        : await indexExisting(ctx, scope, contentType.apiId, identityField, locale);
+  }
 
   const vctx = { defaultLocale: config.defaultLocale, locales: config.locales };
   const planned: PlannedRecord[] = [];
@@ -398,9 +450,7 @@ async function plan(
     for (const apiId of unwritableFields(principal, contentType.apiId, fields)) {
       issues.push(`${apiId}: your role may not write this field`);
     }
-    const identity = input.mapping.identityField
-      ? asText(record.values[input.mapping.fields[input.mapping.identityField] ?? ''])
-      : undefined;
+    const identity = identityOf(record);
     const match = identity ? existing.get(identity) : undefined;
 
     let action: PlannedRecord['action'] = 'create';
@@ -511,6 +561,35 @@ async function planBlockConfig(
       planned[i] = { ...p, issues: found.map((f) => `${f.field}: ${f.message}`) };
     }
   });
+}
+
+/** Identity values asked of the unique claims per call. */
+const CLAIM_LOOKUP_BATCH = 200;
+
+/**
+ * The entries holding the records' identity values, when the identity field is `unique`: its
+ * claims are an index of exactly those values (outside the trash, which releases them), so only
+ * the payload's values are looked up, however many entries the type holds.
+ */
+async function claimedIdentities(
+  ctx: AppContext,
+  scope: Scope,
+  contentTypeApiId: string,
+  fieldApiId: string,
+  locale: string,
+  values: readonly string[],
+): Promise<Map<string, string>> {
+  const index = new Map<string, string>();
+  for (let at = 0; at < values.length; at += CLAIM_LOOKUP_BATCH) {
+    const held = await ctx.store.entries.findUniqueConflicts(
+      scope,
+      values
+        .slice(at, at + CLAIM_LOOKUP_BATCH)
+        .map((value) => ({ contentTypeApiId, fieldApiId, locale, value })),
+    );
+    for (const claim of held) index.set(claim.value, claim.entryId);
+  }
+  return index;
 }
 
 /**
