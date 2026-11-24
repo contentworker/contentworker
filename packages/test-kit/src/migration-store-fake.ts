@@ -145,6 +145,13 @@ export class InMemoryMigrationStore implements MigrationStore {
     return t ? clone(t) : null;
   }
 
+  async saveTemplate(scope: Scope, runId: string, template: MigrationTemplate): Promise<void> {
+    const key = `${scopeKey(scope)}::${runId}::${template.id}`;
+    // As D1: an id the run doesn't hold is skipped.
+    if (!this.templateData.has(key)) return;
+    this.templateData.set(key, clone({ ...template, runId }));
+  }
+
   async replaceTemplates(
     scope: Scope,
     runId: string,

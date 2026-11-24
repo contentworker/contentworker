@@ -1,3 +1,4 @@
+import type { ContentTypeDraft } from '../content-type/content-type';
 import { type FieldIssue, ValidationError } from '../errors';
 import { compileWildcard, matchWildcard, type Wildcard } from './wildcard';
 
@@ -43,6 +44,12 @@ export const MIGRATION_MAX_GLOBS = 50;
 export const MIGRATION_MAX_GLOB_LENGTH = 512;
 export const MIGRATION_MAX_URL_LENGTH = 2048;
 export const MIGRATION_MAX_NAME_LENGTH = 200;
+/**
+ * The field a migrated page's entry holds its source URL in: the identity a load matches on, so
+ * loading a page again updates its entry rather than adding a second. Every template's content
+ * type has it (`Symbol` or `Text`, not localized).
+ */
+export const MIGRATION_SOURCE_URL_FIELD = 'sourceUrl';
 /** Score at or above which a page's output counts as validated, unless the run sets its own. */
 export const MIGRATION_DEFAULT_THRESHOLD = 0.8;
 
@@ -136,6 +143,12 @@ export interface MigrationPage {
   readonly fingerprint: readonly string[] | null;
   /** The import script's structured output for it; null until transformed. */
   readonly output: MigrationArtifact | null;
+  /**
+   * SHA-256 of the script version its last transform ran (whether it produced `output` or
+   * failed); null until transformed. A page whose template's script has changed since is
+   * transformed again.
+   */
+  readonly outputScript: string | null;
   readonly score: MigrationScore | null;
   /** The entry it was loaded as. */
   readonly entryId: string | null;
@@ -162,9 +175,33 @@ export interface MigrationTemplate {
   readonly contentTypeId: string | null;
   /** Its import script, once written. */
   readonly script: MigrationArtifact | null;
+  /**
+   * The content type its pages are proposed to become ({@link checkTemplateModel}): recorded
+   * while the template is authored, and created only when it is approved.
+   */
+  readonly proposal: ContentTypeDraft | null;
+  /** How its script did the last time it was tried on the sample pages. */
+  readonly lastTry: MigrationTrySummary | null;
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/** A try of a template's script on its sample pages, as the template keeps it. */
+export interface MigrationTrySummary {
+  readonly at: string;
+  /** SHA-256 of the script that was tried. */
+  readonly scriptSha256: string;
+  /** Sample pages tried. */
+  readonly pages: number;
+  /** Pages whose run returned an output of the right shape. */
+  readonly ok: number;
+  /** Pages scored at or above the run's threshold. */
+  readonly passed: number;
+  /** Mean overall score over the pages that ran (0 when none did). */
+  readonly meanScore: number;
+  /** The first few failures and issues, one line each. */
+  readonly problems: readonly string[];
 }
 
 /** How well a page's structured output kept its source ({@link scoreImportOutput}). */

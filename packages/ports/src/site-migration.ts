@@ -48,6 +48,12 @@ export interface MigrationStore {
   listTemplates(scope: Scope, runId: string): Promise<MigrationTemplate[]>;
   getTemplate(scope: Scope, runId: string, id: string): Promise<MigrationTemplate | null>;
   /**
+   * Rewrites one of the run's templates whole (its proposal, script, status, last try); an id
+   * the run doesn't hold is skipped. No compare-and-set of its own: ride it with the run's
+   * `saveRun`, which is what keeps two writers of a run's templates apart.
+   */
+  saveTemplate(scope: Scope, runId: string, template: MigrationTemplate): Promise<void>;
+  /**
    * Replaces the run's templates with `clusters`, atomically: the old templates go, each new one
    * is written, its pages point at it and move to `clustered`, and every other page of the run
    * goes back to `discovered` with no template; every page's `updatedAt` becomes `at`.
@@ -61,6 +67,55 @@ export interface MigrationStore {
     clusters: readonly MigrationCluster[],
     at: string,
   ): Promise<void>;
+}
+
+/**
+ * Who a migration's background steps act as, by reference, resolved again before each step that
+ * writes content (`JobStarter` in the application): never a credential.
+ */
+export type MigrationActor =
+  | { readonly kind: 'key'; readonly keyId: string }
+  | { readonly kind: 'member'; readonly memberId: string }
+  | { readonly kind: 'deployment' };
+
+/** What a migration run's durable driver starts with. */
+export interface MigrationRunParams {
+  readonly scope: Scope;
+  readonly runId: string;
+  /** Who started it: the inventory, transforms and the template agents act for them. */
+  readonly startedBy: MigrationActor;
+}
+
+/** A template's approval, delivered to the run's driver. */
+export interface MigrationTemplateApproved {
+  /** Who approved it: its pages are loaded as them. */
+  readonly approvedBy: MigrationActor;
+}
+
+/** The go-ahead to publish a run, delivered to its driver. */
+export interface MigrationPublishApproved {
+  readonly approvedBy: MigrationActor;
+  /** Add the entries to a release rather than publish them now. */
+  readonly viaRelease?: boolean;
+  readonly releaseId?: string;
+  readonly releaseTitle?: string;
+}
+
+/**
+ * Starts and signals a migration run's durable driver (one Workflow instance per run). Each call
+ * is safe to repeat: starting a run that has a driver leaves it as it is, and an approval sent
+ * twice is taken once (the driver waits for each event once).
+ */
+export interface MigrationRunner {
+  /** False when the run's driver exists already. */
+  start(params: MigrationRunParams): Promise<boolean>;
+  templateApproved(
+    scope: Scope,
+    runId: string,
+    templateId: string,
+    event: MigrationTemplateApproved,
+  ): Promise<void>;
+  publishApproved(scope: Scope, runId: string, event: MigrationPublishApproved): Promise<void>;
 }
 
 export interface MigrationCluster {
