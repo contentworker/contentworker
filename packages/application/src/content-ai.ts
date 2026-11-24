@@ -20,7 +20,12 @@ import { recordAgentRun } from './agent-audit';
 import { decideWithBudget, generateWithBudget } from './ai-budget';
 import { answerStrings, conformingAnswer } from './ai-json';
 import { projectDecisions, resolveAiProject } from './ai-projects';
-import { describeFieldForModel, UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import {
+  describeFieldForModel,
+  stripEmoji,
+  UNTRUSTED_CONTENT_GUARD,
+  wrapUntrusted,
+} from './ai-prompt';
 import { requireAiCapability } from './ai-settings';
 import { SYSTEM_CALLER } from './content-types';
 import type { AppContext } from './context';
@@ -630,7 +635,7 @@ export async function suggestEntryTags(
     : obj.existingTags
         .map((n) => byName.get(n.toLowerCase())?.id)
         .filter((v): v is string => Boolean(v));
-  const newTags = obj.newTags.map((n) => n.trim()).filter((n) => n && !byName.has(n.toLowerCase()));
+  const newTags = obj.newTags.map(stripEmoji).filter((n) => n && !byName.has(n.toLowerCase()));
   return finishTagSuggestion(ctx, scope, id, input, tagIds, newTags, result.usage);
 }
 

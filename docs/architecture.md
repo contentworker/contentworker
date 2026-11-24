@@ -760,11 +760,11 @@ retries, and cannot fail the request. What the outbox cannot do is _change or re
 
 | hook                  | fires                                          | mutate | veto |
 | --------------------- | ---------------------------------------------- | ------ | ---- |
-| `entry:beforeSave`    | `createEntry` / `updateEntry`                  | ✅     | ✅   |
-| `entry:beforePublish` | in `publishEntryTx`, before the unit commits   | —      | ✅   |
-| `entry:beforeTrash`   | `trashEntry`                                   | —      | ✅   |
-| `entry:beforePurge`   | `purgeEntry`                                   | —      | ✅   |
-| `asset:beforeCreate`  | `createAsset`, before the upload URL is minted | ✅     | ✅   |
+| `entry:beforeSave`    | `createEntry` / `updateEntry`                  | yes    | yes  |
+| `entry:beforePublish` | in `publishEntryTx`, before the unit commits   | no     | yes  |
+| `entry:beforeTrash`   | `trashEntry`                                   | no     | yes  |
+| `entry:beforePurge`   | `purgeEntry`                                   | no     | yes  |
+| `asset:beforeCreate`  | `createAsset`, before the upload URL is minted | yes    | yes  |
 
 Rules the seam holds:
 
