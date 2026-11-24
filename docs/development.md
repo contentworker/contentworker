@@ -483,7 +483,7 @@ and by entry, with the partial unique index `moderation_holds_open_entry` holdin
 entry. A new table: code deployed before it unpublishes a flagged entry without opening a hold, as
 it always has, and nothing is backfilled.
 
-`0053_migration_clustering_hold.sql` adds `migration_runs.clustering_held_at` (nullable: when the
+`0052_migration_clustering_hold.sql` adds `migration_runs.clustering_held_at` (nullable: when the
 run's background driver took its templates on, from when the run isn't clustered again). Code
 deployed before it never names the column, so a run reads as not held, and one it rewrites keeps its
 hold. Nothing is backfilled: no column says which runs had a driver, so one already waiting for its

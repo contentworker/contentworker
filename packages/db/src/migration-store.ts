@@ -112,7 +112,7 @@ const pageValues = (p: MigrationPage) => ({
 
 /**
  * Site migration records on D1 (0048_site_migrations, 0049_site_migration_load,
- * 0050_site_migration_authoring, 0053_migration_clustering_hold). A run is rewritten whole at its version's
+ * 0050_site_migration_authoring, 0052_migration_clustering_hold). A run is rewritten whole at its version's
  * compare-and-set; pages are added past the 100-parameter cap in chunks that skip a URL the run
  * already has; a clustering replaces a run's templates and its pages' assignments in one batch; a
  * load moves its pages at a compare-and-set on each page's `updatedAt`.

@@ -1,4 +1,4 @@
--- 0053_migration_clustering_hold: when a site migration run's background driver took its templates
+-- 0052_migration_clustering_hold: when a site migration run's background driver took its templates
 -- on. Mirrors `migrationRuns.clusteringHeldAt` in packages/db/src/schema.ts.
 --
 -- Expand-only. Nullable, so code deployed before it (which names the columns it writes, and never

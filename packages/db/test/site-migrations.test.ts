@@ -136,7 +136,7 @@ describe('site migrations on D1', () => {
     await store.migrations.createRun(scope, r);
     await store.migrations.addPages(scope, r.id, [page(r.id, 1)]);
     const t = template(r.id);
-    // The driver clusters and holds in one unit (0053).
+    // The driver clusters and holds in one unit (0052).
     const held: MigrationRun = {
       ...r,
       status: 'clustered',
