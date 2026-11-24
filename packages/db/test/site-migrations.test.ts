@@ -49,6 +49,7 @@ const page = (runId: string, n: number, over: Partial<MigrationPage> = {}): Migr
   runId,
   url: `https://site.test/blog/${n}`,
   path: `/blog/${n}`,
+  depth: 0,
   stage: 'discovered',
   templateId: null,
   title: null,
@@ -277,5 +278,81 @@ describe('site migrations on D1', () => {
         .first<{ n: number }>();
       expect(n?.n, table).toBe(0);
     }
+  });
+
+  it('knows which URLs a run holds, past the cap, and keeps depth', async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    await store.migrations.addPages(
+      scope,
+      r.id,
+      Array.from({ length: 150 }, (_, i) => page(r.id, i, { depth: i % 3 })),
+    );
+    const asked = Array.from({ length: 700 }, (_, i) => `https://site.test/blog/${i}`);
+    expect((await store.migrations.knownUrls(scope, r.id, asked)).sort()).toEqual(
+      asked.slice(0, 150).sort(),
+    );
+    expect(
+      await store.migrations.knownUrls({ ...scope, environmentId: 'other' }, r.id, asked),
+    ).toEqual([]);
+    expect((await store.migrations.getPage(scope, r.id, 'p-00005'))?.depth).toBe(2);
+  });
+
+  it('writes more templates in one replacement than one statement binds', async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    const all = Array.from({ length: 20 }, (_, i) => page(r.id, i));
+    await store.migrations.addPages(scope, r.id, all);
+    // 14 columns a template: 7 a statement, so 20 take three.
+    const many = all.map((p, i) =>
+      template(r.id, {
+        id: `t-${String(i).padStart(2, '0')}`,
+        pageCount: 1,
+        samplePageIds: [p.id],
+      }),
+    );
+    await store.migrations.replaceTemplates(
+      scope,
+      r.id,
+      many.map((t, i) => ({ template: t, pageIds: [all[i]?.id as string] })),
+      LATER,
+    );
+    expect((await store.migrations.listTemplates(scope, r.id)).map((t) => t.id)).toEqual(
+      many.map((t) => t.id),
+    );
+    expect((await store.migrations.countPages(scope, r.id)).byStage).toEqual({ clustered: 20 });
+  });
+
+  it('refuses to replace templates once one is past pending, directly and in a unit', async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    await store.migrations.addPages(scope, r.id, [page(r.id, 1)]);
+    const authored = template(r.id, { status: 'authoring', pageCount: 1 });
+    await store.migrations.replaceTemplates(
+      scope,
+      r.id,
+      [{ template: authored, pageIds: ['p-00001'] }],
+      AT,
+    );
+    await expect(store.migrations.replaceTemplates(scope, r.id, [], LATER)).rejects.toThrow(
+      TransactionConflictError,
+    );
+    await expect(
+      store.withTransaction(async (tx) => {
+        await tx.migrations.replaceTemplates(scope, r.id, [], LATER);
+        await tx.migrations.saveRun(scope, { ...r, version: 2 }, 1);
+      }),
+    ).rejects.toThrow(TransactionConflictError);
+    expect((await store.migrations.listTemplates(scope, r.id)).map((t) => t.id)).toEqual([
+      authored.id,
+    ]);
+    expect((await store.migrations.getRun(scope, r.id))?.version).toBe(1);
+    expect((await store.migrations.getPage(scope, r.id, 'p-00001'))?.templateId).toBe(authored.id);
+    // The guard leaves nothing behind.
+    const left = await testDb.prepare('SELECT count(*) AS n FROM _guard').first<{ n: number }>();
+    expect(left?.n).toBe(0);
   });
 });

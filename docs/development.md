@@ -472,7 +472,7 @@ schedule reads as "the default project", which is none until one is set.
 `label`, `status`, `page_count`, `sample_page_ids` and `fingerprint` JSON, `content_type_id`,
 `script` artifact JSON, `version`, `created_at`, `updated_at`) and `migration_pages` (`space_id`,
 `environment_id`, `run_id`, `id` primary key; `url`, unique per run by `migration_pages_by_url`;
-`path`, `stage`, `template_id`, `title`, `last_modified`, `http_status`, the `html` and `output`
+`path`, `depth` (a crawl's link depth, default 0), `stage`, `template_id`, `title`, `last_modified`, `http_status`, the `html` and `output`
 artifact JSON, `fingerprint` and `score` JSON, `entry_id`, `error`, `created_at`, `updated_at`;
 indexed by stage and by template). See [Site migrations](./domain-model.md#site-migrations). These
 are new tables, which code deployed before this migration never reads. Page HTML is stored in the

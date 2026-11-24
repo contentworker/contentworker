@@ -1,3 +1,5 @@
+import { compileWildcard, matchWildcard, type Wildcard } from './wildcard';
+
 /**
  * robots.txt (RFC 9309): which paths a crawler may fetch, the sitemaps a site announces, and the
  * crawl delay it asks for. A run fetches as {@link MIGRATION_CRAWLER_TOKEN}: the group naming that
@@ -67,22 +69,44 @@ export function parseRobotsTxt(text: string): Robots {
   return { groups, sitemaps };
 }
 
-function groupFor(robots: Robots, token: string): RobotsGroup | undefined {
-  const t = token.toLowerCase();
-  const named = robots.groups.filter((g) => g.agents.some((a) => a !== '*' && t.startsWith(a)));
-  if (named.length) return merge(named);
-  const any = robots.groups.filter((g) => g.agents.includes('*'));
-  return any.length ? merge(any) : undefined;
+interface CompiledGroup {
+  readonly rules: readonly {
+    readonly allow: boolean;
+    readonly length: number;
+    readonly w: Wildcard;
+  }[];
+  readonly crawlDelay: number;
 }
 
-// Groups for the same agent are combined, as the RFC asks.
-function merge(groups: readonly RobotsGroup[]): RobotsGroup {
-  const delays = groups.flatMap((g) => (g.crawlDelay === undefined ? [] : [g.crawlDelay]));
-  return {
-    agents: groups.flatMap((g) => g.agents),
-    rules: groups.flatMap((g) => g.rules),
-    ...(delays.length ? { crawlDelay: Math.max(...delays) } : {}),
-  };
+/** Each Robots' applicable group per token, compiled once: a run checks every URL against it. */
+const COMPILED = new WeakMap<Robots, Map<string, CompiledGroup | null>>();
+
+function compiledFor(robots: Robots, token: string): CompiledGroup | null {
+  const t = token.toLowerCase();
+  let byToken = COMPILED.get(robots);
+  if (!byToken) {
+    byToken = new Map();
+    COMPILED.set(robots, byToken);
+  }
+  const cached = byToken.get(t);
+  if (cached !== undefined) return cached;
+  const named = robots.groups.filter((g) => g.agents.some((a) => a !== '*' && t.startsWith(a)));
+  const any = robots.groups.filter((g) => g.agents.includes('*'));
+  // Groups for the same agent are combined, as the RFC asks.
+  const groups = named.length ? named : any;
+  const compiled: CompiledGroup | null = groups.length
+    ? {
+        rules: groups
+          .flatMap((g) => g.rules)
+          .map((r) => {
+            const path = safeDecode(r.path);
+            return { allow: r.allow, length: path.length, w: compileWildcard(path, 'robots') };
+          }),
+        crawlDelay: Math.max(0, ...groups.map((g) => g.crawlDelay ?? 0)),
+      }
+    : null;
+  byToken.set(t, compiled);
+  return compiled;
 }
 
 /** Whether `path` (with its query, if any) may be fetched. */
@@ -91,36 +115,24 @@ export function robotsAllows(
   path: string,
   token = MIGRATION_CRAWLER_TOKEN,
 ): boolean {
-  const group = groupFor(robots, token);
+  const group = compiledFor(robots, token);
   if (!group) return true;
   // robots.txt itself is always allowed.
   if (path === '/robots.txt') return true;
-  let best: RobotsRule | undefined;
-  let bestLength = -1;
+  const decoded = safeDecode(path);
+  let best: { allow: boolean; length: number } | undefined;
   for (const rule of group.rules) {
-    if (!ruleMatches(rule.path, path)) continue;
-    const length = rule.path.length;
-    if (length > bestLength || (length === bestLength && rule.allow)) {
-      best = rule;
-      bestLength = length;
+    if (best && (rule.length < best.length || (rule.length === best.length && best.allow))) {
+      continue;
     }
+    if (matchWildcard(rule.w, decoded)) best = rule;
   }
   return best ? best.allow : true;
 }
 
 /** The delay between requests the site asks of the token, capped; 0 when it asks none. */
 export function robotsCrawlDelay(robots: Robots, token = MIGRATION_CRAWLER_TOKEN): number {
-  return Math.min(groupFor(robots, token)?.crawlDelay ?? 0, MAX_CRAWL_DELAY_SECONDS);
-}
-
-function ruleMatches(rule: string, path: string): boolean {
-  const anchored = rule.endsWith('$');
-  const body = anchored ? rule.slice(0, -1) : rule;
-  const pattern = safeDecode(body)
-    .split('*')
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
-    .join('.*');
-  return new RegExp(`^${pattern}${anchored ? '$' : ''}`).test(safeDecode(path));
+  return Math.min(compiledFor(robots, token)?.crawlDelay ?? 0, MAX_CRAWL_DELAY_SECONDS);
 }
 
 // Rules and paths are compared percent-decoded, so `/caf%C3%A9` and `/café` are the same path.

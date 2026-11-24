@@ -99,6 +99,11 @@ export class InMemoryMigrationStore implements MigrationStore {
     return page ? clone(page) : null;
   }
 
+  async knownUrls(scope: Scope, runId: string, urls: readonly string[]): Promise<string[]> {
+    const held = new Set(this.pagesOf(scope, runId).map((p) => p.url));
+    return [...new Set(urls)].filter((u) => held.has(u));
+  }
+
   async listPages(
     scope: Scope,
     runId: string,
@@ -146,6 +151,10 @@ export class InMemoryMigrationStore implements MigrationStore {
     clusters: readonly MigrationCluster[],
     at: string,
   ): Promise<void> {
+    // As D1: refused while a template is past pending.
+    if (this.templatesOf(scope, runId).some(([, t]) => t.status !== 'pending')) {
+      throw new TransactionConflictError();
+    }
     for (const [key] of this.templatesOf(scope, runId)) this.templateData.delete(key);
     const assigned = new Map<string, string>();
     for (const { template, pageIds } of clusters) {

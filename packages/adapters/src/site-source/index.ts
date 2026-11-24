@@ -2,7 +2,6 @@ import {
   ALLOW_ALL_ROBOTS,
   MIGRATION_CRAWLER_TOKEN,
   type MigrationSource,
-  matchesPathGlob,
   normalizePageUrl,
   pageHrefs,
   parseHttpUrl,
@@ -18,6 +17,7 @@ import type {
   FetchedPage,
   RemoteFetcher,
   SiteDiscovery,
+  SiteFetch,
   SiteSource,
 } from '@contentworker/ports';
 
@@ -27,8 +27,11 @@ import type {
  * The caller screens the source URL (the SSRF guard); from there every request this makes stays
  * on that URL's origin: a sitemap entry, a sitemap index child, a robots.txt `Sitemap` line or a
  * link on another origin is counted and left, never fetched. robots.txt is read once per origin
- * and kept to (RFC 9309: unreachable for a server error means nothing may be fetched), and its
- * crawl delay, when it asks one, makes the requests one at a time that far apart.
+ * and kept to. A server error or no answer means the site can't say what may be fetched, so
+ * nothing is (RFC 9309) and the caller is told to try again; a 4xx, or a redirect this fetcher
+ * won't follow, means there are no rules. When robots.txt asks a crawl delay, every request to
+ * the origin after the first (robots.txt included) waits until that long after the one before,
+ * across batches and calls, one at a time.
  */
 export interface SiteSourceOptions {
   /** Requests in flight at once, when the site asks no crawl delay. Default 4. */
@@ -36,30 +39,67 @@ export interface SiteSourceOptions {
   readonly userAgent?: string;
   /** Waits between paced requests; a test passes one that returns at once. */
   readonly wait?: (ms: number) => Promise<void>;
+  /** Milliseconds now, for pacing; a test passes a fixed one. */
+  readonly now?: () => number;
   readonly timeoutMs?: number;
 }
 
 /** Largest page read. */
 export const SITE_PAGE_MAX_BYTES = 5 * 1024 * 1024;
-/** Largest sitemap file read, compressed or not (the protocol's own cap is 50 MB uncompressed). */
+/**
+ * Largest sitemap file read, as fetched and as decompressed (the protocol's own cap is 50 MB
+ * uncompressed). Decompressed text is decoded as it streams, so no second copy of the bytes is held.
+ */
 export const SITEMAP_MAX_BYTES = 50 * 1024 * 1024;
 const ROBOTS_MAX_BYTES = 512 * 1024;
 /** Most sitemap files one discovery reads (an index and its children). */
 const MAX_SITEMAP_FILES = 100;
-/** Links deep a crawl goes from its start page. */
-const MAX_CRAWL_DEPTH = 8;
-/** Not pages: a crawl doesn't fetch links to these. */
+/** Not pages: a crawl doesn't follow links to these. */
 const NON_PAGE =
   /\.(?:jpe?g|png|gif|svg|webp|avif|ico|bmp|tiff?|pdf|zip|gz|tar|docx?|xlsx?|pptx?|mp4|webm|mov|mp3|wav|css|js|mjs|json|xml|txt|rss|atom|woff2?|ttf|eot)$/i;
 
 export const DEFAULT_SITE_USER_AGENT = `${MIGRATION_CRAWLER_TOKEN}/1.0 (site migration)`;
 
+interface RobotsState {
+  readonly robots: Robots;
+  readonly warning?: string;
+  /** Why robots.txt couldn't be read; nothing is fetched while it is set. */
+  readonly unavailable?: string;
+}
+
 export function createSiteSource(fetcher: RemoteFetcher, opts: SiteSourceOptions = {}): SiteSource {
   const userAgent = opts.userAgent ?? DEFAULT_SITE_USER_AGENT;
   const concurrency = Math.max(1, Math.min(opts.concurrency ?? 4, 8));
   const wait = opts.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = opts.now ?? (() => Date.now());
   const timeoutMs = opts.timeoutMs ?? 15_000;
-  const robotsByOrigin = new Map<string, Promise<{ robots: Robots; warning?: string }>>();
+  const robotsByOrigin = new Map<string, Promise<RobotsState>>();
+  /** Per origin: the delay robots.txt asks (ms), the last request's start, and the queue. */
+  const pace = new Map<string, { delayMs: number; last?: number; queue: Promise<unknown> }>();
+
+  /**
+   * Runs one request to `origin`. Unpaced, it just records its start; paced, it joins the
+   * origin's queue and starts no sooner than the delay after the request before it.
+   */
+  const paced = <T>(origin: string, request: () => Promise<T>): Promise<T> => {
+    const p = pace.get(origin) ?? { delayMs: 0, queue: Promise.resolve() };
+    pace.set(origin, p);
+    if (p.delayMs <= 0) {
+      p.last = now();
+      return request();
+    }
+    const run = async () => {
+      if (p.last !== undefined) {
+        const gap = p.last + p.delayMs - now();
+        if (gap > 0) await wait(gap);
+      }
+      p.last = now();
+      return request();
+    };
+    const result = p.queue.then(run);
+    p.queue = result.catch(() => undefined);
+    return result;
+  };
 
   const robotsFor = (origin: string) => {
     let found = robotsByOrigin.get(origin);
@@ -69,49 +109,38 @@ export function createSiteSource(fetcher: RemoteFetcher, opts: SiteSourceOptions
     }
     return found;
   };
-  const readRobots = async (origin: string): Promise<{ robots: Robots; warning?: string }> => {
+  const readRobots = async (origin: string): Promise<RobotsState> => {
     const url = `${origin}/robots.txt`;
+    let state: RobotsState;
     try {
-      const res = await fetcher.get(url, { maxBytes: ROBOTS_MAX_BYTES, timeoutMs, userAgent });
-      if (res.status >= 200 && res.status < 300) return { robots: parseRobotsTxt(res.body) };
-      // No robots.txt (4xx) means no rules; a server error means the site can't say, so nothing.
-      if (res.status >= 400 && res.status < 500) return { robots: ALLOW_ALL_ROBOTS };
-      return {
-        robots: parseRobotsTxt('User-agent: *\nDisallow: /'),
-        warning: `${url} answered ${res.status}; nothing is fetched while it can't be read`,
-      };
+      const res = await paced(origin, () =>
+        fetcher.get(url, { maxBytes: ROBOTS_MAX_BYTES, timeoutMs, userAgent }),
+      );
+      if (res.status >= 200 && res.status < 300) state = { robots: parseRobotsTxt(res.body) };
+      else if (res.status >= 300 && res.status < 400) {
+        state = {
+          robots: ALLOW_ALL_ROBOTS,
+          warning: `${url} answered ${res.status} (a redirect, not followed); read as no rules`,
+        };
+      } else if (res.status >= 400 && res.status < 500) state = { robots: ALLOW_ALL_ROBOTS };
+      else state = unavailable(`${url} answered ${res.status}`);
     } catch (err) {
-      return {
-        robots: parseRobotsTxt('User-agent: *\nDisallow: /'),
-        warning: `${url} could not be read (${messageOf(err)}); nothing is fetched`,
-      };
+      state = unavailable(`${url} could not be read (${messageOf(err)})`);
     }
+    // Not kept when unavailable: the next call asks again.
+    if (state.unavailable) robotsByOrigin.delete(origin);
+    const delayMs = robotsCrawlDelay(state.robots) * 1000;
+    const p = pace.get(origin);
+    if (p) p.delayMs = delayMs;
+    return state;
   };
 
-  /** Runs `work` over `items`, a few at a time or paced one by one; results in input order. */
-  const pooled = async <T, R>(
-    items: readonly T[],
-    robots: Robots,
-    work: (item: T) => Promise<R>,
-  ): Promise<R[]> => {
-    const delayMs = robotsCrawlDelay(robots) * 1000;
-    const out: R[] = [];
-    if (delayMs > 0) {
-      for (const [i, item] of items.entries()) {
-        if (i > 0) await wait(delayMs);
-        out.push(await work(item));
-      }
-      return out;
-    }
-    for (let at = 0; at < items.length; at += concurrency) {
-      out.push(...(await Promise.all(items.slice(at, at + concurrency).map(work))));
-    }
-    return out;
-  };
-
-  const fetchPage = async (url: string): Promise<FetchedPage> => {
+  const fetchPage = async (source: MigrationSource, url: string): Promise<FetchedPage> => {
+    const origin = originOf(url);
     try {
-      const res = await fetcher.get(url, { maxBytes: SITE_PAGE_MAX_BYTES, timeoutMs, userAgent });
+      const res = await paced(origin, () =>
+        fetcher.get(url, { maxBytes: SITE_PAGE_MAX_BYTES, timeoutMs, userAgent }),
+      );
       const ct = res.contentType ? { contentType: res.contentType } : {};
       if (res.status < 200 || res.status >= 300) {
         // A redirect is a status here, never a hop: the fetcher won't follow one off the origin.
@@ -120,35 +149,54 @@ export function createSiteSource(fetcher: RemoteFetcher, opts: SiteSourceOptions
       if (!isHtml(res.contentType, res.body)) {
         return { url, status: res.status, ...ct, html: '', error: `not HTML (${res.contentType})` };
       }
-      return { url, status: res.status, ...ct, html: res.body };
+      const page: FetchedPage = { url, status: res.status, ...ct, html: res.body };
+      if (source.kind !== 'crawl') return page;
+      const { robots } = await robotsFor(origin);
+      return { ...page, links: linksOf(res.body, url, origin, robots) };
     } catch (err) {
       return { url, status: 0, html: '', error: messageOf(err) };
     }
   };
 
   return {
-    async fetchPages(source, urls) {
+    async fetchPages(source, urls): Promise<SiteFetch> {
       const origin = originOf(source.url);
-      const { robots } = await robotsFor(origin);
-      return pooled(urls, robots, async (raw): Promise<FetchedPage> => {
-        const url = normalizePageUrl(raw);
-        if (!url || originOf(url) !== origin) {
-          return { url: raw, status: 0, html: '', error: 'not on the source origin' };
-        }
-        if (!robotsAllows(robots, new URL(url).pathname)) {
-          return { url, status: 0, html: '', error: 'disallowed by robots.txt' };
-        }
-        return fetchPage(url);
-      });
+      const state = await robotsFor(origin);
+      if (state.unavailable) return { pages: [], unavailable: state.unavailable };
+      const out: FetchedPage[] = [];
+      for (let at = 0; at < urls.length; at += concurrency) {
+        const batch = urls.slice(at, at + concurrency).map(async (raw): Promise<FetchedPage> => {
+          const url = normalizePageUrl(raw);
+          if (!url || originOf(url) !== origin) {
+            return { url: raw, status: 0, html: '', error: 'not on the source origin' };
+          }
+          if (!robotsAllows(state.robots, new URL(url).pathname)) {
+            return { url, status: 0, html: '', error: 'disallowed by robots.txt' };
+          }
+          return fetchPage(source, url);
+        });
+        out.push(...(await Promise.all(batch)));
+      }
+      return { pages: out };
     },
 
     async discover(source, onPage) {
       const origin = originOf(source.url);
-      const { robots, warning } = await robotsFor(origin);
-      const tally = new Tally(source, origin, robots);
-      if (warning) tally.warnings.push(warning);
-      if (source.kind === 'sitemap') await discoverSitemaps(source, origin, robots, tally, onPage);
-      else await crawl(source, origin, robots, tally, onPage);
+      const state = await robotsFor(origin);
+      const tally = new Tally(source, origin, state.robots);
+      if (state.warning) tally.warnings.push(state.warning);
+      if (state.unavailable) {
+        // Nothing more is asked of the site, sitemaps included.
+        tally.warnings.push(`${state.unavailable}; nothing is fetched while it can't be read`);
+        return { ...tally.report(), unavailable: state.unavailable };
+      }
+      if (source.kind === 'sitemap')
+        await discoverSitemaps(source, origin, state.robots, tally, onPage);
+      else {
+        // A crawl starts from its start page; its links come back with each fetch.
+        const url = tally.considerStart(source.url);
+        if (url) await onPage({ url });
+      }
       return tally.report();
     },
   };
@@ -181,7 +229,11 @@ export function createSiteSource(fetcher: RemoteFetcher, opts: SiteSourceOptions
         break;
       }
       seen.add(url);
-      const xml = await readSitemap(url, tally);
+      if (!robotsAllows(robots, new URL(url).pathname)) {
+        tally.warnings.push(`robots.txt disallows the sitemap ${url}; not read`);
+        continue;
+      }
+      const xml = await readSitemap(origin, url, tally);
       if (xml === undefined) continue;
       const parsed = parseSitemapXml(xml);
       for (const child of parsed.sitemaps) {
@@ -203,94 +255,44 @@ export function createSiteSource(fetcher: RemoteFetcher, opts: SiteSourceOptions
     }
   }
 
-  async function readSitemap(url: string, tally: Tally): Promise<string | undefined> {
+  async function readSitemap(
+    origin: string,
+    url: string,
+    tally: Tally,
+  ): Promise<string | undefined> {
     try {
-      const file = await fetcher.getBytes(url, {
-        maxBytes: SITEMAP_MAX_BYTES,
-        timeoutMs,
-        userAgent,
-      });
+      const file = await paced(origin, () =>
+        fetcher.getBytes(url, { maxBytes: SITEMAP_MAX_BYTES, timeoutMs, userAgent }),
+      );
       if (file.status < 200 || file.status >= 300) {
         tally.warnings.push(`sitemap ${url} answered ${file.status}`);
         return undefined;
       }
       const gzipped = file.bytes[0] === 0x1f && file.bytes[1] === 0x8b;
-      const bytes = gzipped ? await gunzip(file.bytes, SITEMAP_MAX_BYTES) : file.bytes;
-      return new TextDecoder().decode(bytes);
+      return gzipped
+        ? await gunzipText(file.bytes, SITEMAP_MAX_BYTES)
+        : new TextDecoder().decode(file.bytes);
     } catch (err) {
       tally.warnings.push(`sitemap ${url} could not be read (${messageOf(err)})`);
       return undefined;
     }
   }
+}
 
-  async function crawl(
-    source: MigrationSource,
-    origin: string,
-    robots: Robots,
-    tally: Tally,
-    onPage: (page: DiscoveredPage) => Promise<void>,
-  ): Promise<void> {
-    const startUrl = normalizePageUrl(source.url) as string;
-    tally.discovered = 1;
-    if (!robotsAllows(robots, new URL(startUrl).pathname)) {
-      tally.skipped.robots += 1;
-      tally.warnings.push(`robots.txt disallows the start page ${startUrl}`);
-      return;
-    }
-    // Pages fetched only for their links (outside `include`) count against this budget too: room
-    // for a section index or two above the pages wanted, without crawling a whole site for them.
-    const maxFetches = source.maxPages * 2 + 100;
-    let fetches = 0;
-    const queued = new Set([startUrl]);
-    let frontier = [startUrl];
-    for (let depth = 0; depth <= MAX_CRAWL_DEPTH && frontier.length > 0; depth += 1) {
-      const next: string[] = [];
-      let done = 0;
-      while (done < frontier.length && !tally.full()) {
-        if (fetches >= maxFetches) {
-          tally.warnings.push(`stopped after ${maxFetches} fetches`);
-          return;
-        }
-        const batch = frontier.slice(done, done + Math.min(concurrency, maxFetches - fetches));
-        done += batch.length;
-        fetches += batch.length;
-        for (const page of await pooled(batch, robots, fetchPage)) {
-          if (!page.html) {
-            if (page.url === startUrl) {
-              tally.warnings.push(`the start page ${page.url} ${page.error ?? 'has no HTML'}`);
-            }
-            continue;
-          }
-          if (!sourceTakesPath(source, new URL(page.url).pathname)) tally.skipped.filtered += 1;
-          else if (tally.full()) tally.skipped.overLimit += 1;
-          else {
-            tally.taken += 1;
-            await onPage({ url: page.url, fetched: page });
-          }
-          for (const href of pageHrefs(page.html)) {
-            const url = normalizePageUrl(href, page.url);
-            if (!url || queued.has(url)) continue;
-            queued.add(url);
-            const path = new URL(url).pathname;
-            if (NON_PAGE.test(path)) continue;
-            tally.discovered += 1;
-            if (originOf(url) !== origin) tally.skipped.offOrigin += 1;
-            // An excluded path isn't fetched; one outside `include` is, for its links.
-            else if (source.exclude.some((g) => matchesPathGlob(path, g))) {
-              tally.skipped.filtered += 1;
-            } else if (!robotsAllows(robots, path)) tally.skipped.robots += 1;
-            else next.push(url);
-          }
-        }
-      }
-      if (tally.full()) {
-        // What was found but not reached.
-        tally.skipped.overLimit += frontier.length - done + next.length;
-        return;
-      }
-      frontier = next;
-    }
+/**
+ * A page's links a crawl may follow: same origin, robots-allowed, not files, not the page itself;
+ * deduped, in order.
+ */
+function linksOf(html: string, pageUrl: string, origin: string, robots: Robots): string[] {
+  const out = new Set<string>();
+  for (const href of pageHrefs(html)) {
+    const url = normalizePageUrl(href, pageUrl);
+    if (!url || url === pageUrl || out.has(url) || originOf(url) !== origin) continue;
+    const path = new URL(url).pathname;
+    if (NON_PAGE.test(path) || !robotsAllows(robots, path)) continue;
+    out.add(url);
   }
+  return [...out];
 }
 
 /** Counts what a discovery took and left, and decides each sitemap entry. */
@@ -324,13 +326,27 @@ class Tally {
     const path = new URL(url).pathname;
     if (originOf(url) !== this.origin) this.skipped.offOrigin += 1;
     else if (!sourceTakesPath(this.source, path)) this.skipped.filtered += 1;
-    else if (!robotsAllows(this.robots, path)) this.skipped.robots += 1;
+    // The limit before robots: a full run asks nothing more of each entry.
     else if (this.full()) this.skipped.overLimit += 1;
+    else if (!robotsAllows(this.robots, path)) this.skipped.robots += 1;
     else {
       this.taken += 1;
       return url;
     }
     return undefined;
+  }
+
+  /** A crawl's start page: taken whatever the globs say (they choose the pages it leads to). */
+  considerStart(raw: string): string | undefined {
+    const url = normalizePageUrl(raw) as string;
+    this.discovered += 1;
+    if (!robotsAllows(this.robots, new URL(url).pathname)) {
+      this.skipped.robots += 1;
+      this.warnings.push(`robots.txt disallows the start page ${url}`);
+      return undefined;
+    }
+    this.taken += 1;
+    return url;
   }
 
   report(): SiteDiscovery {
@@ -342,6 +358,11 @@ class Tally {
   }
 }
 
+const unavailable = (why: string): RobotsState => ({
+  robots: parseRobotsTxt('User-agent: *\nDisallow: /'),
+  unavailable: why,
+});
+
 const originOf = (url: string): string => parseHttpUrl(url)?.origin ?? '';
 
 function isHtml(contentType: string | undefined, body: string): boolean {
@@ -349,11 +370,12 @@ function isHtml(contentType: string | undefined, body: string): boolean {
   return /^\s*(<!doctype html|<html)/i.test(body.slice(0, 1024));
 }
 
-async function gunzip(bytes: Uint8Array, maxBytes: number): Promise<Uint8Array> {
-  const stream = new Response(bytes).body?.pipeThrough(new DecompressionStream('gzip'));
-  const reader = stream?.getReader();
-  if (!reader) return new Uint8Array();
-  const chunks: Uint8Array[] = [];
+/** Gunzips to text as it streams, bounded: the decompressed bytes are never held whole. */
+async function gunzipText(bytes: Uint8Array, maxBytes: number): Promise<string> {
+  const reader = new Response(bytes).body?.pipeThrough(new DecompressionStream('gzip')).getReader();
+  if (!reader) return '';
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
   let total = 0;
   for (;;) {
     const { done, value } = await reader.read();
@@ -363,15 +385,10 @@ async function gunzip(bytes: Uint8Array, maxBytes: number): Promise<Uint8Array> 
       await reader.cancel();
       throw new Error(`uncompressed sitemap exceeds ${maxBytes} bytes`);
     }
-    chunks.push(value);
+    parts.push(decoder.decode(value, { stream: true }));
   }
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const c of chunks) {
-    out.set(c, at);
-    at += c.byteLength;
-  }
-  return out;
+  parts.push(decoder.decode());
+  return parts.join('');
 }
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));

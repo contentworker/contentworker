@@ -66,6 +66,7 @@ const toPage = (r: PageRow): MigrationPage => ({
   runId: r.runId,
   url: r.url,
   path: r.path,
+  depth: r.depth,
   stage: r.stage,
   templateId: r.templateId ?? null,
   title: r.title ?? null,
@@ -84,6 +85,7 @@ const toPage = (r: PageRow): MigrationPage => ({
 /** A page's columns that change after discovery (its run, id and URL never do). */
 const pageValues = (p: MigrationPage) => ({
   path: p.path,
+  depth: p.depth,
   stage: p.stage,
   templateId: p.templateId,
   title: p.title,
@@ -215,6 +217,24 @@ export function makeMigrationStore(x: Exec): MigrationStore {
         .where(and(ofRun(pages, scope, runId), eq(pages.id, id)));
       return row ? toPage(row) : null;
     },
+    async knownUrls(scope, runId, urls) {
+      const distinct = [...new Set(urls)];
+      const found: string[] = [];
+      for (let at = 0; at < distinct.length; at += IDS_PER_STATEMENT) {
+        const list = JSON.stringify(distinct.slice(at, at + IDS_PER_STATEMENT));
+        const rows = await db
+          .select({ url: pages.url })
+          .from(pages)
+          .where(
+            and(
+              ofRun(pages, scope, runId),
+              sql`${pages.url} IN (SELECT value FROM json_each(${list}))`,
+            ),
+          );
+        found.push(...rows.map((r) => r.url));
+      }
+      return found;
+    },
     async listPages(scope, runId, query) {
       const conds: (SQL | undefined)[] = [ofRun(pages, scope, runId)];
       if (query.after !== undefined) conds.push(gt(pages.id, query.after));
@@ -272,6 +292,12 @@ export function makeMigrationStore(x: Exec): MigrationStore {
     async replaceTemplates(scope, runId, clusters, at) {
       const when = new Date(at);
       const statements: Query[] = [
+        // Aborts the batch (TransactionConflictError) while any template is past pending.
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT NOT EXISTS (SELECT 1 FROM ${templates} WHERE ${templates.spaceId} = ${scope.spaceId} AND ${templates.environmentId} = ${scope.environmentId} AND ${templates.runId} = ${runId} AND ${templates.status} != 'pending') AS ok`,
+          ),
         db.delete(templates).where(ofRun(templates, scope, runId)),
         db
           .update(pages)
@@ -314,6 +340,8 @@ export function makeMigrationStore(x: Exec): MigrationStore {
           );
         }
       }
+      // Leaves the guard table empty; a unit of work's own trailing delete is harmless after it.
+      statements.push(db.delete(schema.guard));
       await writeAll(x, statements);
     },
   };

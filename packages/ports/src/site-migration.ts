@@ -11,6 +11,11 @@ import type {
  * A site migration's records: runs, their templates and their pages, environment-scoped. Page
  * HTML and script outputs are not here; they are objects in the blob store, and these records
  * hold their keys and hashes (`MigrationArtifact`).
+ *
+ * The run's `version` guards its templates: every template write rides in one unit of work with
+ * the run's {@link MigrationStore.saveRun} compare-and-set, so two writers can't interleave a
+ * run's templates. Page writes don't need it: each is a whole page, and a page's step is safe to
+ * repeat.
  */
 export interface MigrationStore {
   createRun(scope: Scope, run: MigrationRun): Promise<void>;
@@ -33,6 +38,8 @@ export interface MigrationStore {
   /** Rewrites pages the run holds, whole (a fetch's result, a stage move). Unknown ids are skipped. */
   savePages(scope: Scope, runId: string, pages: readonly MigrationPage[]): Promise<void>;
   getPage(scope: Scope, runId: string, id: string): Promise<MigrationPage | null>;
+  /** Which of `urls` the run already holds (any number of URLs). */
+  knownUrls(scope: Scope, runId: string, urls: readonly string[]): Promise<string[]>;
   /** Pages in id order (discovery order), after the `after` id. */
   listPages(scope: Scope, runId: string, query: MigrationPageQuery): Promise<MigrationPage[]>;
   countPages(scope: Scope, runId: string): Promise<MigrationPageCounts>;
@@ -44,6 +51,9 @@ export interface MigrationStore {
    * Replaces the run's templates with `clusters`, atomically: the old templates go, each new one
    * is written, its pages point at it and move to `clustered`, and every other page of the run
    * goes back to `discovered` with no template; every page's `updatedAt` becomes `at`.
+   * Refused (`TransactionConflictError`, inside a unit of work at commit) while any of the run's
+   * templates is past `pending`: authored or approved work is never replaced. Ride it with the
+   * run's `saveRun`.
    */
   replaceTemplates(
     scope: Scope,
@@ -86,16 +96,27 @@ export interface MigrationPageCounts {
  */
 export interface SiteSource {
   /**
-   * Walks the source and hands each page it takes to `onPage`, in order, awaiting each (so a
-   * caller can write as it goes). Stops at the source's `maxPages`. A crawl fetches the pages it
-   * walks, so it passes their HTML along; a sitemap lists URLs only.
+   * Walks a sitemap source and hands each page it takes to `onPage`, in order, awaiting each (so a
+   * caller can write as it goes), up to the source's `maxPages`. A crawl source hands over its
+   * start page only: the crawl itself goes a batch at a time through {@link fetchPages}, whose
+   * pages carry their links, so the run's pages are the crawl's frontier and a crawl resumes
+   * where it stopped.
    */
   discover(
     source: MigrationSource,
     onPage: (page: DiscoveredPage) => Promise<void>,
   ): Promise<SiteDiscovery>;
-  /** Fetches pages (a bounded batch), a few at a time. Never throws for one page's failure. */
-  fetchPages(source: MigrationSource, urls: readonly string[]): Promise<FetchedPage[]>;
+  /**
+   * Fetches pages (a bounded batch), a few at a time or as far apart as the site asks. Never
+   * throws for one page's failure. When the site's robots.txt can't be read (a server error, no
+   * answer), nothing is fetched and `unavailable` says why: try the batch again later.
+   */
+  fetchPages(source: MigrationSource, urls: readonly string[]): Promise<SiteFetch>;
+}
+
+export interface SiteFetch {
+  readonly pages: FetchedPage[];
+  readonly unavailable?: string;
 }
 
 export interface DiscoveredPage {
@@ -115,6 +136,11 @@ export interface FetchedPage {
   readonly html: string;
   /** Why there is no HTML, when there isn't. */
   readonly error?: string;
+  /**
+   * A crawl's next pages: the page's links, normalized, on the source origin, allowed by
+   * robots.txt and not to files (images, PDFs, feeds). The source's globs are the caller's.
+   */
+  readonly links?: readonly string[];
 }
 
 export interface SiteDiscovery {
@@ -128,4 +154,6 @@ export interface SiteDiscovery {
     readonly invalid: number;
   };
   readonly warnings: readonly string[];
+  /** Set when robots.txt couldn't be read, so nothing was: try again later. */
+  readonly unavailable?: string;
 }

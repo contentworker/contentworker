@@ -54,6 +54,26 @@ describe('a migration source', () => {
     ).toThrow(ValidationError);
   });
 
+  it('refuses a URL carrying credentials', () => {
+    expect(() =>
+      checkMigrationSource({ kind: 'crawl', url: 'https://ed:secret@site.test/' }),
+    ).toThrow(ValidationError);
+  });
+
+  it('matches globs and robots rules in linear time, however many stars', () => {
+    const long = `/${'a'.repeat(5_000)}`;
+    const started = performance.now();
+    expect(matchesPathGlob(long, `/${'a*'.repeat(30)}b`)).toBe(false);
+    expect(matchesPathGlob(long, '/**a')).toBe(true);
+    expect(
+      robotsAllows(parseRobotsTxt(`User-agent: *\nDisallow: /${'*a'.repeat(30)}b$`), long),
+    ).toBe(true);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(matchesPathGlob('/x/**', '/x/**')).toBe(true);
+    expect(matchesPathGlob('/blog/a/b', '/blog/**/b')).toBe(true);
+    expect(matchesPathGlob('/blog/b', '/blog/*/b')).toBe(false);
+  });
+
   it('takes paths by include and exclude globs, exclude first', () => {
     const source = checkMigrationSource({
       kind: 'crawl',

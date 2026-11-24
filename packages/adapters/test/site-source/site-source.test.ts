@@ -109,15 +109,41 @@ describe('site source: sitemaps', () => {
     expect(report.warnings).toEqual([`sitemap ${O}/sitemap_index.xml answered 404`]);
   });
 
-  it('fetches nothing while robots.txt answers a server error', async () => {
+  it('asks nothing more of the site while robots.txt answers a server error', async () => {
     const fetcher = new FakeRemoteFetcher({
       [`${O}/robots.txt`]: { status: 503 },
       [`${O}/sitemap.xml`]: { body: urlset(`${O}/a`) },
     });
     const { pages, report } = await discover(fetcher, { kind: 'sitemap', url: `${O}/sitemap.xml` });
     expect(pages).toEqual([]);
-    expect(report.skipped.robots).toBe(1);
-    expect(report.warnings[0]).toMatch(/robots\.txt answered 503/);
+    expect(report.unavailable).toMatch(/robots\.txt answered 503/);
+    expect(fetcher.requests.map((r) => r.url)).toEqual([`${O}/robots.txt`]);
+  });
+
+  it('reads no sitemap robots.txt disallows', async () => {
+    const fetcher = new FakeRemoteFetcher({
+      [`${O}/robots.txt`]: { body: 'User-agent: *\nDisallow: /sitemap' },
+      [`${O}/sitemap.xml`]: { body: urlset(`${O}/a`) },
+    });
+    const { pages, report } = await discover(fetcher, { kind: 'sitemap', url: O });
+    expect(pages).toEqual([]);
+    expect(report.warnings).toEqual([
+      `robots.txt disallows the sitemap ${O}/sitemap.xml; not read`,
+    ]);
+    expect(fetcher.requests.map((r) => r.url)).toEqual([`${O}/robots.txt`]);
+  });
+
+  it('reads a robots.txt that redirects as no rules, and says so', async () => {
+    const fetcher = new FakeRemoteFetcher({
+      [`${O}/robots.txt`]: { status: 301 },
+      [`${O}/sitemap.xml`]: { body: urlset(`${O}/a`) },
+    });
+    const { pages, report } = await discover(fetcher, { kind: 'sitemap', url: O });
+    expect(pages.map((p) => p.url)).toEqual([`${O}/a`]);
+    expect(report.unavailable).toBeUndefined();
+    expect(report.warnings[0]).toMatch(
+      /answered 301 \(a redirect, not followed\); read as no rules/,
+    );
   });
 });
 
@@ -126,68 +152,55 @@ describe('site source: crawl', () => {
     new FakeRemoteFetcher({
       [`${O}/robots.txt`]: { body: 'User-agent: *\nDisallow: /admin' },
       [`${O}/`]: html(
-        `<nav><a href="/blog">Blog</a><a href="/admin/x">Admin</a><a href="https://other.test/">x</a><a href="/logo.png">l</a><a href="#top">t</a></nav>`,
+        `<nav><a href="/blog">Blog</a><a href="/admin/x">Admin</a><a href="https://other.test/">x</a><a href="/logo.png">l</a><a href="#top">t</a><a href="/blog?x=1">again</a></nav>`,
       ),
-      [`${O}/blog`]: html(
-        `<a href="/blog/one?utm=1">1</a><a href="blog/two">2</a><a href="/old">o</a>`,
-      ),
-      [`${O}/blog/one`]: html('<p>one</p><a href="/">home</a>'),
-      [`${O}/blog/two`]: { contentType: 'application/pdf', body: '%PDF' },
-      [`${O}/old`]: { status: 301 },
+      [`${O}/blog`]: html('<a href="/blog/one?utm=1">1</a><a href="blog/two">2</a>'),
     });
 
-  it('walks same-origin links, hands over the HTML it fetched, and leaves the rest', async () => {
+  it('hands over the start page only: the crawl goes on through fetches', async () => {
     const fetcher = site();
     const { pages, report } = await discover(fetcher, { kind: 'crawl', url: `${O}/` });
-    expect(pages.map((p) => [p.url, p.fetched?.status])).toEqual([
-      [`${O}/`, 200],
-      [`${O}/blog`, 200],
-      [`${O}/blog/one`, 200],
-    ]);
-    expect(pages[2]?.fetched?.html).toContain('<p>one</p>');
-    expect(report.skipped).toEqual({
-      robots: 1,
-      filtered: 0,
-      offOrigin: 1,
-      overLimit: 0,
-      invalid: 0,
-    });
-    const asked = fetcher.requests.map((r) => r.url);
-    expect(asked).not.toContain(`${O}/admin/x`);
-    expect(asked).not.toContain(`${O}/logo.png`);
-    expect(asked).not.toContain('https://other.test/');
-    // Each page once.
-    expect(asked.filter((u) => u === `${O}/`).length).toBe(1);
+    expect(pages).toEqual([{ url: `${O}/` }]);
+    expect(report.discovered).toBe(1);
+    expect(fetcher.requests.map((r) => r.url)).toEqual([`${O}/robots.txt`]);
   });
 
-  it('fetches pages outside include for their links, not excluded ones, up to maxPages', async () => {
+  it('refuses a start page robots.txt disallows', async () => {
     const fetcher = site();
-    const { pages, report } = await discover(fetcher, {
-      kind: 'crawl',
-      url: `${O}/`,
-      include: ['/blog/*'],
-      exclude: ['/old'],
-      maxPages: 1,
-    });
-    expect(pages.map((p) => p.url)).toEqual([`${O}/blog/one`]);
-    expect(report.skipped.filtered).toBeGreaterThanOrEqual(3);
-    expect(fetcher.requests.map((r) => r.url)).not.toContain(`${O}/old`);
+    const { pages, report } = await discover(fetcher, { kind: 'crawl', url: `${O}/admin/x` });
+    expect(pages).toEqual([]);
+    expect(report.skipped.robots).toBe(1);
   });
 
-  it('keeps to the crawl delay robots.txt asks, one request at a time', async () => {
+  it("returns a crawled page's links: same origin, allowed, not files, once each", async () => {
+    const fetcher = site();
+    const source = checkMigrationSource({ kind: 'crawl', url: `${O}/` });
+    const { pages } = await createSiteSource(fetcher).fetchPages(source, [`${O}/`, `${O}/blog`]);
+    expect(pages.map((p) => p.links)).toEqual([[`${O}/blog`], [`${O}/blog/one`, `${O}/blog/two`]]);
+    // A sitemap run's pages carry none.
+    const sitemap = checkMigrationSource({ kind: 'sitemap', url: O });
+    const [plain] = (await createSiteSource(site()).fetchPages(sitemap, [`${O}/`])).pages;
+    expect(plain?.links).toBeUndefined();
+  });
+
+  it('spaces every request by the crawl delay, across batches and calls', async () => {
     const fetcher = site();
     fetcher.set(`${O}/robots.txt`, { body: 'User-agent: ContentWorker\nCrawl-delay: 1.5' });
     const waits: number[] = [];
-    await discover(fetcher, { kind: 'crawl', url: `${O}/` }, waits);
-    expect(waits.length).toBeGreaterThan(0);
-    expect(new Set(waits)).toEqual(new Set([1500]));
-  });
-
-  it('says so when the start page does not answer with HTML', async () => {
-    const fetcher = site();
-    const { pages, report } = await discover(fetcher, { kind: 'crawl', url: `${O}/old` });
-    expect(pages).toEqual([]);
-    expect(report.warnings).toEqual([`the start page ${O}/old answered 301`]);
+    const source = createSiteSource(fetcher, {
+      concurrency: 2,
+      now: () => 0,
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    const crawl = checkMigrationSource({ kind: 'crawl', url: `${O}/` });
+    await source.discover(crawl, async () => {});
+    await source.fetchPages(crawl, [`${O}/`, `${O}/blog`, `${O}/blog/one`]);
+    await source.fetchPages(crawl, [`${O}/blog/two`]);
+    // robots.txt first, then every request after it waits the delay.
+    expect(fetcher.requests.length).toBe(5);
+    expect(waits).toEqual([1500, 1500, 1500, 1500]);
   });
 });
 
@@ -204,7 +217,7 @@ describe('site source: fetching pages', () => {
       [`${O}/e`]: { body: '<!doctype html><p>no type</p>' },
     });
     const source = checkMigrationSource({ kind: 'sitemap', url: O });
-    const pages = await createSiteSource(fetcher).fetchPages(source, [
+    const { pages } = await createSiteSource(fetcher).fetchPages(source, [
       `${O}/a`,
       `${O}/b`,
       `${O}/c`,
@@ -227,5 +240,29 @@ describe('site source: fetching pages', () => {
     expect(fetcher.requests.find((r) => r.url === `${O}/a`)?.options.maxBytes).toBe(
       SITE_PAGE_MAX_BYTES,
     );
+  });
+
+  it('fetches nothing and says why while robots.txt is unavailable, and asks again next time', async () => {
+    const fetcher = new FakeRemoteFetcher({
+      [`${O}/robots.txt`]: () => {
+        throw new Error('connection reset');
+      },
+      [`${O}/a`]: html('<h1>A</h1>'),
+    });
+    const source = createSiteSource(fetcher);
+    const crawl = checkMigrationSource({ kind: 'crawl', url: `${O}/` });
+    const first = await source.fetchPages(crawl, [`${O}/a`]);
+    expect(first).toEqual({
+      pages: [],
+      unavailable: `${O}/robots.txt could not be read (connection reset)`,
+    });
+    fetcher.set(`${O}/robots.txt`, { status: 404 });
+    const second = await source.fetchPages(crawl, [`${O}/a`]);
+    expect(second.pages.map((p) => p.status)).toEqual([200]);
+    expect(fetcher.requests.map((r) => r.url)).toEqual([
+      `${O}/robots.txt`,
+      `${O}/robots.txt`,
+      `${O}/a`,
+    ]);
   });
 });

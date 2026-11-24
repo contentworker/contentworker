@@ -3,6 +3,7 @@ import {
   encodeUtf8,
   type MigrationSource,
   normalizePageUrl,
+  pageHrefs,
   parseHttpUrl,
   sourceTakesPath,
 } from '@contentworker/domain';
@@ -14,6 +15,7 @@ import type {
   RemoteFetchOptions,
   RemoteFile,
   SiteDiscovery,
+  SiteFetch,
   SiteSource,
 } from '@contentworker/ports';
 
@@ -63,13 +65,15 @@ export class FakeRemoteFetcher implements RemoteFetcher {
 }
 
 /**
- * A site source over a fixed set of pages, for use-case tests: `discover` lists every page the
- * source's globs take (in the order given, up to `maxPages`), with the HTML for a crawl;
- * `fetchPages` answers from the same set. A page given as a number answers that status.
+ * A site source over a fixed set of pages, for use-case tests. A sitemap source lists every page
+ * the source's globs take (in the order given, up to `maxPages`); a crawl source hands over its
+ * start page, and each fetched page carries its same-origin links, as the real source does.
+ * A page given as a number answers that status. `unavailable` makes robots.txt unreadable.
  */
 export class FakeSiteSource implements SiteSource {
   readonly fetched: string[] = [];
   readonly discoveries: MigrationSource[] = [];
+  unavailable: string | undefined;
   constructor(
     private readonly pages: Record<string, string | number>,
     private readonly warnings: string[] = [],
@@ -81,6 +85,18 @@ export class FakeSiteSource implements SiteSource {
   ): Promise<SiteDiscovery> {
     this.discoveries.push(source);
     const skipped = { robots: 0, filtered: 0, offOrigin: 0, overLimit: 0, invalid: 0 };
+    if (this.unavailable) {
+      return {
+        discovered: 0,
+        skipped,
+        warnings: [this.unavailable],
+        unavailable: this.unavailable,
+      };
+    }
+    if (source.kind === 'crawl') {
+      await onPage({ url: normalizePageUrl(source.url) as string });
+      return { discovered: 1, skipped, warnings: this.warnings };
+    }
     let taken = 0;
     const urls = Object.keys(this.pages);
     for (const raw of urls) {
@@ -89,27 +105,34 @@ export class FakeSiteSource implements SiteSource {
       else if (taken >= source.maxPages) skipped.overLimit += 1;
       else {
         taken += 1;
-        await onPage(
-          source.kind === 'crawl' && typeof this.pages[raw] === 'string'
-            ? { url, fetched: this.answer(url) }
-            : { url },
-        );
+        await onPage({ url });
       }
     }
     return { discovered: urls.length, skipped, warnings: this.warnings };
   }
 
-  async fetchPages(_source: MigrationSource, urls: readonly string[]): Promise<FetchedPage[]> {
+  async fetchPages(source: MigrationSource, urls: readonly string[]): Promise<SiteFetch> {
+    if (this.unavailable) return { pages: [], unavailable: this.unavailable };
     this.fetched.push(...urls);
-    return urls.map((url) => this.answer(url));
+    return { pages: urls.map((url) => this.answer(source, url)) };
   }
 
-  private answer(url: string): FetchedPage {
+  private answer(source: MigrationSource, url: string): FetchedPage {
     const page = this.pages[url];
-    if (typeof page === 'string') {
-      return { url, status: 200, contentType: 'text/html', html: page };
+    if (typeof page !== 'string') {
+      const status = page ?? 404;
+      return { url, status, html: '', error: `answered ${status}` };
     }
-    const status = page ?? 404;
-    return { url, status, html: '', error: `answered ${status}` };
+    const fetched: FetchedPage = { url, status: 200, contentType: 'text/html', html: page };
+    if (source.kind !== 'crawl') return fetched;
+    const origin = parseHttpUrl(url)?.origin;
+    const links = [
+      ...new Set(
+        pageHrefs(page)
+          .map((href) => normalizePageUrl(href, url))
+          .filter((u): u is string => Boolean(u) && parseHttpUrl(u as string)?.origin === origin),
+      ),
+    ];
+    return { ...fetched, links };
   }
 }

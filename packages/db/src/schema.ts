@@ -1585,6 +1585,7 @@ export const migrationPages = sqliteTable(
     id: text('id').notNull(),
     url: text('url').notNull(),
     path: text('path').notNull(),
+    depth: integer('depth').notNull().default(0),
     stage: text('stage').$type<MigrationPageStage>().notNull(),
     templateId: text('template_id'),
     title: text('title'),

@@ -2,7 +2,9 @@ import {
   checkMigrationRunInput,
   checkMigrationSource,
   clusterByStructure,
+  DomainError,
   InvalidStateError,
+  MIGRATION_MAX_CRAWL_DEPTH,
   type MigrationArtifact,
   type MigrationInventory,
   type MigrationPage,
@@ -12,6 +14,7 @@ import {
   NotFoundError,
   readPageFacts,
   type Scope,
+  sourceTakesPath,
 } from '@contentworker/domain';
 import type {
   BlobStore,
@@ -113,8 +116,18 @@ export async function getMigrationRun(
 }
 
 /**
- * Walks the run's source and adds the pages it takes. A crawl fetched its pages on the way, so
- * their HTML is stored with them; a sitemap's pages are fetched after ({@link fetchSourcePages}).
+ * The site can't be read now: its robots.txt answered a server error or nothing. Nothing was
+ * written; the step is safe to run again later.
+ */
+export class SiteUnavailableError extends DomainError {
+  constructor(reason: string) {
+    super('site_unavailable', `The site can't be read now: ${reason}`);
+  }
+}
+
+/**
+ * Walks the run's source and adds the pages it takes: a sitemap's pages, or a crawl's start
+ * page. Pages are fetched after ({@link fetchSourcePages}), which is also how a crawl goes on.
  * Run again, it adds only pages the run doesn't hold.
  */
 export async function inventorySite(
@@ -127,19 +140,28 @@ export async function inventorySite(
   if (run.status !== 'created' && run.status !== 'inventoried') {
     throw new InvalidStateError(`An inventory runs before clustering; the run is ${run.status}`);
   }
-  const before = (await ctx.store.migrations.countPages(scope, runId)).total;
-  const pending: MigrationPage[] = [];
+  const pending: DiscoveredPage[] = [];
+  let added = 0;
   const flush = async () => {
-    if (pending.length === 0) return;
-    await ctx.store.migrations.addPages(scope, runId, pending.splice(0));
+    const batch = pending.splice(0);
+    if (batch.length === 0) return;
+    const known = new Set(
+      await ctx.store.migrations.knownUrls(
+        scope,
+        runId,
+        batch.map((p) => p.url),
+      ),
+    );
+    const fresh = batch.filter((p) => !known.has(p.url)).map((p) => newPage(ctx, runId, p, 0));
+    await ctx.store.migrations.addPages(scope, runId, fresh);
+    added += fresh.length;
   };
-  const report = await deps.source.discover(run.source, async (found: DiscoveredPage) => {
-    pending.push(await discoveredPage(ctx, deps.blob, scope, runId, found));
+  const report = await deps.source.discover(run.source, async (found) => {
+    pending.push(found);
     if (pending.length >= INVENTORY_WRITE_BATCH) await flush();
   });
+  if (report.unavailable) throw new SiteUnavailableError(report.unavailable);
   await flush();
-  // Counted, not tallied: a page the run already held is handed over again but not added.
-  const added = (await ctx.store.migrations.countPages(scope, runId)).total - before;
   const inventory: MigrationInventory = {
     discovered: report.discovered,
     added,
@@ -157,19 +179,19 @@ export async function inventorySite(
   return next;
 }
 
-async function discoveredPage(
+function newPage(
   ctx: AppContext,
-  blob: BlobStore,
-  scope: Scope,
   runId: string,
   found: DiscoveredPage,
-): Promise<MigrationPage> {
+  depth: number,
+): MigrationPage {
   const at = ctx.clock.now().toISOString();
-  const base: MigrationPage = {
+  return {
     id: ctx.ids.newId(),
     runId,
     url: found.url,
     path: new URL(found.url).pathname,
+    depth,
     stage: 'discovered',
     templateId: null,
     title: null,
@@ -184,7 +206,6 @@ async function discoveredPage(
     createdAt: at,
     updatedAt: at,
   };
-  return found.fetched ? withFetch(blob, scope, runId, base, found.fetched) : base;
 }
 
 /** The page with a fetch's result: its HTML stored and read, or why there is none. */
@@ -224,13 +245,25 @@ async function withFetch(
 export interface FetchSourcePagesResult {
   readonly fetched: number;
   readonly failed: number;
-  /** Whether pages are still waiting to be fetched. */
+  /** Pages a crawl found on this batch's pages and added. */
+  readonly added: number;
+  /** Whether pages are still waiting to be fetched: a Workflow loops while it is true. */
   readonly more: boolean;
+  /**
+   * Set when the site couldn't be read now (its robots.txt answered a server error or nothing):
+   * nothing was written, and the same batch is waiting. Try again later.
+   */
+  readonly unavailable?: string;
 }
 
 /**
  * Fetches the next batch of the run's pages not fetched yet, stores their HTML and reads their
  * structure. A page that fails keeps the error and is not tried again by this step.
+ *
+ * For a crawl this is also the crawl: each fetched page's links that the run's globs take become
+ * pages of the run one link deeper (to {@link MIGRATION_MAX_CRAWL_DEPTH}, while the run holds
+ * fewer than `maxPages`), written in the same unit as the fetched pages. The run's pages are the
+ * frontier, so a crawl stopped anywhere resumes from the pages still waiting.
  */
 export async function fetchSourcePages(
   ctx: AppContext,
@@ -245,22 +278,64 @@ export async function fetchSourcePages(
     Math.min(opts.limit ?? MIGRATION_FETCH_BATCH_DEFAULT, MIGRATION_FETCH_BATCH_MAX),
   );
   const pages = await ctx.store.migrations.listPages(scope, runId, { fetch: 'pending', limit });
-  if (pages.length === 0) return { fetched: 0, failed: 0, more: false };
-  const results = await deps.source.fetchPages(
+  if (pages.length === 0) return { fetched: 0, failed: 0, added: 0, more: false };
+  const result = await deps.source.fetchPages(
     run.source,
     pages.map((p) => p.url),
   );
+  if (result.unavailable) {
+    return { fetched: 0, failed: 0, added: 0, more: true, unavailable: result.unavailable };
+  }
   const at = ctx.clock.now().toISOString();
   const updated = await Promise.all(
     pages.map(async (page, i) => {
-      const fetched = results[i] ?? { url: page.url, status: 0, html: '', error: 'not fetched' };
+      const fetched = result.pages[i] ?? {
+        url: page.url,
+        status: 0,
+        html: '',
+        error: 'not fetched',
+      };
       return withFetch(deps.blob, scope, runId, { ...page, updatedAt: at }, fetched);
     }),
   );
-  await ctx.store.migrations.savePages(scope, runId, updated);
+  const found =
+    run.source.kind === 'crawl' ? await crawlFrontier(ctx, scope, run, pages, result.pages) : [];
+  await ctx.store.withTransaction(async (tx) => {
+    await tx.migrations.savePages(scope, runId, updated);
+    await tx.migrations.addPages(scope, runId, found);
+  });
   const failed = updated.filter((p) => p.error !== null).length;
   const rest = await ctx.store.migrations.listPages(scope, runId, { fetch: 'pending', limit: 1 });
-  return { fetched: updated.length - failed, failed, more: rest.length > 0 };
+  return { fetched: updated.length - failed, failed, added: found.length, more: rest.length > 0 };
+}
+
+/** The new pages a crawl batch leads to: unseen, taken by the globs, in depth and run limits. */
+async function crawlFrontier(
+  ctx: AppContext,
+  scope: Scope,
+  run: MigrationRun,
+  pages: readonly MigrationPage[],
+  fetched: readonly FetchedPage[],
+): Promise<MigrationPage[]> {
+  const candidates = new Map<string, number>();
+  pages.forEach((page, i) => {
+    if (page.depth >= MIGRATION_MAX_CRAWL_DEPTH) return;
+    for (const url of fetched[i]?.links ?? []) {
+      const path = new URL(url).pathname;
+      if (!candidates.has(url) && sourceTakesPath(run.source, path)) {
+        candidates.set(url, page.depth + 1);
+      }
+    }
+  });
+  if (candidates.size === 0) return [];
+  const known = new Set(
+    await ctx.store.migrations.knownUrls(scope, run.id, [...candidates.keys()]),
+  );
+  const room = run.source.maxPages - (await ctx.store.migrations.countPages(scope, run.id)).total;
+  return [...candidates]
+    .filter(([url]) => !known.has(url))
+    .slice(0, Math.max(0, room))
+    .map(([url, depth]) => newPage(ctx, run.id, { url }, depth));
 }
 
 /**

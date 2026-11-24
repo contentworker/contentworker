@@ -1,4 +1,10 @@
-import { InvalidStateError, NotFoundError, ValidationError } from '@contentworker/domain';
+import {
+  InvalidStateError,
+  MIGRATION_MAX_CRAWL_DEPTH,
+  type MigrationTemplate,
+  NotFoundError,
+  ValidationError,
+} from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
 import {
   FakeBlobStore,
@@ -14,6 +20,7 @@ import {
   fetchSourcePages,
   getMigrationRun,
   inventorySite,
+  SiteUnavailableError,
   sha256Hex,
 } from '../src/index';
 
@@ -49,6 +56,20 @@ const SITE = {
   [`${O}/blog/gone`]: 404,
   [`${O}/blog/three`]: article('Three'),
   [`${O}/shop/toaster`]: product('Toaster'),
+};
+
+/** A site to crawl: the start page links into the blog and the shop; the blog links deeper. */
+const CRAWL = {
+  [`${O}/`]:
+    '<nav><a href="/blog/one">1</a><a href="/blog/two">2</a><a href="/shop/kettle">k</a><a href="/blog/gone">g</a></nav>',
+  [`${O}/blog/one`]: article('One').replace(
+    '</main>',
+    '<a href="/blog/three">3</a><a href="/">home</a></main>',
+  ),
+  [`${O}/blog/two`]: article('Two').replace('</main>', '<a href="/blog/one">1</a></main>'),
+  [`${O}/blog/three`]: article('Three'),
+  [`${O}/blog/gone`]: 404,
+  [`${O}/shop/kettle`]: product('Kettle'),
 };
 
 describe('site migration runs', () => {
@@ -118,12 +139,13 @@ describe('inventory, fetch and cluster, end to end', () => {
 
     // Fetched in batches until none are left; the 404 keeps its error and isn't retried.
     const first = await fetchSourcePages(ctx, deps, scope, run.id, { limit: 4 });
-    expect(first).toEqual({ fetched: 3, failed: 1, more: true });
+    expect(first).toEqual({ fetched: 3, failed: 1, added: 0, more: true });
     const second = await fetchSourcePages(ctx, deps, scope, run.id, { limit: 4 });
-    expect(second).toEqual({ fetched: 1, failed: 0, more: false });
+    expect(second).toEqual({ fetched: 1, failed: 0, added: 0, more: false });
     expect(await fetchSourcePages(ctx, deps, scope, run.id)).toEqual({
       fetched: 0,
       failed: 0,
+      added: 0,
       more: false,
     });
     expect(source.fetched.length).toBe(5);
@@ -173,35 +195,108 @@ describe('inventory, fetch and cluster, end to end', () => {
     expect((await ctx.store.migrations.listRuns(other, { limit: 10 })).length).toBe(0);
   });
 
-  it('stores what a crawl fetched as it inventories', async () => {
-    const { ctx, deps, source, blob } = harness(SITE);
+  it('crawls a batch at a time from the pages table, and resumes where it stopped', async () => {
+    const { ctx, deps, source, blob } = harness(CRAWL);
     const run = await createMigrationRun(ctx, scope, {
-      source: { kind: 'crawl', url: `${O}/`, include: ['/blog/**'] },
+      source: { kind: 'crawl', url: `${O}/`, exclude: ['/shop/**'] },
     });
-    await inventorySite(ctx, deps, scope, run.id);
+    const inventoried = await inventorySite(ctx, deps, scope, run.id);
+    // The start page only, nothing fetched yet.
+    expect(inventoried.inventory?.added).toBe(1);
     expect(source.fetched).toEqual([]);
-    const counts = await ctx.store.migrations.countPages(scope, run.id);
-    // The 404 the fake answers for a crawl is a URL only, waiting for the fetch step.
-    expect(counts).toMatchObject({ total: 4, fetched: 3 });
-    expect(blob.keys().length).toBe(3);
-    expect((await clusterPages(ctx, scope, run.id)).templates.length).toBe(1);
+
+    // Each step fetches the waiting pages and adds their links one level deeper.
+    const one = await fetchSourcePages(ctx, deps, scope, run.id, { limit: 1 });
+    expect(one).toEqual({ fetched: 1, failed: 0, added: 3, more: true });
+    // A step that dies here loses nothing: the frontier is the run's pages.
+    let steps = 1;
+    for (let more = true; more; steps += 1) {
+      more = (await fetchSourcePages(ctx, deps, scope, run.id, { limit: 2 })).more;
+    }
+    const pages = await ctx.store.migrations.listPages(scope, run.id, { limit: 50 });
+    expect(pages.map((p) => [p.path, p.depth])).toEqual([
+      ['/', 0],
+      ['/blog/one', 1],
+      ['/blog/two', 1],
+      ['/blog/gone', 1],
+      ['/blog/three', 2],
+    ]);
+    // Each page fetched once; the excluded shop never.
+    expect(source.fetched.sort()).toEqual(pages.map((p) => p.url).sort());
+    expect(blob.keys().length).toBe(4);
+    expect(steps).toBeGreaterThan(2);
+    expect((await clusterPages(ctx, scope, run.id)).templates.length).toBe(2);
   });
 
-  it('adds nothing on a second inventory of the same site', async () => {
-    const { ctx, deps } = harness(SITE);
+  it('stops adding crawl pages at maxPages and past the depth cap', async () => {
+    const chain: Record<string, string> = {};
+    for (let i = 0; i < 12; i += 1) chain[`${O}/p${i}`] = `<a href="/p${i + 1}">next</a>`;
+    const { ctx, deps } = harness(chain);
+    const deep = await createMigrationRun(ctx, scope, {
+      source: { kind: 'crawl', url: `${O}/p0` },
+    });
+    await inventorySite(ctx, deps, scope, deep.id);
+    while ((await fetchSourcePages(ctx, deps, scope, deep.id)).more) {}
+    const depths = (await ctx.store.migrations.listPages(scope, deep.id, { limit: 50 })).map(
+      (p) => p.depth,
+    );
+    expect(Math.max(...depths)).toBe(MIGRATION_MAX_CRAWL_DEPTH);
+    expect(depths.length).toBe(MIGRATION_MAX_CRAWL_DEPTH + 1);
+
+    const fake = harness(CRAWL);
+    const small = await createMigrationRun(fake.ctx, scope, {
+      source: { kind: 'crawl', url: `${O}/`, maxPages: 3 },
+    });
+    await inventorySite(fake.ctx, fake.deps, scope, small.id);
+    while ((await fetchSourcePages(fake.ctx, fake.deps, scope, small.id)).more) {}
+    expect((await fake.ctx.store.migrations.countPages(scope, small.id)).total).toBe(3);
+  });
+
+  it('writes nothing while the site is unavailable, and says to try again', async () => {
+    const { ctx, deps, source, store } = harness(SITE);
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: `${O}/` } });
+    source.unavailable = 'robots.txt answered 503';
+    await expect(inventorySite(ctx, deps, scope, run.id)).rejects.toThrow(SiteUnavailableError);
+    expect((await store.migrations.getRun(scope, run.id))?.status).toBe('created');
+    source.unavailable = undefined;
+    await inventorySite(ctx, deps, scope, run.id);
+    source.unavailable = 'robots.txt answered 503';
+    expect(await fetchSourcePages(ctx, deps, scope, run.id)).toEqual({
+      fetched: 0,
+      failed: 0,
+      added: 0,
+      more: true,
+      unavailable: 'robots.txt answered 503',
+    });
+    // No page took an error for it: the batch waits, whole.
+    expect(await store.migrations.countPages(scope, run.id)).toMatchObject({
+      failed: 0,
+      fetched: 0,
+    });
+    source.unavailable = undefined;
+    expect((await fetchSourcePages(ctx, deps, scope, run.id, { limit: 50 })).more).toBe(false);
+  });
+
+  it('adds nothing and stores nothing again on a second inventory of the same site', async () => {
+    const { ctx, deps, blob } = harness(SITE);
     const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: `${O}/` } });
     await inventorySite(ctx, deps, scope, run.id);
+    await fetchSourcePages(ctx, deps, scope, run.id, { limit: 50 });
+    const puts = blob.keys().length;
     const again = await inventorySite(ctx, deps, scope, run.id);
     expect(again.inventory?.added).toBe(0);
     expect(again.version).toBe(3);
     expect((await ctx.store.migrations.countPages(scope, run.id)).total).toBe(6);
+    expect(blob.keys().length).toBe(puts);
+    expect((await fetchSourcePages(ctx, deps, scope, run.id)).fetched).toBe(0);
   });
 
   it('clusters again in place, but not once a template is past pending, nor before an inventory', async () => {
     const { ctx, deps, store } = harness(SITE);
-    const run = await createMigrationRun(ctx, scope, { source: { kind: 'crawl', url: `${O}/` } });
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: `${O}/` } });
     await expect(clusterPages(ctx, scope, run.id)).rejects.toThrow(InvalidStateError);
     await inventorySite(ctx, deps, scope, run.id);
+    await fetchSourcePages(ctx, deps, scope, run.id, { limit: 50 });
     const first = await clusterPages(ctx, scope, run.id);
     // A stricter threshold splits nothing here, but replaces the templates whole.
     const second = await clusterPages(ctx, scope, run.id, { threshold: 0.9 });
@@ -214,20 +309,21 @@ describe('inventory, fetch and cluster, end to end', () => {
     // An inventory after clustering is refused: the pages would need clustering again.
     await expect(inventorySite(ctx, deps, scope, run.id)).rejects.toThrow(InvalidStateError);
 
-    const [t] = await store.migrations.listTemplates(scope, run.id);
-    await store.migrations.replaceTemplates(
-      scope,
-      run.id,
-      [{ template: { ...(t as NonNullable<typeof t>), status: 'authoring' }, pageIds: [] }],
-      '2026-11-20T00:00:00.000Z',
-    );
+    // A template being authored (written by a later step) is never replaced, by the use-case or
+    // the store.
+    const [key, t] = [...store.migrations.templateData.entries()][0] as [string, MigrationTemplate];
+    store.migrations.templateData.set(key, { ...t, status: 'authoring' });
     await expect(clusterPages(ctx, scope, run.id)).rejects.toThrow(InvalidStateError);
+    await expect(
+      store.migrations.replaceTemplates(scope, run.id, [], '2026-11-20T00:00:00.000Z'),
+    ).rejects.toThrow(TransactionConflictError);
   });
 
   it('writes no templates when it loses the race to another clustering', async () => {
     const { ctx, deps, store } = harness(SITE);
-    const run = await createMigrationRun(ctx, scope, { source: { kind: 'crawl', url: `${O}/` } });
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: `${O}/` } });
     await inventorySite(ctx, deps, scope, run.id);
+    await fetchSourcePages(ctx, deps, scope, run.id, { limit: 50 });
     // Another writer moves the run on between this clustering's read and its commit.
     const getRun = store.migrations.getRun.bind(store.migrations);
     store.migrations.getRun = async (s, id) => {
@@ -239,5 +335,6 @@ describe('inventory, fetch and cluster, end to end', () => {
     await expect(clusterPages(ctx, scope, run.id)).rejects.toThrow(TransactionConflictError);
     expect(await store.migrations.listTemplates(scope, run.id)).toEqual([]);
     expect((await store.migrations.countPages(scope, run.id)).byStage).toEqual({ discovered: 6 });
+    expect((await store.migrations.getRun(scope, run.id))?.status).toBe('inventoried');
   });
 });

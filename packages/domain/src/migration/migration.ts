@@ -1,4 +1,5 @@
 import { type FieldIssue, ValidationError } from '../errors';
+import { compileWildcard, matchWildcard, type Wildcard } from './wildcard';
 
 /**
  * Site migration: bringing a published website into an environment as structured content.
@@ -35,6 +36,8 @@ export const MIGRATION_SOURCE_KINDS: readonly MigrationSourceKind[] = ['sitemap'
 export const MIGRATION_DEFAULT_MAX_PAGES = 500;
 /** Most pages one run takes. */
 export const MIGRATION_MAX_PAGES = 10_000;
+/** Links deep a crawl follows from its start page. */
+export const MIGRATION_MAX_CRAWL_DEPTH = 8;
 /** Most include or exclude globs, each. */
 export const MIGRATION_MAX_GLOBS = 50;
 export const MIGRATION_MAX_GLOB_LENGTH = 512;
@@ -118,6 +121,8 @@ export interface MigrationPage {
   readonly url: string;
   /** The URL's path, which redirects and slugs are made from. */
   readonly path: string;
+  /** Links from a crawl's start page (0); 0 for a sitemap's pages. */
+  readonly depth: number;
   readonly stage: MigrationPageStage;
   readonly templateId: string | null;
   readonly title: string | null;
@@ -202,6 +207,9 @@ export function checkMigrationSource(input: MigrationSourceInput): MigrationSour
       field: 'source.url',
       message: `must be an absolute http or https URL of at most ${MIGRATION_MAX_URL_LENGTH} characters`,
     });
+  } else if (url.username || url.password) {
+    // Credentials in a URL would be sent to the site and stored on the run in the clear.
+    issues.push({ field: 'source.url', message: 'must not carry a user name or password' });
   }
   const maxPages = input.maxPages ?? MIGRATION_DEFAULT_MAX_PAGES;
   if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > MIGRATION_MAX_PAGES) {
@@ -304,17 +312,17 @@ export function normalizePageUrl(raw: string, base?: string | PageUrl): string |
 
 /** True when `path` matches the glob: `*` is any run within a segment, `**` any run at all. */
 export function matchesPathGlob(path: string, glob: string): boolean {
-  let pattern = '';
-  for (let i = 0; i < glob.length; i += 1) {
-    const c = glob[i] as string;
-    if (c === '*' && glob[i + 1] === '*') {
-      pattern += '.*';
-      i += 1;
-    } else if (c === '*') pattern += '[^/]*';
-    else pattern += c.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  let compiled = GLOBS.get(glob);
+  if (!compiled) {
+    compiled = compileWildcard(glob, 'glob');
+    if (GLOBS.size >= 1_000) GLOBS.clear();
+    GLOBS.set(glob, compiled);
   }
-  return new RegExp(`^${pattern}$`).test(path);
+  return matchWildcard(compiled, path);
 }
+
+/** Compiled globs by pattern: a run checks every page against the same few. */
+const GLOBS = new Map<string, Wildcard>();
 
 /** Whether the source's globs take a page at `path`: on an include (if any), on no exclude. */
 export function sourceTakesPath(source: MigrationSource, path: string): boolean {

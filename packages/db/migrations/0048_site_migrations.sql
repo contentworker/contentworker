@@ -47,8 +47,10 @@ CREATE TABLE `migration_templates` (
 	PRIMARY KEY(`space_id`, `environment_id`, `run_id`, `id`)
 );
 
--- A run's pages, one per URL. `html` and `output` are artifact JSON or NULL; `fingerprint` a JSON
--- list of structure shingles (at most 256 short hashes); `score` the output's score JSON.
+-- A run's pages, one per URL. `depth` is links from a crawl's start page (0 for a sitemap's pages):
+-- a crawl's pages are its frontier, so it resumes from them. `html` and `output` are artifact JSON
+-- or NULL; `fingerprint` a JSON list of structure shingles (at most 256 short hashes); `score` the
+-- output's score JSON.
 CREATE TABLE `migration_pages` (
 	`space_id` text NOT NULL,
 	`environment_id` text NOT NULL,
@@ -56,6 +58,7 @@ CREATE TABLE `migration_pages` (
 	`id` text NOT NULL,
 	`url` text NOT NULL,
 	`path` text NOT NULL,
+	`depth` integer DEFAULT 0 NOT NULL,
 	`stage` text NOT NULL,
 	`template_id` text,
 	`title` text,
