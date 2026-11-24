@@ -1158,7 +1158,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   (`--overlay-ink`, `--overlay-halo`, `--overlay-brand`: the same in light and dark, since the page
   under them is the customer's colours): every edge is an ink line with a halo beside it, so one of
   the two holds 3:1 on a white page, a black one or a photo. A slot is a dashed seam between blocks
-  (ink dashes on a halo strip, softened at rest), on hover a pill saying what a click does and
+  (ink dashes on a halo strip, barely there at rest so the customer's page leads, shown while the
+  pointer is over the stage, always on a touch screen, and full under the pointer), on hover a pill saying what a click does and
   where ("Add here · Main · 3/8 used"; the bare name and fill once chosen, full or under a carried
   block; "Main · full (8/8)" when full; a range when the slot has a least and a most, "Features ·
   0/2–4 used"; "1 block, needs 2" with a least alone; a field already named for its blocks says the
@@ -1201,7 +1202,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   proposal waits or saves); never at a full or locked place. Asked from the dock's sheet (below lg), focus stays in Coworker's prompt. Coworker's proposal comes back as a card in the
   panel, the one place it is decided (its act reads **Confirm and save draft**, and its line says
   confirming saves to the draft and doesn't publish; its count gives way to "In the draft:" under
-  the steps, which already say what it does); while it waits the page draws its blocks as ghosts and the
+  the steps, which already say what it does; the card wears `ai`, its ring and its diff's
+  "Added", "Changed" and "Removed", since a model wrote it and it isn't done, while a card that
+  acts on what exists, a publish or a release, waits on the person in `wait`). While it waits, at
+  lg, Layers and the right column step aside so the page keeps its width beside the Coworker
+  panel (Layers asked for again shows for that review only, its remembered choice kept), and the page draws its blocks as ghosts and the
   canvas outlines each in a dashed `ai` edge (`--overlay-brand`, haloed) with "Proposed" (or
   "Proposed change", "Proposed removal") and the mark on a halo chip at its corner (`GhostMark`), Layers lists the proposed
   blocks after their slot's blocks with an `ai` "Proposed" stamp and where each goes (not tree
@@ -1265,7 +1270,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   stage itself, over the frame (the notice, Try again, and that the form and Layers still edit).
   The stage is a region named "The page", described by how to reach the blocks by key, and a tab
   stop of its own just before the frame (its focus edge in the overlay pair, inside the frame's
-  edge); closing the dock hands focus back only to what the keyboard could reach again, else to the
+  edge, shown for the keyboard only: focus handed back by a click in the page or the grip draws
+  no edge until a key is pressed there); closing the dock hands focus back only to what the keyboard could reach again, else to the
   stage. The
   inspector ends with a muted key line (⌘↑ ⌘↓ move · / add after · Esc deselect · ? every
   shortcut; each key kept with its words, and not drawn on a touch screen). A block clicked in

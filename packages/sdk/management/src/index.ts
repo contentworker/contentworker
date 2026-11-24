@@ -387,6 +387,8 @@ export interface MigrationRun {
     readonly warnings: readonly string[];
   } | null;
   readonly error: string | null;
+  /** The release its entries were added to, when publishing goes through one. */
+  readonly releaseId: string | null;
   readonly version: number;
   readonly createdAt: string;
   readonly createdBy: string | null;
@@ -446,6 +448,8 @@ export interface MigrationPage {
     readonly issues: readonly string[];
   } | null;
   readonly entryId: string | null;
+  /** Links in its entry to run pages that had no entry yet, left for the relink pass. */
+  readonly unresolvedLinks: number;
   readonly error: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;

@@ -5087,6 +5087,7 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.migrationRuns,
   schema.migrationTemplates,
   schema.migrationPages,
+  schema.migrationAssets,
   schema.menus,
   schema.blockCatalogs,
   schema.blockConfigs,

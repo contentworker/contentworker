@@ -220,7 +220,7 @@ function ProposedList({
           className="flex min-h-8 flex-col justify-center rounded-lg border border-ai/40 border-dashed px-2 py-1 text-sm touch:min-h-11"
         >
           <span className="flex items-center gap-2">
-            <span className="truncate">{p.name}</span>
+            <span className="shrink-0">{p.name}</span>
             {p.label ? (
               <span className="min-w-0 truncate text-muted-foreground text-xs">{p.label}</span>
             ) : null}
@@ -303,11 +303,10 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
           style={{ paddingLeft: `${0.5 + blockIndent(level - 1)}rem` }}
         >
           {lock?.own ? <Lock aria-hidden="true" className="size-3 shrink-0" /> : null}
-          <span className="truncate">{block.name}</span>
+          <span className="shrink-0">{block.name}</span>
           {block.label ? (
             <>
-              {' '}
-              <span className="sr-only">, </span>
+              <span className="sr-only">,</span>{' '}
             </>
           ) : null}
           {block.label ? (
@@ -316,8 +315,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
           {lock?.own && !says ? <span className="sr-only">, locked</span> : null}
           {overrides.length > 0 ? (
             <>
-              {' '}
-              <span className="sr-only">, </span>
+              <span className="sr-only">,</span>{' '}
             </>
           ) : null}
           {overrides.length > 0 ? (
@@ -333,18 +331,15 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
           ) : null}
           {ghost ? (
             <span className="ml-auto shrink-0">
-              {' '}
-              <span className="sr-only">, </span>
-              <ToneBadge tone="ai" label={ghostLabel(ghost)} />
+              <span className="sr-only">,</span> <ToneBadge tone="ai" label={ghostLabel(ghost)} />
             </span>
           ) : null}
           {block.variant ? null : (
             <span className="ml-auto shrink-0">
-              {' '}
-              <span className="sr-only">, </span>
-              <ToneBadge tone="bad" label="Removed from code" />
+              <span className="sr-only">,</span> <ToneBadge tone="bad" label="Removed from code" />
             </span>
           )}
+          {says ? <span className="sr-only">,</span> : null}
         </div>
         {says ? (
           <p
@@ -353,8 +348,8 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
             className="pb-1 text-2xs text-muted-foreground"
             style={{ paddingLeft: `${0.5 + blockIndent(level - 1)}rem` }}
           >
-            {/* The space keeps the row's words and these apart in the item's visible text. */}{' '}
-            <span className="sr-only">, </span>
+            {/* The space keeps the row's words and these apart in the item's visible text; the
+                comma that leads into them ends the row, so the name reads "…, Locked by …". */}{' '}
             {lockedLine(says, props.directory)}
           </p>
         ) : null}

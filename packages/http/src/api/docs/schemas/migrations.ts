@@ -41,6 +41,10 @@ export const migrationRun = z.object({
     })
     .nullable(),
   error: z.string().nullable(),
+  releaseId: z
+    .string()
+    .nullable()
+    .describe('The release its entries were added to, when publishing goes through one'),
   version: z.int().describe('Counts up with every write'),
   createdAt: z.iso.datetime(),
   createdBy: z.string().nullable(),
@@ -103,6 +107,9 @@ export const migrationPage = z.object({
   output: artifact.nullable().describe('The import script’s structured output'),
   score: score.nullable(),
   entryId: z.string().nullable(),
+  unresolvedLinks: z
+    .int()
+    .describe('Links in its entry to run pages that had no entry yet, left for the relink pass'),
   error: z.string().nullable().describe('Why its last step failed'),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),

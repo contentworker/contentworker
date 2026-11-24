@@ -1,7 +1,7 @@
 import { parseHtml } from '../rich-text/from-html';
 import { isRichTextDocument, type RichTextNode, richTextToPlainText } from '../rich-text/rich-text';
 import { find, findAll, textOf, without } from './html-tree';
-import type { ImportScriptOutput } from './import-script';
+import { type ImportScriptOutput, resolveImportScriptOutput } from './import-script';
 import type { MigrationScore } from './migration';
 
 /**
@@ -41,7 +41,8 @@ export function scoreImportOutput(sourceHtml: string, output: ImportScriptOutput
   const issues: string[] = [];
 
   const sourceWords = wordsOf(textOf(content));
-  const out = collectOutput(output);
+  // `$html` fragments are read as the documents they become, so their text counts and no tag does.
+  const out = collectOutput(resolveImportScriptOutput(output));
   const outputWords = new Set(wordsOf(out.text.join(' ')));
   const covered = sourceWords.filter((w) => outputWords.has(w)).length;
   const textCoverage = sourceWords.length ? covered / sourceWords.length : 1;

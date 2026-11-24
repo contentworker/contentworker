@@ -84,6 +84,26 @@ describe('scoring an import script output', () => {
     expect(stageForScore(score, 0.8)).toBe('validated');
   });
 
+  it('reads an $html fragment as the document it becomes, not its tags', () => {
+    const score = scoreImportOutput(SOURCE, {
+      fields: { title: 'Brewing green tea' },
+      blocks: [
+        {
+          variant: 'text',
+          fields: {
+            body: {
+              $html:
+                '<p>Green tea wants cooler water than black tea.</p><p>Steep it for two minutes, then taste.</p><p>Read <a href="/guides/water">water guide</a>, <a href="/guides/leaves">leaf guide</a>, <a href="/guides/cups">cup guide</a> and <a href="https://example.org/more">more</a>.</p>',
+            },
+          },
+        },
+      ],
+      assets: [{ url: '/img/cup.jpg' }],
+      links: [],
+    });
+    expect(score).toMatchObject({ overall: 1, textCoverage: 1, outputLinks: 4, issues: [] });
+  });
+
   it('leaves site chrome and widget text out of the source, but keeps the article header', () => {
     // No nav, footer or form words in the output, and still full coverage; the h1 inside the
     // article's own <header> counts (dropping the title would lower coverage).

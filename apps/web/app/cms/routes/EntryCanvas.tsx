@@ -509,6 +509,17 @@ function Canvas({
       .then(() => setReloading(true));
   });
   const shownOps = useMemo(() => (proposal ? ghostOps(proposal.ops) : null), [proposal]);
+  // While Coworker's proposal waits, it is the one question, decided on its card in the Coworker
+  // panel: Layers and the right column step aside for it (Layers' own open state is kept), so the
+  // page keeps its width and the ghosts on it can be read beside the card.
+  const reviewing = wide && !!proposal;
+  // Layers asked for again during a review shows for that review only; the remembered choice is
+  // the one it goes back to.
+  const [reviewLayers, setReviewLayers] = useState(false);
+  useEffect(() => {
+    if (!reviewing) setReviewLayers(false);
+  }, [reviewing]);
+  const layersShown = reviewing ? reviewLayers : layersOpen;
   const ghosts = useMemo(
     () => (shownOps ? ghostKeys(shownOps) : new Map<string, GhostKind>()),
     [shownOps],
@@ -567,7 +578,10 @@ function Canvas({
       // customer's page, never here. Focus comes back to the stage, so / ? Esc and ⌘↑ ⌘↓ act on
       // the block just chosen.
       if (document.activeElement === site.frameRef.current) {
-        document.querySelector<HTMLElement>('[data-canvas-stage]')?.focus({ preventScroll: true });
+        const stage = document.querySelector<HTMLElement>('[data-canvas-stage]');
+        // Handed back by a click, not a key: no focus edge until a key is pressed there.
+        if (stage) stage.dataset.quiet = '';
+        stage?.focus({ preventScroll: true });
       }
     },
     onGeometry: setGeometry,
@@ -1487,10 +1501,10 @@ function Canvas({
           <WidthSwitch presets={presets} value={preset} onChange={setPreset} named />
           <Button
             type="button"
-            variant={layersOpen ? 'secondary' : 'ghost'}
+            variant={layersShown ? 'secondary' : 'ghost'}
             size="sm"
-            aria-pressed={layersOpen}
-            onClick={() => setLayersOpen((o) => !o)}
+            aria-pressed={layersShown}
+            onClick={() => (reviewing ? setReviewLayers((o) => !o) : setLayersOpen((o) => !o))}
           >
             <ListTree aria-hidden="true" /> Layers
           </Button>
@@ -1591,12 +1605,16 @@ function Canvas({
       <div
         className={cn(
           'grid min-h-0 flex-1',
-          wide && layersOpen
-            ? 'lg:grid-cols-[16rem_minmax(0,1fr)_340px]'
-            : 'lg:grid-cols-[minmax(0,1fr)_340px]',
+          reviewing
+            ? layersShown
+              ? 'lg:grid-cols-[16rem_minmax(0,1fr)]'
+              : 'lg:grid-cols-[minmax(0,1fr)]'
+            : wide && layersOpen
+              ? 'lg:grid-cols-[16rem_minmax(0,1fr)_340px]'
+              : 'lg:grid-cols-[minmax(0,1fr)_340px]',
         )}
       >
-        {wide && layersOpen ? (
+        {wide && layersShown ? (
           <aside aria-label="Layers" className="min-h-0 overflow-y-auto border-r p-3">
             {/* The outline's slot captions are h3s: under this, not straight under the page's h1. */}
             <h2 className="sr-only">Layers</h2>
@@ -1662,7 +1680,7 @@ function Canvas({
               : ''}
           </p>
         </div>
-        {wide ? (
+        {wide && !reviewing ? (
           <aside
             aria-label={block ? 'Block settings' : 'Page'}
             // While the dock is open the settings wait: what is being added is the one question.
