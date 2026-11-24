@@ -162,6 +162,7 @@ import type {
 } from '@contentworker/ports';
 import { DEFAULT_ASSET_SORT, TransactionConflictError } from '@contentworker/ports';
 import { JournaledMap } from './journaled-map';
+import { InMemoryMigrationStore } from './migration-store-fake';
 
 const scopeKey = (s: Scope) => `${s.spaceId}::${s.environmentId}`;
 
@@ -391,6 +392,7 @@ export class InMemoryContentStore implements ContentStore {
         this.bulkJobData,
         this.bulkChunkData,
         this.pluginKvData,
+        ...this.migrations.collections(),
       ];
       let deleted = 0;
       for (const map of scoped) {
@@ -3100,6 +3102,9 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  /** Site migrations: runs, templates and pages. */
+  readonly migrations = new InMemoryMigrationStore();
+
   /** `space::env::id` → project. */
   private readonly aiProjectData = new JournaledMap<string, AiProject>();
 
@@ -3732,6 +3737,7 @@ export class InMemoryContentStore implements ContentStore {
       this.blockCatalogData,
       this.blockConfigData,
       this.aiProjectData,
+      ...this.migrations.collections(),
     ] as JournaledMap<string, unknown>[];
   }
 
@@ -3778,6 +3784,7 @@ export class InMemoryContentStore implements ContentStore {
         members: this.members,
         aiSettings: this.aiSettings,
         aiProjects: this.aiProjects,
+        migrations: this.migrations,
       });
       for (const [m, journal] of journals) m.commit(journal);
       return result;

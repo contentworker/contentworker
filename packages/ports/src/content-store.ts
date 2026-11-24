@@ -85,6 +85,7 @@ import type {
   WorkflowVersion,
 } from '@contentworker/domain';
 import { ConflictError } from '@contentworker/domain';
+import type { MigrationStore } from './site-migration';
 
 /**
  * Thrown by `withTransaction` when an optimistic precondition inside the unit of work no longer
@@ -153,6 +154,8 @@ export interface ContentStore {
   readonly workflowTasks: WorkflowTaskRepo;
   readonly taxonomy: TaxonomyRepo;
   readonly redirects: RedirectRepo;
+  /** Site migrations: runs, templates and pages. */
+  readonly migrations: MigrationStore;
   readonly menus: MenuRepo;
   readonly blockCatalogs: BlockCatalogRepo;
   readonly blockConfigs: BlockConfigRepo;
@@ -1533,6 +1536,8 @@ export interface ContentStoreTx {
   readonly taxonomy: TaxonomyRepo;
   /** A publish's slug change writes redirects with the publish. */
   readonly redirects: RedirectRepo;
+  /** A run's compare-and-set commits with the templates a clustering replaces. */
+  readonly migrations: MigrationStore;
   /** A menu is written with its revision's compare-and-set and the event that announces it. */
   readonly menus: MenuRepo;
   /** A catalog version is written with the content types it changes. */

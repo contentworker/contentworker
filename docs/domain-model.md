@@ -17,8 +17,9 @@ defines the structured-content model and the rules that govern it.
 A space id (`SPACE_ID_PATTERN`) is 1–64 ASCII letters, digits, `.`, `_` or `-`, starting with a
 letter or digit. It is the first segment of the space's asset keys in the media bucket
 (`<space>/<environment>/<assetId>/<file>`), which also holds archived version bodies, staged import
-chunks, plugin bundles, dead letters and zip downloads under their own top-level prefixes. Those prefixes are
-`RESERVED_SPACE_IDS` (`versions`, `imports`, `plugins`, `dlq`, `zips`): `createSpace` refuses each, in any
+chunks, plugin bundles, dead letters, zip downloads and site-migration page HTML under their own
+top-level prefixes. Those prefixes are `RESERVED_SPACE_IDS` (`versions`, `imports`, `plugins`,
+`dlq`, `zips`, `migrations`): `createSpace` refuses each, in any
 case, with a `ValidationError`, so deleting a space's files never reaches them.
 
 Non-localized fields still use `LocalizedValue` with a single entry under the space's default
@@ -1708,6 +1709,86 @@ strand the AI actions and agent schedules naming it: both carry an optional `pro
 `ai_reference_extractions` holds one row per asset file version whose text a project asked for
 (`pending`, `done`, `skipped` with a reason), dropped with the asset's derived files. See
 [AI projects](./ai-agents-and-search.md#ai-projects).
+
+## Site migrations
+
+A site migration brings a published website into an environment as structured content
+(`packages/domain/src/migration/`). Its records are environment-scoped (`MigrationStore`, D1
+tables `migration_runs`, `migration_templates` and `migration_pages`), and the environment purge
+clears them. Page HTML is not stored in D1: it is an object in the media bucket under
+`migrations/<space>/<environment>/<run>/html/<sha256>.html`, content-addressed, and a page names
+it as a `MigrationArtifact` (`{ key, sha256, bytes }`).
+
+- `MigrationRun`: a `source` (`MigrationSource`: `kind` `sitemap` or `crawl`, a `url`, `include`
+  and `exclude` path globs where `*` stays within a segment and `**` crosses segments, and
+  `maxPages`, default `MIGRATION_DEFAULT_MAX_PAGES` (500), at most `MIGRATION_MAX_PAGES` (10,000)),
+  a `status` (`created` → `inventoried` → `clustered`, or `failed`), the score `threshold` (default
+  `MIGRATION_DEFAULT_THRESHOLD`, 0.8), the last `inventory` (`MigrationInventory`: pages found,
+  added, and skipped by robots.txt, globs, origin, limit or an unusable URL, with warnings) and a
+  `version` that every write's compare-and-set uses. Every template write rides with that
+  compare-and-set, and the store refuses to replace templates once one is past `pending`.
+  `checkMigrationSource` and `checkMigrationRunInput` check a new run, and refuse a URL that
+  carries a user name or password. The use-case also screens the URL with the outbound SSRF
+  guard.
+- `MigrationPage`: one per URL in a run. The URL is normalized by `normalizePageUrl`, which drops
+  the fragment and the query. A page holds its `path`, its crawl `depth` (links from the start
+  page; 0 for a sitemap's pages), `title`, the sitemap's `lastModified`, the
+  last fetch's `httpStatus` or `error`, its `html` artifact and its structure `fingerprint`. Its
+  `stage` is one of `MIGRATION_PAGE_STAGES`: `discovered` → `clustered` → `transformed` →
+  `validated` or `needs-fix` (by `stageForScore` at the run's threshold) → `loaded` → `published`.
+  `output`, `score` and `entryId` are filled by the later stages.
+- `MigrationTemplate`: pages that share a structure. It holds a `label`, a `status` (`pending`,
+  `authoring` or `approved`), a `pageCount`, up to three `samplePageIds` spread across its pages,
+  and the `fingerprint` the pages matched. It also holds the `contentTypeId` and import `script`
+  artifact once they are chosen.
+
+Clustering is pure. `structureFingerprint` (or `readPageFacts`, which also reads the title and
+links) parses a page with the same lenient reader as `richTextFromHtml`. It hashes the
+tag-and-class paths under `<main>` (or `<body>`) into at most `MAX_FINGERPRINT_SHINGLES` (256)
+short shingles, after dropping classes that vary between pages of one template. `clusterByStructure`
+is greedy leader clustering on the Jaccard similarity of fingerprints (`MIGRATION_CLUSTER_THRESHOLD`,
+0.6). It returns the largest template first.
+
+`ImportScriptOutput` is what a template's import script returns for a page: `fields`,
+`blocks` (`{ variant, fields }`), `assets` (`{ url, alt? }`) and `links` (`{ href }`). It is
+structured, never markup. `importScriptOutputIssues` checks its shape. `scoreImportOutput` scores
+it against the source page (`MigrationScore`):
+
+- Text coverage: the share of the source's content words found in the output's field values and
+  rich-text documents. Header, footer and navigation outside `main`/`article` are left out of the
+  source, and so are hidden text and widget text.
+- Merged words, lost links and lost or URL-less images: each lowers the score from there.
+
+robots.txt (`parseRobotsTxt`, `robotsAllows`, `robotsCrawlDelay`, as `ContentWorker`) and sitemaps
+(`parseSitemapXml`) are parsed in the domain. robots.txt rules and path globs are matched without
+regular expressions, in time linear in the path for each pattern. The `SiteSource` port reads
+sites, and its adapter (`@contentworker/adapters/site-source`) works over `RemoteFetcher`:
+
+- A sitemap, a sitemap index or the sitemaps robots.txt names. A gzipped sitemap is decoded as it
+  streams. A sitemap that robots.txt disallows isn't read.
+- A crawl source hands over its start page only. Each fetched page then carries its links: on
+  the same origin, allowed by robots.txt, and not to files.
+- Every request stays on the source URL's origin and keeps to robots.txt.
+  - A robots.txt that answers 4xx, or a redirect (not followed), means no rules.
+  - A robots.txt that answers 5xx, or doesn't answer, means nothing is fetched, sitemaps
+    included. The caller is told to try again.
+- Requests go a few at a time. When robots.txt asks a crawl delay, every request to the origin
+  after the first waits that long after the one before, across batches and calls.
+
+The use-cases (`packages/application/src/site-migrations.ts`) are `createMigrationRun`,
+`inventorySite`, `fetchSourcePages`, `clusterPages` and `getMigrationRun`. They aren't on the HTTP
+API or MCP yet.
+
+- `inventorySite` adds the pages a sitemap lists, or a crawl's start page, skipping URLs the run
+  already holds. It throws `SiteUnavailableError` (`site_unavailable`), with nothing written,
+  when robots.txt can't be read.
+- `fetchSourcePages` fetches up to 50 waiting pages and stores their HTML.
+  - For a crawl, it adds each page's links that the globs take as pages one level deeper, up to
+    `MIGRATION_MAX_CRAWL_DEPTH` (8) and while the run holds fewer than `maxPages`. These are
+    written in the same unit as the fetched pages, so the run's pages are the crawl's frontier
+    and a crawl resumes where it stopped.
+  - It reports `more` while pages are waiting. When the site is unavailable it reports
+    `unavailable`, writes nothing, and the batch waits.
 
 ## Domain events
 

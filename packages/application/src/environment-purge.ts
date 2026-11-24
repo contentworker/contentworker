@@ -171,4 +171,6 @@ async function deleteEnvironmentFiles(
   await blob.deletePrefix?.(`versions/${scope.spaceId}/${scope.environmentId}/`, () => false);
   // Its zip downloads (asset-zip.ts).
   await blob.deletePrefix?.(`zips/${scope.spaceId}/${scope.environmentId}/`, () => false);
+  // Its site migrations' page HTML (site-migrations.ts).
+  await blob.deletePrefix?.(`migrations/${scope.spaceId}/${scope.environmentId}/`, () => false);
 }

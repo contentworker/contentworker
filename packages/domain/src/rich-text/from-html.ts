@@ -885,3 +885,8 @@ function tidy(content: RichTextNode[]): RichTextNode[] {
   if (last.nodeType === 'text') nodes[lastIndex] = { ...last, value: last.value?.trimEnd() };
   return nodes;
 }
+
+// The same lenient reader, for code that needs a page's element tree rather than its rich text
+// (the site-migration structure fingerprint and its score): one HTML parser in the domain.
+export type { HtmlElement, HtmlNode };
+export { parseHtml };

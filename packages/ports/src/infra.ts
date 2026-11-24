@@ -368,18 +368,19 @@ export interface WebhookSendResult {
  * is the second line, not the first.
  */
 export interface RemoteFetcher {
-  get(
-    url: string,
-    options: { readonly maxBytes: number; readonly timeoutMs?: number },
-  ): Promise<RemoteDocument>;
+  get(url: string, options: RemoteFetchOptions): Promise<RemoteDocument>;
   /**
    * The same request for a binary body (an asset file an import copies), under the same rules:
    * no redirects, the size cap enforced on what arrives.
    */
-  getBytes(
-    url: string,
-    options: { readonly maxBytes: number; readonly timeoutMs?: number },
-  ): Promise<RemoteFile>;
+  getBytes(url: string, options: RemoteFetchOptions): Promise<RemoteFile>;
+}
+
+export interface RemoteFetchOptions {
+  readonly maxBytes: number;
+  readonly timeoutMs?: number;
+  /** Sent as the User-Agent, so a site can tell (and its robots.txt address) who is asking. */
+  readonly userAgent?: string;
 }
 
 export interface RemoteDocument {

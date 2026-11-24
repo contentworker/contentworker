@@ -48,4 +48,15 @@ describe('remote fetcher: binary bodies', () => {
     });
     expect(doc.body).toBe('{"ok":true}');
   });
+
+  it('announces a User-Agent only when the caller names one', async () => {
+    const { impl, inits } = fetchReturning(() => new Response('ok'));
+    const fetcher = createRemoteFetcher(impl);
+    await fetcher.get('https://site.example.com/', { maxBytes: 16, userAgent: 'ContentWorker/1' });
+    await fetcher.get('https://site.example.com/', { maxBytes: 16 });
+    expect(inits.map((i) => (i.headers as Record<string, string>)['user-agent'])).toEqual([
+      'ContentWorker/1',
+      undefined,
+    ]);
+  });
 });
