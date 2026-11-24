@@ -272,6 +272,23 @@ describe('a proposal waiting in Coworker', () => {
     expect(screen.queryByText('Unsaved changes')).toBeNull();
   });
 
+  it('gives the page the width while it waits: Layers and the settings step aside', async () => {
+    await setup();
+    const f = frame();
+    f.connect();
+    expect(screen.getByRole('complementary', { name: 'Page' })).toBeTruthy();
+    act(() => assistant.setProposal('card-1', GHOST));
+    await waitFor(() => expect(proposals(f)).toHaveLength(1));
+    expect(screen.queryByRole('complementary', { name: 'Page' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Layers' })).toBeNull();
+    // Layers asked for again shows for this review, without changing the remembered choice.
+    act(() => screen.getByRole('button', { name: 'Layers' }).click());
+    expect(screen.getByRole('complementary', { name: 'Layers' })).toBeTruthy();
+    act(() => assistant.setProposal('card-1', { ...GHOST, state: 'declined' }));
+    await waitFor(() => expect(screen.getByRole('complementary', { name: 'Page' })).toBeTruthy());
+    expect(screen.queryByRole('complementary', { name: 'Layers' })).toBeNull();
+  });
+
   it('is taken off the page on Not now', async () => {
     await setup();
     const f = frame();
