@@ -1,9 +1,11 @@
+import { holdsScope, type PermissionScope, SCOPES } from '@contentworker/domain';
 import {
   Blocks,
   Boxes,
   Building2,
   FileText,
   Image,
+  Import,
   KeyRound,
   LayoutDashboard,
   type LucideIcon,
@@ -38,6 +40,11 @@ export interface NavItem {
   readonly badge?: boolean;
   /** Shown only while this feature is on (lib/features.tsx). */
   readonly feature?: keyof Features;
+  /**
+   * Shown only to someone whose role in the space holds one of these, once that is known: a page
+   * whose every read the API would refuse is no destination.
+   */
+  readonly scopes?: readonly PermissionScope[];
 }
 
 export const NAV: readonly NavItem[] = [
@@ -55,6 +62,15 @@ export const NAV: readonly NavItem[] = [
   { to: '/releases', label: 'Releases', icon: Rocket, shortcutKey: 'r', tab: true },
   { to: '/workflows', label: 'Workflows', icon: Workflow, shortcutKey: 'w', section: 'Build' },
   { to: '/blocks', label: 'Blocks', icon: Boxes, shortcutKey: 'b', section: 'Build' },
+  {
+    to: '/migrations',
+    label: 'Migrations',
+    icon: Import,
+    shortcutKey: 'i',
+    section: 'Build',
+    // Reading a run takes either: those who run them, and those who will model their templates.
+    scopes: [SCOPES.migrationRun, SCOPES.contentManage],
+  },
   { to: '/assets', label: 'Assets', icon: Image, shortcutKey: 'm', section: 'Library' },
   { to: '/taxonomy', label: 'Taxonomy', icon: Tags, shortcutKey: 't', section: 'Library' },
   {
@@ -66,9 +82,17 @@ export const NAV: readonly NavItem[] = [
   },
 ];
 
-/** NAV as this deployment shows it: items behind a feature that's off are left out. */
-export function visibleNav(features: Features): readonly NavItem[] {
-  return NAV.filter((n) => !n.feature || features[n.feature]);
+/**
+ * NAV as this deployment shows it to this person: items behind a feature that's off are left out,
+ * and so are items their role in the space can't open (`scopes`, the person's in the space; while
+ * those aren't known yet, such items wait rather than show and vanish).
+ */
+export function visibleNav(features: Features, scopes?: readonly string[]): readonly NavItem[] {
+  return NAV.filter(
+    (n) =>
+      (!n.feature || features[n.feature]) &&
+      (!n.scopes || (scopes !== undefined && n.scopes.some((s) => holdsScope(scopes, s)))),
+  );
 }
 
 /** A Settings section, addressed as `/settings/:id`. */

@@ -72,6 +72,7 @@ import { AssistantProvider, useAssistant } from '~/cms/lib/assistant';
 import { useOptionalClient } from '~/cms/lib/client-context';
 import { useFeatures } from '~/cms/lib/features';
 import { useModKeyLabel, usePageShortcutGroups, useShortcutLabel } from '~/cms/lib/shortcuts';
+import { useSpaceScopes } from '~/cms/lib/space-access';
 import { CmsProviders } from '~/cms/providers';
 import { Mark } from '~/components/mark';
 import { authEnabled, requireUser } from '~/lib/auth.server';
@@ -468,7 +469,10 @@ function ShellFrame() {
   const slow = useSlowNavigation();
   const { auth, me, nav: showNav, sidebarOpen } = useLoaderData<typeof loader>();
   const features = useFeatures();
-  const pages = useMemo(() => visibleNav(features), [features]);
+  // What the person's role here opens; a page only some roles can open waits for it.
+  const ready = Boolean(useOptionalClient()?.ready);
+  const scopes = useSpaceScopes(showNav && ready);
+  const pages = useMemo(() => visibleNav(features, scopes), [features, scopes]);
   const go = useMemo(() => goKeys(pages), [pages]);
   const groups = showNav ? navGroups(pages) : [];
   const deployment = showNav && atLeast(me.role, 'admin') ? DEPLOYMENT : [];
@@ -488,7 +492,6 @@ function ShellFrame() {
   const xl = useMedia('(min-width: 1280px)');
   const assistantOpen = useAssistant().open;
   // What waits on a decision, once the space is known and while Approvals is on.
-  const ready = Boolean(useOptionalClient()?.ready);
   const pending = usePendingApprovalsCount(showNav && ready && pages.some((p) => p.badge)) ?? 0;
   const overlay = narrow || canvasAt(path) || (assistantOpen && !xl);
   return (
