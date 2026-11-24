@@ -109,7 +109,9 @@
       { "name": "AI_BUDGET", "class_name": "CostGuardDO" },
       { "name": "SEARCH", "class_name": "SearchShardDO" },
       // The admin's assistant, one object per person (the api forwards its socket here).
-      { "name": "ASSISTANT_AGENT", "class_name": "AssistantAgent" }
+      { "name": "ASSISTANT_AGENT", "class_name": "AssistantAgent" },
+      // One site migration template's authoring agent per object, started by MigrationWorkflow.
+      { "name": "MIGRATION_AGENT", "class_name": "MigrationTemplateAgent" }
     ]
   },
   // Applied DO migration tags are frozen (scripts/do-migrations.test.ts): add, never edit.
@@ -120,7 +122,8 @@
     { "tag": "v4", "new_sqlite_classes": ["SearchShardDO"] },
     { "tag": "v5", "new_sqlite_classes": ["AssistantAgent"] },
     { "tag": "v6", "new_sqlite_classes": ["HotSetDO"] },
-    { "tag": "v7", "new_sqlite_classes": ["DocumentParserDO"] }
+    { "tag": "v7", "new_sqlite_classes": ["DocumentParserDO"] },
+    { "tag": "v8", "new_sqlite_classes": ["MigrationTemplateAgent"] }
   ],
   "workflows": [
     { "binding": "AGENT_WF", "name": "contentworker-agent", "class_name": "AgentWorkflow" },
@@ -149,6 +152,13 @@
       "binding": "APP_OPERATION_WF",
       "name": "contentworker-app-operation",
       "class_name": "AppOperationWorkflow"
+    },
+    // One run per site migration, started and signalled by the api: inventory, cluster, the
+    // template agents, then each approved template's transform and load, and the publish.
+    {
+      "binding": "MIGRATION_WF",
+      "name": "contentworker-migration",
+      "class_name": "MigrationWorkflow"
     }
   ],
   // `send_email` (EMAIL) is added by scripts/install.ts when the install sets an Email Sending

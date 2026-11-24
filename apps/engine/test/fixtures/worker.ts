@@ -16,6 +16,7 @@ export { AppOperationTestWorkflow } from './app-operation';
 export { AssetIngestTestWorkflow } from './asset-ingest';
 export { AssetZipTestWorkflow } from './asset-zip';
 export { EditorialTestWorkflow } from './editorial';
+export { MigrationTestAgent, MigrationTestWorkflow } from './migration';
 
 export default {
   fetch(request: Request, env: EdgeEnv): Promise<Response> | Response {

@@ -61,7 +61,8 @@ export function checkTemplateModel(
           localized: false,
           required: false,
           unique: true,
-          position: Math.max(0, ...given.map((f) => (Number.isFinite(f?.position) ? f.position : 0))) + 1,
+          position:
+            Math.max(0, ...given.map((f) => (Number.isFinite(f?.position) ? f.position : 0))) + 1,
         },
       ];
   const blocks = fields.filter((f) => blockVariants(f) !== undefined);

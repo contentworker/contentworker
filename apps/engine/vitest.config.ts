@@ -51,6 +51,8 @@ export default defineConfig(async () => ({
           SEARCH: { className: 'SearchShardDO', useSQLite: true },
           HOT_SET: { className: 'HotSetDO', useSQLite: true },
           ASSISTANT_AGENT: { className: 'AssistantAgent', useSQLite: true },
+          // A site migration template's agent over a scripted model (test/fixtures/migration.ts).
+          MIGRATION_AGENT: { className: 'MigrationTestAgent', useSQLite: true },
         },
         d1Databases: { DB: 'contentworker-engine-test' },
         // The media gate the events consumer writes (test/asset-delivery.test.ts).
@@ -80,6 +82,12 @@ export default defineConfig(async () => ({
           APP_OPERATION_WF: {
             name: 'contentworker-app-operation-test',
             className: 'AppOperationTestWorkflow',
+          },
+          // Site migration runs over the test's store, a fake site and a scripted sandbox
+          // (test/fixtures/migration.ts).
+          MIGRATION_WF: {
+            name: 'contentworker-migration-test',
+            className: 'MigrationTestWorkflow',
           },
         },
         bindings: {

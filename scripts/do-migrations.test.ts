@@ -24,6 +24,7 @@ const APPLIED: Record<string, Migration[]> = {
     { tag: 'v5', new_sqlite_classes: ['AssistantAgent'] },
     { tag: 'v6', new_sqlite_classes: ['HotSetDO'] },
     { tag: 'v7', new_sqlite_classes: ['DocumentParserDO'] },
+    { tag: 'v8', new_sqlite_classes: ['MigrationTemplateAgent'] },
   ],
 };
 

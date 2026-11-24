@@ -1736,11 +1736,15 @@ it as a `MigrationArtifact` (`{ key, sha256, bytes }`).
   last fetch's `httpStatus` or `error`, its `html` artifact and its structure `fingerprint`. Its
   `stage` is one of `MIGRATION_PAGE_STAGES`: `discovered` → `clustered` → `transformed` →
   `validated` or `needs-fix` (by `stageForScore` at the run's threshold) → `loaded` → `published`.
-  `output`, `score` and `entryId` are filled by the later stages.
+  `output`, `score` and `entryId` are filled by the later stages; `outputScript` is the SHA-256 of
+  the script version its last transform ran.
 - `MigrationTemplate`: pages that share a structure. It holds a `label`, a `status` (`pending`,
   `authoring` or `approved`), a `pageCount`, up to three `samplePageIds` spread across its pages,
   and the `fingerprint` the pages matched. It also holds the `contentTypeId` and import `script`
-  artifact once they are chosen.
+  artifact once they are chosen, the `proposal` (the content type its pages are proposed to
+  become, a `ContentTypeDraft`) and `lastTry` (`MigrationTrySummary`: the script tried, pages
+  tried, ok, passed and the mean score, with the first problems). Migration
+  `0050_site_migration_authoring` adds `proposal`, `last_try` and the page's `output_script`.
 
 Clustering is pure. `structureFingerprint` (or `readPageFacts`, which also reads the title and
 links) parses a page with the same lenient reader as `richTextFromHtml`. It hashes the
@@ -1776,8 +1780,8 @@ sites, and its adapter (`@contentworker/adapters/site-source`) works over `Remot
   after the first waits that long after the one before, across batches and calls.
 
 The use-cases (`packages/application/src/site-migrations.ts`) are `createMigrationRun`,
-`inventorySite`, `fetchSourcePages`, `clusterPages` and `getMigrationRun`. They aren't on the HTTP
-API or MCP yet.
+`inventorySite`, `fetchSourcePages`, `clusterPages` and `getMigrationRun`. They, and the authoring
+use-cases below, aren't on the HTTP API or MCP yet.
 
 - `inventorySite` adds the pages a sitemap lists, or a crawl's start page, skipping URLs the run
   already holds. It throws `SiteUnavailableError` (`site_unavailable`), with nothing written,
@@ -1789,6 +1793,58 @@ API or MCP yet.
     and a crawl resumes where it stopped.
   - It reports `more` while pages are waiting. When the site is unavailable it reports
     `unavailable`, writes nothing, and the batch waits.
+
+Authoring a template (`packages/application/src/site-migration-templates.ts`). Every template
+write rides with the run's compare-and-set; a lost race is read again and made over, up to four
+times, then reported as a `ConflictError`. Scripts and outputs are artifacts beside the page HTML
+(`script/<sha256>.js`, `output/<sha256>.json`), and scripts run in the `ImportScriptSandbox` at most
+two at a time.
+
+- `proposeTemplateModel` records the proposal, checked by `checkTemplateModel`: a `sourceUrl`
+  field (`MIGRATION_SOURCE_URL_FIELD`; `Symbol` or `Text`, `unique`, not localized; added when left
+  out), exactly one top-level blocks field for the body, a URL pattern, and the content type's own
+  rules. A preview URL, agent instructions and the layout are left out. The template moves to
+  `authoring`, so clustering again is refused. Nothing in the model changes.
+- `setImportScript` stores a script version (at most 256 KiB) and moves the template to
+  `authoring`; `getImportScript` reads it back.
+- `tryImportScript` runs the stored script (or one given) on the sample pages (or up to five
+  pages of the template), checks each output's shape and its fit to the template's type (the
+  approved one, else the proposal: no unknown fields, blocks of the blocks field's variants), and
+  scores it. Only the summary is kept, as `lastTry`.
+- `approveTemplate` needs `content:manage`. It claims the proposal's apiId on the template,
+  creates (or revises) the content type as the caller and publishes it, then moves the template to
+  `approved`. A type of that apiId that no template of the run holds is refused (`ConflictError`).
+  An approved template's model and script can't be changed.
+- `transformTemplatePages` runs an approved template's script on up to 50 of its pages after a
+  cursor. Each output's JSON is stored as it came back, with `output.sha256` its hash, scored, and
+  the page moves to `validated` or `needs-fix` with its error cleared. A script failure or an
+  output that doesn't fit goes to `needs-fix` with the reason. Pages already transformed by this
+  script version, loaded or published, or without HTML are skipped; it reports `next` and `more`.
+
+`runSiteMigration` (`site-migration-run.ts`) is the body of `MigrationWorkflow`, one Workflows
+instance per run (`migration-<runId>`), started once the run exists. Its steps: inventory (a site
+that can't be read is waited out, ten minutes at a time, twelve times) → `fetchSourcePages` a batch
+per step → `clusterPages` → one template agent per template not approved → for each template,
+`waitForEvent` on `template-approved-<templateId>` (14 days; Workflows event types take only
+letters, digits, `-` and `_`) → its transforms a batch per step, then its load and redirects → one
+relink pass → `waitForEvent` on `publish-approved` → publish. Approved templates are processed one
+at a time. The load, relink, redirect and publish steps are behind `MigrationLoadSteps`, and the
+engine doesn't bind them yet, so a run ends `transformed`. Each event carries who decided
+(`MigrationActor`: a key, a team member or the deployment); the step resolves them again before it
+acts. A step's `DomainError` fails its template (or the run, which is then `failed`), and a lost
+compare-and-set is read again. `MigrationRunner` (`CloudflareMigrationRunner` over `MIGRATION_WF`)
+starts a run's driver and delivers its events.
+
+The template agent (`site-migration-agent.ts`, hosted by the `MigrationTemplateAgent` Durable
+Object, one per template) is a tool loop over the `AIProvider` port: `get_template`,
+`get_source_page`, `propose_model`, `write_import_script` and `try_import_script`. There is no
+screenshot tool, because no Worker binds Browser Rendering. Every tool is bound to the agent's run
+and template. It can't approve, load or publish. Page HTML (comments, scripts and styles removed,
+clipped) and script outputs reach the model fenced by `wrapUntrusted`. Each turn is metered through
+`generateWithBudget` on the background AI window, starting on the `balanced` tier and moving to
+`flagship` after three tries that don't all pass. A run stops at 30 turns or 600,000 tokens. The
+object takes three turns per alarm, keeps each message under its own storage key, and stops after
+five failed alarms in a row.
 
 ## Domain events
 
