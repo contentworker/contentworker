@@ -372,7 +372,7 @@ export function DecisionsCard(props: {
                 to={entry ? entryPath(entry) : '/approvals'}
                 title={entry?.title ?? 'Entry no longer available'}
                 meta={entry ? `${entry.typeName} · ${meta}` : meta}
-                trailing={<ToneBadge tone="bad" label="Held" />}
+                trailing={<ToneBadge tone="ai" label="Held" />}
               />
             );
           }}

@@ -505,8 +505,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   moderation, each a `Section` with a one-line muted sentence saying what its state means; a
   section with nothing waiting moves after the ones that have something. A held entry's row names
   the entry, its type, when it was held and what was flagged ("Flagged for Harassment"), under a
-  `bad` "Held" stamp: the entry was taken offline, which is a failure state, not the model's
-  pending work the `ai` tone marks. Republish (ink) asks in place first, with an optional reason,
+  "Held" stamp in the `ai` tone, the one `held` has everywhere (the status table, the run log in
+  Settings → AI): a model's decision waiting on a person. Republish (ink) asks in place first, with an optional reason,
   because it overrides the agent; Keep unpublished (outline) acts in one press. AI usage and recent agent
   runs sit under the capabilities in Settings → AI.
 - **Content:** the content types as a catalog (`PageHeader` with New content type): each type's

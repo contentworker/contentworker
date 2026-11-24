@@ -529,7 +529,7 @@ function HoldRow({
             moderation agent <Ago at={hold.createdAt} />
           </p>
         </div>
-        <ToneBadge tone="bad" label="Held" />
+        <ToneBadge tone="ai" label="Held" />
       </div>
       <p className="max-w-measure text-sm">
         <span className="text-muted-foreground">Flagged for </span>
