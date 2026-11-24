@@ -1,11 +1,13 @@
 import {
   checkMigrationRunInput,
   checkMigrationSource,
+  checkMigrationTokenCap,
   clusterByStructure,
   DomainError,
   InvalidStateError,
   MIGRATION_MAX_CRAWL_DEPTH,
   MIGRATION_PAGE_STAGES,
+  type MigrationAgentTokens,
   type MigrationArtifact,
   MigrationClusteringHeldError,
   type MigrationInventory,
@@ -59,6 +61,8 @@ export interface CreateMigrationRunInput {
   readonly name?: string;
   readonly threshold?: number;
   readonly source: MigrationSourceInput;
+  /** What its template agents' model calls may take in all; it can't be changed afterwards. */
+  readonly agentTokenCap?: number;
 }
 
 export interface SiteMigrationDeps {
@@ -94,6 +98,7 @@ export async function createMigrationRun(
   // Every request the run makes stays on this URL's origin, so screening it screens them all.
   assertSafeExternalUrl(source.url, 'source.url');
   const { name, threshold } = checkMigrationRunInput({ ...input, source });
+  const agentTokenCap = checkMigrationTokenCap(input.agentTokenCap);
   const at = ctx.clock.now().toISOString();
   const run: MigrationRun = {
     id: ctx.ids.newId(),
@@ -112,7 +117,7 @@ export async function createMigrationRun(
     createdBy: ctx.actor ?? null,
     updatedAt: at,
   };
-  await ctx.store.migrations.createRun(scope, run);
+  await ctx.store.migrations.createRun(scope, run, { agentTokenCap });
   return run;
 }
 
@@ -120,6 +125,8 @@ export interface MigrationRunView {
   readonly run: MigrationRun;
   readonly pages: MigrationPageCounts;
   readonly templates: MigrationTemplate[];
+  /** Its template agents' tokens: the cap, and what counts toward it. */
+  readonly agentTokens: MigrationAgentTokens;
 }
 
 export async function getMigrationRun(
@@ -128,11 +135,12 @@ export async function getMigrationRun(
   id: string,
 ): Promise<MigrationRunView> {
   const run = await requireRun(ctx, scope, id);
-  const [pages, templates] = await Promise.all([
+  const [pages, templates, agentTokens] = await Promise.all([
     ctx.store.migrations.countPages(scope, id),
     ctx.store.migrations.listTemplates(scope, id),
+    agentTokensOf(ctx, scope, id),
   ]);
-  return { run, pages, templates };
+  return { run, pages, templates, agentTokens };
 }
 
 /** Runs listed at most per call. */
@@ -585,7 +593,19 @@ async function groupPages(
     run: next,
     pages: await ctx.store.migrations.countPages(scope, runId),
     templates: clusters.map((c) => c.template),
+    agentTokens: await agentTokensOf(ctx, scope, runId),
   };
+}
+
+async function agentTokensOf(
+  ctx: AppContext,
+  scope: Scope,
+  runId: string,
+): Promise<MigrationAgentTokens> {
+  const at = ctx.clock.now().toISOString();
+  const tokens = await ctx.store.migrations.agentTokens(scope, runId, at);
+  if (!tokens) throw new NotFoundError('Migration run', runId);
+  return tokens;
 }
 
 async function requireRun(ctx: AppContext, scope: Scope, id: string): Promise<MigrationRun> {

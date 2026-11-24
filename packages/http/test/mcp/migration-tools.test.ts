@@ -91,6 +91,19 @@ interface Run {
 }
 
 describe('site migration tools', () => {
+  it('take a token cap for the run’s agents, within bounds, and read it back', async () => {
+    const { deps } = await setup();
+    const call = await connect(deps, runner);
+    const source = { kind: 'sitemap', url: `${O}/` };
+    expect((await call('migration_create', { source, agentTokenCap: 5 })).isError).toBe(true);
+    const run = (await call('migration_create', { source, agentTokenCap: 300_000 })).body as {
+      id: string;
+    };
+    expect((await call('migration_status', { run: run.id })).body).toMatchObject({
+      agentTokens: { cap: 300_000, spent: 0, reserved: 0, stoppedTemplateIds: [] },
+    });
+  });
+
   it('take a crawl from a start page to templates, as the HTTP routes do', async () => {
     const { deps, source } = await setup();
     const call = await connect(deps, runner);
@@ -126,6 +139,10 @@ describe('site migration tools', () => {
       pages: { total: number; failed: number };
     };
     expect(status.pages).toMatchObject({ total: 4, failed: 1 });
+    // What its agents may take, read back; a cap out of bounds is refused, and one within kept.
+    expect(status).toMatchObject({
+      agentTokens: { cap: 12_000_000, spent: 0, reserved: 0, stoppedTemplateIds: [] },
+    });
     const templates = (await call('migration_templates', { run: run.id })).body as {
       items: { id: string }[];
     };

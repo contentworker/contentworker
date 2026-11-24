@@ -14,9 +14,11 @@ import {
   type MigrationPageMove,
   type MigrationPageQuery,
   type MigrationStore,
+  type MigrationTokenAsk,
   TransactionConflictError,
 } from '@contentworker/ports';
 import { JournaledMap } from './journaled-map';
+import { InMemoryMigrationTokens } from './migration-token-fake';
 
 const scopeKey = (s: Scope) => `${s.spaceId}::${s.environmentId}`;
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -37,12 +39,20 @@ export class InMemoryMigrationStore implements MigrationStore {
   /** `space::env::run::url` → asset id. */
   readonly assetData = new JournaledMap<string, string>();
 
+  private readonly tokens = new InMemoryMigrationTokens((scope, runId) =>
+    this.runData.has(`${scopeKey(scope)}::${runId}`),
+  );
+
   /** The collections a transaction can change, and the purge clears. */
   collections(): JournaledMap<string, unknown>[] {
-    return [this.runData, this.templateData, this.pageData, this.assetData] as JournaledMap<
-      string,
-      unknown
-    >[];
+    return [
+      this.runData,
+      this.templateData,
+      this.pageData,
+      this.assetData,
+      this.tokens.lineData,
+      this.tokens.capData,
+    ] as JournaledMap<string, unknown>[];
   }
 
   private pagesOf(scope: Scope, runId: string): MigrationPage[] {
@@ -58,10 +68,39 @@ export class InMemoryMigrationStore implements MigrationStore {
     return [...this.templateData.entries()].filter(([k]) => k.startsWith(prefix));
   }
 
-  async createRun(scope: Scope, run: MigrationRun): Promise<void> {
+  reserveAgentTokens(scope: Scope, runId: string, ask: MigrationTokenAsk) {
+    return this.tokens.reserveAgentTokens(scope, runId, ask);
+  }
+  askAgentTokens(scope: Scope, runId: string, ask: Omit<MigrationTokenAsk, 'until'>) {
+    return this.tokens.askAgentTokens(scope, runId, ask);
+  }
+  settleAgentTokens(
+    scope: Scope,
+    runId: string,
+    line: { templateId: string; seq: number; spent: number },
+  ) {
+    return this.tokens.settleAgentTokens(scope, runId, line);
+  }
+  capAgentTokens(
+    scope: Scope,
+    runId: string,
+    line: { templateId: string; seq: number; spent: number },
+  ) {
+    return this.tokens.capAgentTokens(scope, runId, line);
+  }
+  agentTokens(scope: Scope, runId: string, at: string) {
+    return this.tokens.agentTokens(scope, runId, at);
+  }
+
+  async createRun(
+    scope: Scope,
+    run: MigrationRun,
+    opts?: { readonly agentTokenCap?: number },
+  ): Promise<void> {
     const key = `${scopeKey(scope)}::${run.id}`;
     if (this.runData.has(key)) throw new ConflictError('A unique value is already taken');
     this.runData.set(key, clone(run));
+    if (opts?.agentTokenCap !== undefined) this.tokens.setCap(scope, run.id, opts.agentTokenCap);
   }
 
   async getRun(scope: Scope, id: string): Promise<MigrationRun | null> {

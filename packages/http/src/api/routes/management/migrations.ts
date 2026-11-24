@@ -196,7 +196,8 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         'The run, its page counts by stage, its templates, and its background run (`driver`): ' +
         'where it is, who started it, and the go-ahead to publish, if one was given. `state` is ' +
-        '`unknown` while Workflows can’t be asked; the read never fails for it.',
+        '`unknown` while Workflows can’t be asked; the read never fails for it. ' +
+        '`agentTokens` is its authoring agents’ token cap and spending.',
     }),
     readScopes,
     async (c) =>

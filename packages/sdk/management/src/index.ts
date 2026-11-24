@@ -397,6 +397,11 @@ export interface MigrationRunInput {
   readonly threshold?: number;
   readonly source: Pick<MigrationSource, 'kind' | 'url'> &
     Partial<Pick<MigrationSource, 'include' | 'exclude' | 'maxPages'>>;
+  /**
+   * Tokens its authoring agents' model calls may take in all (default 12,000,000, 250,000 to
+   * 15,000,000). It can't be changed afterwards.
+   */
+  readonly agentTokenCap?: number;
 }
 
 export interface MigrationRun {
@@ -646,6 +651,16 @@ export interface MigrationRunView {
   };
   /** Largest first. */
   readonly templates: readonly MigrationTemplate[];
+  /** What its authoring agents may take, and have. Absent from a server older than token caps. */
+  readonly agentTokens?: {
+    readonly cap: number;
+    /** Counted, with the whole reservation of a call whose use was never learned. */
+    readonly spent: number;
+    /** Held for calls under way. */
+    readonly reserved: number;
+    /** Templates whose agent stopped at the cap: author them by hand or over MCP. */
+    readonly stoppedTemplateIds: readonly string[];
+  };
 }
 
 export interface MigrationFetchResult {

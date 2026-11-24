@@ -81,6 +81,9 @@ for (let more = true; more; ) {
 const { templates } = await cma.migrations.cluster(run.id); // `{ threshold }` 0..1, default 0.6
 ```
 
+`create` also takes `agentTokenCap`, the tokens a background run's authoring agents may take in all; `get`
+answers it in `agentTokens` with what they have spent.
+
 `migrations` also has `list`, `get`, `pages` (by `stage` or `template`, paged with `nextCursor`) and
 `templates`. Running a step needs `migration:run`; reading a run needs it or `content:manage`.
 Pages carry the hash and size of their stored HTML, never the HTML.

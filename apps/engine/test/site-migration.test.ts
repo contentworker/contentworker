@@ -683,3 +683,268 @@ describe('MigrationTemplateAgent', () => {
     });
   });
 });
+
+describe('MigrationTemplateAgent under its run’s token cap', () => {
+  const CAP = 250_000;
+  async function agents(n: number) {
+    const { ctx, scope } = context();
+    const run = await createMigrationRun(ctx, scope, {
+      source: { kind: 'sitemap', url: O },
+      agentTokenCap: CAP,
+    });
+    const at = new Date().toISOString();
+    const runId = run.id;
+    await ctx.store.migrations.replaceTemplates(
+      scope,
+      run.id,
+      Array.from({ length: n }, (_, i) => `t${i}`).map((id) => ({
+        template: {
+          id,
+          runId,
+          label: id,
+          status: 'pending' as const,
+          pageCount: 1,
+          samplePageIds: [],
+          fingerprint: [],
+          contentTypeId: null,
+          script: null,
+          proposal: null,
+          lastTry: null,
+          approvedBy: null,
+          version: 1,
+          createdAt: at,
+          updatedAt: at,
+        },
+        pageIds: [],
+      })),
+      at,
+    );
+    const stubs = await Promise.all(
+      Array.from({ length: n }, async (_, i) => {
+        const input = {
+          scope,
+          runId: run.id,
+          templateId: `t${i}`,
+          startedBy: { kind: 'deployment' as const },
+        };
+        const stub = env.MIGRATION_AGENT.get(
+          env.MIGRATION_AGENT.idFromName(templateAgentName(input)),
+        );
+        await stub.start(input);
+        return stub;
+      }),
+    );
+    const tokens = async () => {
+      const now = await ctx.store.migrations.agentTokens(scope, run.id, new Date().toISOString());
+      if (!now) throw new Error('no run');
+      return now;
+    };
+    return { ctx, scope, run, stubs, tokens };
+  }
+  /** Asks for its template every turn, so only a limit stops it. */
+  const looping = (usage: { inputTokens: number; outputTokens: number }): AIProvider => ({
+    async generate() {
+      return {
+        text: '',
+        toolCalls: [{ id: crypto.randomUUID(), name: 'get_template', input: {} }],
+        usage,
+      };
+    },
+  });
+
+  it('stops a run’s agents, running at once, with nothing spent over the cap', async () => {
+    const { ctx, scope, run, stubs, tokens } = await agents(6);
+    migrationTestState.ai = looping({ inputTokens: 3_000, outputTokens: 3_000 });
+    for (let i = 0; i < 60; i++) {
+      // One that has stopped has only its retention alarm left, which deletes it.
+      const running = await Promise.all(
+        stubs.map(async (s) => ((await s.status())?.status === 'running' ? s : null)),
+      );
+      if (running.every((s) => s === null)) break;
+      await Promise.all(running.map((s) => s && runDurableObjectAlarm(s)));
+    }
+    const statuses = await Promise.all(stubs.map((s) => s.status()));
+    expect(statuses.map((s) => s?.status)).toEqual(stubs.map(() => 'stopped'));
+    expect(statuses[0]?.summary).toMatch(/token cap/);
+    const now = await tokens();
+    expect(now.spent).toBeLessThanOrEqual(CAP);
+    expect(now.spent).toBe(statuses.reduce((n, s) => n + (s?.tokens ?? 0), 0));
+    expect(now.reserved).toBe(0);
+    expect(now.stoppedTemplateIds).toHaveLength(6);
+    // Not the run's failure, and no write of the run's.
+    expect(await ctx.store.migrations.getRun(scope, run.id)).toEqual(run);
+  });
+
+  it('counts a call it was evicted from once, from the state it kept as the call began', async () => {
+    const { stubs, tokens } = await agents(1);
+    const [stub] = stubs;
+    if (!stub) throw new Error('no agent');
+    migrationTestState.ai = looping({ inputTokens: 1_000, outputTokens: 500 });
+    let seen: { call?: { turn: number; tokens: number } } | undefined;
+    let storage: DurableObjectStorage | undefined;
+    await runInDurableObject(stub, async (_o, state) => {
+      storage = state.storage;
+    });
+    const answer = migrationTestState.ai;
+    migrationTestState.ai = {
+      async generate(req) {
+        // What is in storage while the model runs is what an eviction now would leave.
+        seen ??= structuredClone(await storage?.get('meta'));
+        return answer.generate(req);
+      },
+    };
+    await runDurableObjectAlarm(stub);
+    const lost = seen?.call?.tokens ?? 0;
+    expect(seen).toMatchObject({ status: 'running', turns: 0, calls: 1, messageCount: 1 });
+    expect(lost).toBeGreaterThan(8_000);
+    await runInDurableObject(stub, async (_o, state) => {
+      await state.storage.deleteAll();
+      await state.storage.put('meta', seen);
+      await state.storage.put('m:00000', { role: 'user', content: 'Author this template.' });
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    // The store's line is later than what came back: as after an eviction, the agent goes on from
+    // its own total, here past the three calls on record.
+    await runInDurableObject(stub, async (_o, state) => {
+      await state.storage.put('meta', { ...seen, calls: 3 });
+    });
+    await runDurableObjectAlarm(stub);
+    const after = await stub.status();
+    expect(after).toMatchObject({ status: 'running', turns: 3, tokens: 4_500 });
+    expect(await tokens()).toMatchObject({ spent: 4_500 + lost, reserved: 0 });
+    await runInDurableObject(stub, async (_o, state) => {
+      const meta = await state.storage.get<Record<string, unknown>>('meta');
+      expect(meta).toMatchObject({ abandoned: lost, calls: 6 });
+      expect(meta).not.toHaveProperty('call');
+    });
+  });
+
+  it('goes on from state kept before the count, and keeps an answer’s use when a tool fails', async () => {
+    const { ctx, stubs, tokens } = await agents(1);
+    const [stub] = stubs;
+    if (!stub) throw new Error('no agent');
+    await runInDurableObject(stub, async (_o, state) => {
+      const meta = await state.storage.get<Record<string, unknown>>('meta');
+      await state.storage.put('meta', { ...meta, turns: 4, tokens: 20_000 });
+    });
+    migrationTestState.ai = looping({ inputTokens: 1_000, outputTokens: 500 });
+    const { getTemplate } = ctx.store.migrations;
+    let reads = 0;
+    ctx.store.migrations.getTemplate = async (...args) => {
+      reads += 1;
+      if (reads === 2) throw new Error('the store is away');
+      return getTemplate.apply(ctx.store.migrations, args);
+    };
+    await runDurableObjectAlarm(stub);
+    expect(await stub.status()).toMatchObject({ status: 'running', turns: 4, tokens: 21_500 });
+    expect(await tokens()).toMatchObject({ spent: 21_500, reserved: 0 });
+    await runDurableObjectAlarm(stub);
+    expect(await stub.status()).toMatchObject({ status: 'running', turns: 7, tokens: 26_000 });
+    expect(await tokens()).toMatchObject({ spent: 26_000, reserved: 0 });
+  });
+
+  it('lets go of what it holds when it stops after repeated errors', async () => {
+    const { ctx, stubs, tokens } = await agents(1);
+    const [stub] = stubs;
+    if (!stub) throw new Error('no agent');
+    migrationTestState.ai = looping({ inputTokens: 1, outputTokens: 1 });
+    const reserve = ctx.store.migrations.reserveAgentTokens.bind(ctx.store.migrations);
+    ctx.store.migrations.reserveAgentTokens = async (...args) => {
+      await reserve(...args);
+      throw new Error('the answer was lost');
+    };
+    await runDurableObjectAlarm(stub);
+    expect((await tokens()).reserved).toBeGreaterThan(0);
+    for (let i = 0; i < 4; i++) await runDurableObjectAlarm(stub);
+    expect(await stub.status()).toMatchObject({ status: 'stopped' });
+    expect(await tokens()).toMatchObject({ spent: 0, reserved: 0 });
+  });
+
+  it('tells the run again after it has ended, when that failed as it ended', async () => {
+    const { ctx, stubs, tokens } = await agents(1);
+    const [stub] = stubs;
+    if (!stub) throw new Error('no agent');
+    migrationTestState.ai = new ScriptedAI(['done']);
+    const settle = ctx.store.migrations.settleAgentTokens.bind(ctx.store.migrations);
+    let away = 2;
+    ctx.store.migrations.settleAgentTokens = async (...args) => {
+      if (away-- > 0) throw new Error('the store is away');
+      return settle(...args);
+    };
+    await runDurableObjectAlarm(stub);
+    expect(await stub.status()).toMatchObject({ status: 'done' });
+    expect((await tokens()).reserved).toBeGreaterThan(0);
+    // Still away at the first try, back at the second; then only its retention is left.
+    await runDurableObjectAlarm(stub);
+    expect((await tokens()).reserved).toBeGreaterThan(0);
+    await runDurableObjectAlarm(stub);
+    expect(await tokens()).toMatchObject({ spent: 15, reserved: 0 });
+    expect(await stub.status()).toMatchObject({ status: 'done', summary: 'done' });
+    await runInDurableObject(stub, async (_o, state) => {
+      expect(await state.storage.get('m:00001')).toMatchObject({ content: 'done' });
+      expect((await state.storage.getAlarm()) ?? 0).toBeGreaterThan(Date.now() + 86_400_000);
+    });
+    await runDurableObjectAlarm(stub);
+    expect(await stub.status()).toBeNull();
+  });
+
+  it('counts a call lost as it ended once, however often telling the run fails', async () => {
+    const { ctx, scope, run, stubs, tokens } = await agents(1);
+    const [stub] = stubs;
+    if (!stub) throw new Error('no agent');
+    migrationTestState.ai = new ScriptedAI([]);
+    await ctx.store.migrations.reserveAgentTokens(scope, run.id, {
+      templateId: 't0',
+      seq: 1,
+      spent: 0,
+      tokens: 9_000,
+      at: new Date().toISOString(),
+      until: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await runInDurableObject(stub, async (_o, state) => {
+      const meta = await state.storage.get<Record<string, unknown>>('meta');
+      const call = { turn: 0, tokens: 9_000 };
+      const ended = { status: 'stopped', unsettled: true, calls: 1, call };
+      await state.storage.put('meta', { ...meta, ...ended });
+    });
+    const settle = ctx.store.migrations.settleAgentTokens.bind(ctx.store.migrations);
+    let away = 2;
+    ctx.store.migrations.settleAgentTokens = async (...args) => {
+      if (away-- > 0) throw new Error('the store is away');
+      return settle(...args);
+    };
+    for (let i = 0; i < 3; i++) await runDurableObjectAlarm(stub);
+    expect(await tokens()).toMatchObject({ spent: 9_000, reserved: 0 });
+  });
+
+  it('backs off from a failure rather than sleeping out an earlier, longer wait', async () => {
+    const { ctx, stubs } = await agents(1);
+    const [stub] = stubs;
+    if (!stub) throw new Error('no agent');
+    migrationTestState.ai = new ScriptedAI([]);
+    await runInDurableObject(stub, async (_o, state) => {
+      const meta = await state.storage.get<Record<string, unknown>>('meta');
+      await state.storage.put('meta', { ...meta, retryAfterSeconds: 1_800 });
+    });
+    // Before and after its reservation is asked for.
+    const { getTemplate } = ctx.store.migrations;
+    ctx.store.migrations.getTemplate = async () => {
+      ctx.store.migrations.getTemplate = getTemplate;
+      throw new Error('the store is away');
+    };
+    const reserve = ctx.store.migrations.reserveAgentTokens.bind(ctx.store.migrations);
+    ctx.store.migrations.reserveAgentTokens = async (...args) => {
+      await reserve(...args);
+      throw new Error('the answer was lost');
+    };
+    for (let i = 0; i < 2; i++) {
+      await runDurableObjectAlarm(stub);
+      await runInDurableObject(stub, async (_o, state) => {
+        expect((await state.storage.getAlarm()) ?? Infinity).toBeLessThan(Date.now() + 300_000);
+      });
+    }
+    await runInDurableObject(stub, async (_o, state) => {
+      expect(await state.storage.get('meta')).toMatchObject({ unsettled: true, failures: 2 });
+    });
+  });
+});

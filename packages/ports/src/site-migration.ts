@@ -10,6 +10,7 @@ import type {
   MigrationTrySummary,
   Scope,
 } from '@contentworker/domain';
+import type { MigrationTokenStore } from './site-migration-tokens';
 
 /**
  * A site migration's records: runs, their templates and their pages, environment-scoped. Page
@@ -22,8 +23,13 @@ import type {
  * repeat. A step whose effects reach past the page (a load writes entries) moves its pages with
  * {@link MigrationStore.movePages} instead, at a compare-and-set on each page's `updatedAt`.
  */
-export interface MigrationStore {
-  createRun(scope: Scope, run: MigrationRun): Promise<void>;
+export interface MigrationStore extends MigrationTokenStore {
+  /** The token cap is the run's for good: no later write names it. Absent, the default. */
+  createRun(
+    scope: Scope,
+    run: MigrationRun,
+    opts?: { readonly agentTokenCap?: number },
+  ): Promise<void>;
   getRun(scope: Scope, id: string): Promise<MigrationRun | null>;
   /** Newest first. */
   listRuns(scope: Scope, opts: { readonly limit: number }): Promise<MigrationRun[]>;

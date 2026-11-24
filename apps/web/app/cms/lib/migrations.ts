@@ -174,7 +174,14 @@ export const globsFrom = (text: string): string[] =>
     .map((g) => g.trim())
     .filter(Boolean);
 
-export type SourceField = 'url' | 'kind' | 'include' | 'exclude' | 'maxPages' | 'name';
+export type SourceField =
+  | 'url'
+  | 'kind'
+  | 'include'
+  | 'exclude'
+  | 'maxPages'
+  | 'name'
+  | 'agentTokenCap';
 
 /**
  * A refused run's issues, by the form field each names (`source.url` → `url`; a glob's index, as
@@ -184,9 +191,10 @@ export type SourceField = 'url' | 'kind' | 'include' | 'exclude' | 'maxPages' | 
 export function sourceIssues(err: unknown): Partial<Record<SourceField | 'form', string>> {
   const out: Partial<Record<SourceField | 'form', string>> = {};
   for (const { field, message } of apiIssues(err)) {
-    const m = /^(?:source\.)?(url|kind|include|exclude|maxPages|name)(?:\[(\d+)\]|\.(\d+))?$/.exec(
-      field,
-    );
+    const m =
+      /^(?:source\.)?(url|kind|include|exclude|maxPages|name|agentTokenCap)(?:\[(\d+)\]|\.(\d+))?$/.exec(
+        field,
+      );
     const key = (m?.[1] as SourceField | undefined) ?? 'form';
     const index = m?.[2] ?? m?.[3];
     out[key] ??= index !== undefined ? `Line ${Number(index) + 1}: ${message}` : message;

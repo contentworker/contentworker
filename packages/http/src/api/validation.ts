@@ -47,11 +47,14 @@ import {
   MAX_VIEW_ORDER,
   MAX_ZIP_ASSETS,
   MIGRATION_CLUSTER_THRESHOLD,
+  MIGRATION_DEFAULT_TOKEN_CAP,
   MIGRATION_MAX_GLOB_LENGTH,
   MIGRATION_MAX_GLOBS,
   MIGRATION_MAX_NAME_LENGTH,
   MIGRATION_MAX_PAGES,
+  MIGRATION_MAX_TOKEN_CAP,
   MIGRATION_MAX_URL_LENGTH,
+  MIGRATION_MIN_TOKEN_CAP,
   PLUGIN_SETTING_MAX_STRING,
   SPACE_ID_PATTERN,
   ValidationError,
@@ -381,6 +384,8 @@ export const migrationSourceBody = z.object({
     .optional()
     .describe('Most pages the run takes (default 500)'),
 });
+const TOKEN_CAP_RANGE = `must be a whole number from ${MIGRATION_MIN_TOKEN_CAP.toLocaleString('en-US')} to ${MIGRATION_MAX_TOKEN_CAP.toLocaleString('en-US')}`;
+
 export const migrationRunBody = z.object({
   name: z.string().max(MIGRATION_MAX_NAME_LENGTH).optional().describe('Default: the source host'),
   threshold: z
@@ -390,6 +395,16 @@ export const migrationRunBody = z.object({
     .optional()
     .describe('Score a page needs to count as validated (default 0.8)'),
   source: migrationSourceBody,
+  agentTokenCap: z
+    .number(TOKEN_CAP_RANGE)
+    .int(TOKEN_CAP_RANGE)
+    .min(MIGRATION_MIN_TOKEN_CAP, TOKEN_CAP_RANGE)
+    .max(MIGRATION_MAX_TOKEN_CAP, TOKEN_CAP_RANGE)
+    .optional()
+    .describe(
+      'Tokens its authoring agents’ model calls may take in all, when it is run in the background ' +
+        `(default ${MIGRATION_DEFAULT_TOKEN_CAP}); it can't be changed afterwards`,
+    ),
 });
 /**
  * Pages one API request or MCP call fetches at most, and by default. A batch's pages are held in

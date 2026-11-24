@@ -497,6 +497,16 @@ whether it reached the driver, JSON). Nullable columns: code deployed before the
 and leaves them as they are when it writes a run, and nothing is backfilled. See
 [Site migrations](./domain-model.md#site-migrations).
 
+`0054_migration_agent_tokens.sql` adds `migration_runs.agent_token_cap` (nullable: the run's cap,
+written when it is created and by nothing after; null reads as the default) and
+`migration_agent_tokens` (`space_id`, `environment_id`, `run_id`, `template_id` primary key; `seq`,
+`spent`, `reserved`, `reserved_until`, `capped`, `updated_at`), one line per template agent. Code
+deployed before it names neither, so a run it creates has the default cap and its rewrite of a run
+leaves the cap alone. Nothing is backfilled. Rolled back past it, agents' calls aren't recorded in the
+run's count, and an agent that had ended with its tokens not yet told has its conversation deleted
+early. See
+[the run's token cap](./domain-model.md#the-runs-token-cap).
+
 `0049_site_migration_load.sql` adds `migration_runs.release_id` (nullable: the release a run's
 entries were added to), `migration_pages.unresolved_links` (integer, default 0, not
 null: the links in a loaded page's entry still waiting for their page's entry) and

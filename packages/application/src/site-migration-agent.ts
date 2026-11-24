@@ -1,16 +1,13 @@
 import {
-  AiUnavailableError,
   type ContentTypeDraft,
   DomainError,
   MIGRATION_SOURCE_URL_FIELD,
   type MigrationActor,
   type MigrationTemplate,
-  RateLimitedError,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
 import type { AIProvider, ChatMessage, ModelTier, ToolCall, ToolSpec } from '@contentworker/ports';
-import { generateWithBudget } from './ai-budget';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import type { AppContext } from './context';
 import { migrationActorPrincipal } from './site-migration-run';
@@ -22,6 +19,13 @@ import {
   type TemplateAuthoringDeps,
   tryImportScript,
 } from './site-migration-templates';
+import {
+  callWithinRunCap,
+  countLostCall,
+  type RecordAgentState,
+  releaseAgentTokens,
+  spentOf,
+} from './site-migration-tokens';
 
 /**
  * A template’s authoring agent: a model with five tools, given one template of one run, that reads
@@ -37,7 +41,8 @@ import {
  * One {@link templateAgentTurn} is one model call and the tools it asked for; the host (a Durable
  * Object) keeps the state between turns and calls again until the agent is done. Each call is
  * metered against the space's background AI budget (`generateWithBudget`), and the run is held to
- * a turn and token budget of its own ({@link TEMPLATE_AGENT_LIMITS}).
+ * a turn and token budget of its own ({@link TEMPLATE_AGENT_LIMITS}) and, with every other agent of
+ * its run, to the run's token cap (`callWithinRunCap`).
  */
 
 export const TEMPLATE_AGENT_LIMITS = {
@@ -73,6 +78,24 @@ export interface TemplateAgentState extends TemplateAgentStart {
   readonly messages: readonly ChatMessage[];
   readonly turns: number;
   readonly tokens: number;
+  /** Model calls begun: the last one's reservation of the run's tokens. */
+  readonly calls?: number;
+  /** The call under way, recorded as it begins: its turn, and the tokens it reserved. */
+  readonly call?: { readonly turn: number; readonly tokens: number };
+  /** Tokens counted toward the run's cap for calls that may have been billed and never said so. */
+  readonly abandoned?: number;
+  /** Calls in a row that timed out: how long it waits before the next. */
+  readonly timeouts?: number;
+  /** Held back by the tokens other agents hold, at its last try. */
+  readonly waiting?: boolean;
+  /** Its line in the run's count couldn't be written: it is told again. */
+  readonly unsettled?: boolean;
+  /** The last prompt as the model counted it, and how many messages it held. */
+  readonly prompt?: {
+    readonly tokens: number;
+    readonly messages: number;
+    readonly tier: ModelTier;
+  };
   readonly tier: ModelTier;
   /** Tries whose outputs didn't all pass, counted for moving up a tier. */
   readonly failedTries: number;
@@ -193,21 +216,27 @@ const TOOL_NAMES = new Set(TEMPLATE_AGENT_TOOLS.map((t) => t.name));
 /**
  * One turn: the model is called with the conversation so far, and the tools it asks for are run.
  * Returns the next state; a turn that can't run now (the space's AI budget, the model) comes back
- * unchanged but for `retryAfterSeconds`. Never throws for a tool's failure: the model is told.
+ * with `retryAfterSeconds` set. Never throws for a tool's failure: the model is told. `record`
+ * keeps the state as a model call begins and ends, so a turn that fails or is cut short is counted.
  */
 export async function templateAgentTurn(
   ctx: AppContext,
   deps: TemplateAgentDeps,
-  state: TemplateAgentState,
+  from: TemplateAgentState,
+  record: RecordAgentState = async () => {},
 ): Promise<TemplateAgentState> {
-  if (state.status !== 'running') return state;
+  if (from.status !== 'running') return from;
   const limits = TEMPLATE_AGENT_LIMITS;
-  if (state.turns >= limits.maxTurns || state.tokens >= limits.maxTokens) {
-    return stop(state, `Stopped at its budget: ${state.turns} turns, ${state.tokens} tokens`);
+  let state = countLostCall(from);
+  const stop = async (summary: string) => {
+    return stopped(await releaseAgentTokens(ctx, state), summary);
+  };
+  if (state.turns >= limits.maxTurns || spentOf(state) >= limits.maxTokens) {
+    return stop(`Stopped at its budget: ${state.turns} turns, ${spentOf(state)} tokens`);
   }
   // Spends on behalf of whoever started the run: not once they no longer act in the space.
   if (!(await migrationActorPrincipal(ctx, state.scope, state.startedBy))) {
-    return stop(state, 'Stopped: whoever started the run no longer has access to the space');
+    return stop('Stopped: whoever started the run no longer has access to the space');
   }
   // What a person has approved, and perhaps reopened since, is theirs to change from there on.
   const template = await ctx.store.migrations.getTemplate(
@@ -216,35 +245,30 @@ export async function templateAgentTurn(
     state.templateId,
   );
   // Clustered again before its run's driver held the clustering: nothing left to author.
-  if (!template) return stop(state, 'Stopped: the template is gone');
+  if (!template) return stop('Stopped: the template is gone');
   if (isPersons(template)) {
-    return stop(state, 'Stopped: a person approved the template');
+    return stop('Stopped: a person approved the template');
   }
-  let answer: Awaited<ReturnType<typeof generateWithBudget>>;
-  try {
-    answer = await generateWithBudget(
-      ctx,
-      deps.ai,
-      state.scope,
-      {
-        system: TEMPLATE_AGENT_SYSTEM,
-        prompt: '',
-        messages: compact([...state.messages], limits.maxHistoryChars),
-        tools: [...TEMPLATE_AGENT_TOOLS],
-        tier: state.tier,
-        maxTokens: limits.maxAnswerTokens,
-        metadata: { prompt: 'migration-template-agent' },
-      },
-      { timeoutMs: MODEL_TIMEOUT_MS },
-    );
-  } catch (err) {
-    if (err instanceof RateLimitedError || err instanceof AiUnavailableError) {
-      return { ...state, retryAfterSeconds: err.retryAfterSeconds ?? 60 };
-    }
-    throw err;
-  }
+  const call = await callWithinRunCap(
+    ctx,
+    deps.ai,
+    state,
+    {
+      system: TEMPLATE_AGENT_SYSTEM,
+      prompt: '',
+      messages: compact([...state.messages], limits.maxHistoryChars),
+      tools: [...TEMPLATE_AGENT_TOOLS],
+      tier: state.tier,
+      maxTokens: limits.maxAnswerTokens,
+      metadata: { prompt: 'migration-template-agent' },
+    },
+    { timeoutMs: MODEL_TIMEOUT_MS, record },
+  );
+  if ('held' in call) return call.state;
+  if ('stopped' in call) return stopped(call.state, call.stopped);
+  state = call.state;
+  const { answer } = call;
   const { retryAfterSeconds: _, ...settled } = state;
-  const tokens = state.tokens + answer.usage.inputTokens + answer.usage.outputTokens;
   const calls = answer.toolCalls ?? [];
   const assistant: ChatMessage = {
     role: 'assistant',
@@ -257,26 +281,24 @@ export async function templateAgentTurn(
       status: 'done',
       messages: [...state.messages, assistant],
       turns: state.turns + 1,
-      tokens,
       summary: answer.text.slice(0, 2_000),
     };
   }
   const results: ChatMessage[] = [];
   let failedTries = state.failedTries;
-  for (const [i, call] of calls.entries()) {
+  for (const [i, asked] of calls.entries()) {
     if (i >= limits.maxToolCallsPerTurn) {
-      results.push(toolMessage(call, { error: 'Too many tool calls in one answer; ask again.' }));
+      results.push(toolMessage(asked, { error: 'Too many tool calls in one answer; ask again.' }));
       continue;
     }
-    const outcome = await runTool(ctx, deps, state, call);
+    const outcome = await runTool(ctx, deps, state, asked);
     if (outcome.failedTry) failedTries += 1;
-    results.push(toolMessage(call, outcome.result));
+    results.push(toolMessage(asked, outcome.result));
   }
   return {
     ...settled,
     messages: [...state.messages, assistant, ...results],
     turns: state.turns + 1,
-    tokens,
     failedTries,
     tier: failedTries >= limits.escalateAfterTries ? 'flagship' : state.tier,
   };
@@ -286,7 +308,7 @@ export async function templateAgentTurn(
 const isPersons = (t: MigrationTemplate): boolean =>
   t.status === 'approved' || (t.status !== 'approving' && t.contentTypeId !== null);
 
-function stop(state: TemplateAgentState, summary: string): TemplateAgentState {
+function stopped(state: TemplateAgentState, summary: string): TemplateAgentState {
   const { retryAfterSeconds: _, ...rest } = state;
   return { ...rest, status: 'stopped', summary };
 }

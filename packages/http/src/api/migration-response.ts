@@ -95,5 +95,6 @@ export function migrationRunViewResponse(view: MigrationRunView, driver: Migrati
     driver,
     pages: view.pages,
     templates: view.templates.map(migrationTemplateResponse),
+    agentTokens: view.agentTokens,
   };
 }

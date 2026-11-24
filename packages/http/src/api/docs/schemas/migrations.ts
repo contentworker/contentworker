@@ -156,11 +156,25 @@ export const migrationDriver = z.object({
   }),
 });
 
+const agentTokens = z
+  .object({
+    cap: z.int().describe('Given when the run was created; the default for a run older than caps'),
+    spent: z
+      .int()
+      .describe('Prompt and answer tokens counted, with the whole reservation of a lost call'),
+    reserved: z.int().describe('Held for calls under way'),
+    stoppedTemplateIds: z
+      .array(z.string())
+      .describe('Templates whose agent stopped at the cap: author them by hand or over MCP'),
+  })
+  .describe('What the run’s authoring agents may take, and have');
+
 export const migrationRunView = z.object({
   run: migrationRun,
   driver: migrationDriver,
   pages: pageCounts,
   templates: z.array(migrationTemplate).describe('Largest first'),
+  agentTokens,
 });
 
 const score = z.object({

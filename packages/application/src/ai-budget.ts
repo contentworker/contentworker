@@ -165,7 +165,7 @@ export async function generateWithBudget(
 }
 
 /** The tokens a failed generation still cost, when the provider says (a BilledGenerateFailure). */
-function billedUsage(err: unknown): BilledGenerateFailure['usage'] | undefined {
+export function billedUsage(err: unknown): BilledGenerateFailure['usage'] | undefined {
   const usage = (err as Partial<BilledGenerateFailure> | null)?.usage;
   if (
     typeof usage?.inputTokens === 'number' &&

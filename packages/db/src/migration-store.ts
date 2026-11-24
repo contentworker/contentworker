@@ -20,6 +20,7 @@ import {
 } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { chunked, type Exec, mapD1Error, writeAll } from './exec';
+import { makeMigrationTokenStore } from './migration-token-store';
 import * as schema from './schema';
 
 type Query = BatchItem<'sqlite'>;
@@ -132,7 +133,8 @@ export function makeMigrationStore(x: Exec): MigrationStore {
   ) => and(scopeFilter(t, scope), eq(t.runId as never, runId));
 
   return {
-    async createRun(scope, run) {
+    ...makeMigrationTokenStore(x),
+    async createRun(scope, run, opts) {
       await x.write(
         db.insert(runs).values({
           spaceId: scope.spaceId,
@@ -152,6 +154,7 @@ export function makeMigrationStore(x: Exec): MigrationStore {
           createdAt: new Date(run.createdAt),
           createdBy: run.createdBy,
           updatedAt: new Date(run.updatedAt),
+          agentTokenCap: opts?.agentTokenCap ?? null,
         }),
       );
     },

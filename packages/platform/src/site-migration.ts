@@ -9,6 +9,7 @@ import {
   MIGRATION_PUBLISH_EVENT,
   migrationTemplateApprovedEvent,
   newTemplateAgentState,
+  releaseAgentTokens,
   runSiteMigration,
   type SiteMigrationRunHost,
   type TemplateAgentDeps,
@@ -211,6 +212,9 @@ const META = 'meta';
 const MESSAGE = (i: number) => `m:${String(i).padStart(5, '0')}`;
 /** Turns one alarm takes before it hands over to the next (each is a model call and its tools). */
 const TURNS_PER_ALARM = 3;
+/** How often an agent that ended tells the run its tokens, when that failed, and how many times. */
+const UNSETTLED_RETRY_MS = 5 * 60_000;
+const UNSETTLED_TRIES = 24;
 /** Alarms in a row that fail before the agent stops. */
 const MAX_FAILURES = 5;
 /** Wall time an alarm starts turns in. */
@@ -228,7 +232,8 @@ type StoredMeta = Omit<TemplateAgentState, 'messages'> & {
  * alarm, and each alarm takes a few turns of the agent loop (`templateAgentTurn`) and sets the
  * next, until the agent is done or out of budget. Its state lives in the object's storage, each
  * message under its own key (a value has a size limit, a conversation doesn't), so an evicted or
- * restarted object goes on from its last finished turn. Thirty days after it finishes, its storage
+ * restarted object goes on from its last finished turn, and counts a model call it had begun toward
+ * its run's token cap. Thirty days after it finishes, its storage
  * is deleted.
  *
  * It has no fetch handler and no route: the engine's driver starts it over RPC, and nothing else
@@ -272,6 +277,10 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
     const meta = await this.ctx.storage.get<StoredMeta>(META);
     if (!meta) return;
     if (meta.status !== 'running') {
+      if (meta.unsettled && meta.failures < UNSETTLED_TRIES) {
+        await this.settleEnded(meta);
+        return;
+      }
       // The alarm set when it finished: its conversation has been kept long enough.
       await this.ctx.storage.deleteAll();
       return;
@@ -292,7 +301,11 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
         i < TURNS_PER_ALARM && state.status === 'running' && Date.now() < deadline;
         i++
       ) {
-        const next = await templateAgentTurn(wired.ctx, wired.deps, state);
+        const next = await templateAgentTurn(wired.ctx, wired.deps, state, async (now) => {
+          // A model call begins or ends: kept before it goes on, so a call cut short is counted.
+          state = now;
+          await this.saveMeta(now, savedCount, failures);
+        });
         await this.save(next, savedCount, 0);
         state = next;
         failures = 0;
@@ -303,16 +316,20 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
       // Caught, so the alarm is never left to the runtime's few retries: a failure here is
       // counted, kept, and tried again later, until there have been too many in a row.
       failures += 1;
+      // A wait an earlier turn asked for isn't this failure's: backed off instead, so nothing the
+      // turn may hold is slept on.
+      state = { ...state, retryAfterSeconds: undefined };
       console.error('migration template agent: a turn failed', {
         templateId: meta.templateId,
         error: err instanceof Error ? err.message : String(err),
       });
       if (failures >= MAX_FAILURES) {
         state = { ...state, status: 'stopped', summary: 'Stopped after repeated errors' };
+        state = wired ? await releaseAgentTokens(wired.ctx, state) : { ...state, unsettled: true };
       }
       try {
         // The turns this alarm saved stay: the meta names every message in storage.
-        await this.saveMeta(state, savedCount, failures);
+        await this.saveMeta(state, savedCount, state.status === 'running' ? failures : 0);
       } catch (e) {
         console.error('migration template agent: saving its state failed', {
           templateId: meta.templateId,
@@ -325,12 +342,39 @@ export abstract class MigrationTemplateAgentBase<Env = unknown> extends DurableO
       // has finished, the one that deletes its conversation.
       const wait =
         state.status !== 'running'
-          ? RETAIN_MS
+          ? state.unsettled
+            ? UNSETTLED_RETRY_MS
+            : RETAIN_MS
           : state.retryAfterSeconds !== undefined
             ? state.retryAfterSeconds * 1000
             : failures > 0
               ? 30_000 * failures
               : 0;
+      await this.ctx.storage.setAlarm(Date.now() + wait);
+    }
+  }
+
+  /**
+   * Tells the run what an agent that has ended used, when that failed as it ended; then its
+   * retention begins. `failures` counts the tries from 0 (see {@link UNSETTLED_TRIES}).
+   */
+  private async settleEnded(meta: StoredMeta): Promise<void> {
+    let wait = UNSETTLED_RETRY_MS;
+    let wired: TemplateAgentWiring | undefined;
+    const tries = meta.failures + 1;
+    let state: TemplateAgentState = { ...meta, messages: [] };
+    try {
+      wired = await this.wire(state);
+      state = await releaseAgentTokens(wired.ctx, state);
+    } catch (err) {
+      console.error('migration template agent: settling its tokens failed', {
+        templateId: meta.templateId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      await wired?.close().catch(() => undefined);
+      if (!state.unsettled || tries >= UNSETTLED_TRIES) wait = RETAIN_MS;
+      await this.saveMeta(state, meta.messageCount, tries);
       await this.ctx.storage.setAlarm(Date.now() + wait);
     }
   }

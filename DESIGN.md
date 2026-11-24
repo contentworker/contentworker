@@ -1154,7 +1154,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   the source's kind as the tile, the name linked over its source URL in mono, and its status
   (`bad` once failed); its pages are counted on its own page, never by a read a row. No runs is
   `Empty` saying what a migration does, with Migrate a website. **New migration** is a form sheet
-  (Sitemap or Link crawl as a `Segmented`, the URL in mono, globs one a line); the API's 422 lands
+  (Sitemap or Link crawl as a `Segmented`, the URL in mono, globs one a line, an optional Agent token
+  cap); the API's 422 lands
   beside the field it names and takes focus there. **A run** is its source and status, Pages by
   stage as figures, then **Steps**: Inventory, Fetch pages and Cluster as a catalog, the step the
   run waits on the primary, one it can't take now disabled with why under it (`runSteps` in
@@ -1164,7 +1165,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   destructive one; a step that lost a race (409 `retryable`) is sent again without a word.
   Without `migration:run` the steps show and offer nothing. **Templates** (catalog rows with
   their status, pages and last try, the name linked to its review, and Show pages), **Finish the
-  run** (Relink, Redirects and Publish, over every loaded page), **Run in the background** and
+  run** (Relink, Redirects and Publish, over every loaded page), **Run in the background**,
+  **Agent tokens** (spent, held and the cap as figures; a warning Alert links the templates whose
+  agent stopped at the cap and still need authoring) and
   **Pages** (a table stacked into cards on a phone, filtered on the server by stage and template,
   with Load more) close the page. A page's HTML is never shown: each page is its live URL, opening
   in a new tab. **A template** (`cms/routes/MigrationTemplate.tsx`) is reviewed top to bottom: its

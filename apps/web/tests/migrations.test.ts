@@ -181,6 +181,7 @@ describe('a refused source', () => {
           { field: 'source.include[1]', message: 'must start with "/"' },
           { field: 'source.exclude.0', message: 'Too long' },
           { field: 'source.maxPages', message: 'must be at most 10000' },
+          { field: 'agentTokenCap', message: 'must be at least 100000' },
           { field: 'threshold', message: 'must be a number from 0 to 1' },
         ],
       },
@@ -190,6 +191,7 @@ describe('a refused source', () => {
       include: 'Line 2: must start with "/"',
       exclude: 'Line 1: Too long',
       maxPages: 'must be at most 10000',
+      agentTokenCap: 'must be at least 100000',
       form: 'must be a number from 0 to 1',
     });
   });
