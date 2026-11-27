@@ -134,9 +134,8 @@ type Agent = UseAgentChatOptions['agent'] & AgentCaller;
  * above an on-screen keyboard. Mounted on first open (or a page's first edit) only, so nobody
  * connects to an assistant they never used.
  *
- * Both slide, in 200ms with an exponential ease-out. The sheet slides in from the right edge, where
- * the button that opens it sits. The column moves only by transform: opening takes its 400px at
- * once (the page lays out one time) and slides its content in; closing slides the content out and
+ * Both slide in from the left in 200ms with an exponential ease-out. The column takes its 400px
+ * at once (the page lays out one time) and slides its content in; closing slides the content out and
  * gives the width back once it has gone. Animating the width would lay the page out every frame.
  * Reduced motion shows and hides both at once.
  */
@@ -165,13 +164,13 @@ export function AssistantPanel() {
         'z-30 overflow-hidden bg-card ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         // Phones and tablets: a sheet over the page, between the header and the phone's tab bar.
         'fixed inset-x-0 top-[var(--shell-h)] bottom-[var(--tabbar-h)] transition-[opacity,translate] duration-200 md:left-(--sidebar-width-icon)',
-        open ? 'opacity-100' : 'pointer-events-none translate-x-full opacity-0',
+        open ? 'opacity-100' : 'pointer-events-none -translate-x-full opacity-0',
         // With the keyboard up, it takes exactly the visible area above it, over the bars.
         'in-data-keyboard:top-[var(--vvtop)] in-data-keyboard:bottom-auto in-data-keyboard:z-50 in-data-keyboard:h-[var(--vvh)]',
         // Wide screens: a column beside the page. Its width changes in one step, not per frame: at
         // once on opening, and on closing only after the content's 200ms slide out.
-        'lg:sticky lg:inset-auto lg:top-[var(--shell-h)] lg:flex lg:h-[calc(100dvh-var(--shell-h))] lg:shrink-0 lg:translate-x-0 lg:justify-end lg:opacity-100 lg:transition-[width] lg:duration-0 lg:motion-reduce:transition-none',
-        open ? 'lg:w-[400px]' : 'lg:w-0 lg:delay-200',
+        'lg:sticky lg:inset-auto lg:top-[var(--shell-h)] lg:flex lg:h-[calc(100dvh-var(--shell-h))] lg:shrink-0 lg:translate-x-0 lg:opacity-100 lg:transition-[width] lg:duration-0 lg:motion-reduce:transition-none',
+        open ? 'lg:w-[400px] lg:[anchor-name:--coworker]' : 'lg:w-0 lg:delay-200',
       )}
       onKeyDown={(e) => {
         if (e.key !== 'Escape' || e.defaultPrevented) return;
@@ -182,9 +181,9 @@ export function AssistantPanel() {
     >
       <div
         className={cn(
-          'flex h-full flex-col lg:w-[400px] lg:shrink-0 lg:border-l',
+          'flex h-full flex-col lg:w-[400px] lg:shrink-0 lg:border-r',
           'lg:transition-[opacity,translate] lg:duration-200 lg:ease-[cubic-bezier(0.16,1,0.3,1)] lg:motion-reduce:transition-none',
-          open ? 'lg:translate-x-0 lg:opacity-100' : 'lg:translate-x-full lg:opacity-0',
+          open ? 'lg:translate-x-0 lg:opacity-100' : 'lg:-translate-x-full lg:opacity-0',
         )}
       >
         <Connected variant="panel" />
