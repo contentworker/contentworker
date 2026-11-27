@@ -575,6 +575,7 @@ function ShellFrame() {
         </header>
         {/* The page, and the assistant's column beside it from lg (a sheet over it below). */}
         <div className="flex min-h-0 flex-1">
+          {showNav ? <LazyAssistantPanel /> : null}
           <main
             id="main"
             tabIndex={-1}
@@ -588,7 +589,6 @@ function ShellFrame() {
           >
             <Outlet />
           </main>
-          {showNav ? <LazyAssistantPanel /> : null}
         </div>
       </SidebarInset>
       {showNav ? (

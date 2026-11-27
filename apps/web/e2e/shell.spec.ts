@@ -264,11 +264,11 @@ test('the assistant opens beside the page from lg, as a sheet below, and never b
   if (wide) {
     // A column: the page narrows beside it, and nothing is covered.
     await expect.poll(() => panel.evaluate((el) => el.getBoundingClientRect().width)).toBe(400);
-    const [main, aside] = await Promise.all([
-      page.locator('#main').evaluate((el) => el.getBoundingClientRect().right),
-      panel.evaluate((el) => el.getBoundingClientRect().left),
+    const [mainLeft, panelRight] = await Promise.all([
+      page.locator('#main').evaluate((el) => el.getBoundingClientRect().left),
+      panel.evaluate((el) => el.getBoundingClientRect().right),
     ]);
-    expect(main).toBeLessThanOrEqual(aside + 1);
+    expect(Math.abs(mainLeft - panelRight)).toBeLessThanOrEqual(1);
   } else {
     // A sheet over the page: Escape closes it and hands focus back to the page.
     await panel.getByRole('button', { name: /Close Coworker/ }).focus();

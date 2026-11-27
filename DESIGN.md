@@ -320,9 +320,9 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   gutters), except a canvas: the workflow editor is `bare`, full-bleed beside the rail, and draws
   its own frame and loading skeleton. Never hard-code the bar heights.
 - **Coworker (the assistant):** named Coworker everywhere a person sees it (the button, the panel's
-  heading and accessible name, its messages, the shortcuts list); `assistant` in code. Behind the `assistant` feature (`cms/lib/features.tsx`, on). A column beside the
+  heading and accessible name, its messages, the shortcuts list); `assistant` in code. Behind the `assistant` feature (`cms/lib/features.tsx`, on). A column to the left of the
   page at lg; below that a sheet between the header and the tab bar,
-  taking exactly the area above an on-screen keyboard. Both slide in 200ms on
+  taking exactly the area above an on-screen keyboard. Both slide in from the left in 200ms on
   `cubic-bezier(0.16,1,0.3,1)` by transform and opacity only: the column takes its 400px at once
   and slides its content in, and gives the width back only after the content has slid out.
   Reduced motion shows and hides it at once. An action waiting for confirmation is pinned above the
